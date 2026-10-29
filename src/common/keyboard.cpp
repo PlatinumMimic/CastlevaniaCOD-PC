@@ -10,18 +10,31 @@
 //
 // CV_PAD_SCRIPT="<ms>:<button>[+<button>...][:<hold ms>],..." presses buttons at times measured from the game's
 // first read of the pad (default hold 150 ms). Buttons: up down left right start back a b x y black white lt rt
-// lsu lsd lsl lsr (left stick). "@file" reads the same entries from a file, one per line or comma separated.
+// lsu lsd lsl lsr (left stick) rsu rsd rsl rsr (right stick). "@file" reads the same entries from a file, one per
+// line or comma separated.
+//
+// CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
+// its entries as CV_PAD_SCRIPT does, times from the command's start ("<ms>:wait" only waits), then writes
+// done-<n>.txt and waits for the next. The window need not be in front. <va>:<bytes>[,...] in <folder>\dump.txt (or
+// CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each command's end, as mem-<n>-<va>.bin.
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "core/input.h"
+#include "kernel/memory.h"
+
+extern std::atomic<bool> g_closing;  // below: the window is closing
 
 namespace {
 
@@ -76,7 +89,7 @@ struct Step {
     int64_t at, until;
     uint16_t buttons;
     uint32_t analog;  // bit per analog slot
-    int16_t lx, ly;
+    int16_t lx, ly, rx, ry;
 };
 
 std::vector<Step> ParseScript(std::string text) {
@@ -93,7 +106,7 @@ std::vector<Step> ParseScript(std::string text) {
         std::getline(e, names, ':');
         std::getline(e, hold, ':');
         if (at.empty() || names.empty()) continue;
-        Step s{std::atoll(at.c_str()), 0, 0, 0, 0, 0};
+        Step s{std::atoll(at.c_str()), 0, 0, 0, 0, 0, 0, 0};
         s.until = s.at + (hold.empty() ? 150 : std::atoll(hold.c_str()));
         std::stringstream n(names);
         std::string b;
@@ -116,6 +129,10 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b == "lsd") s.ly = -32767;
             else if (b == "lsl") s.lx = -32767;
             else if (b == "lsr") s.lx = 32767;
+            else if (b == "rsu") s.ry = 32767;
+            else if (b == "rsd") s.ry = -32767;
+            else if (b == "rsl") s.rx = -32767;
+            else if (b == "rsr") s.rx = 32767;
         }
         steps.push_back(s);
     }
@@ -138,12 +155,7 @@ const std::vector<Step>& Script() {
     return steps;
 }
 
-void Scripted(input::Pad& p) {
-    const auto& steps = Script();
-    if (steps.empty()) return;
-    using clock = std::chrono::steady_clock;
-    static const clock::time_point start = clock::now();
-    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - start).count();
+void Press(input::Pad& p, const std::vector<Step>& steps, int64_t now) {
     for (const Step& s : steps) {
         if (now < s.at || now >= s.until) continue;
         p.buttons |= s.buttons;
@@ -151,6 +163,93 @@ void Scripted(input::Pad& p) {
             if (s.analog >> i & 1) p.analog[i] = 0xFF;
         if (s.lx) p.lx = s.lx;
         if (s.ly) p.ly = s.ly;
+        if (s.rx) p.rx = s.rx;
+        if (s.ry) p.ry = s.ry;
+    }
+}
+
+using Clock = std::chrono::steady_clock;
+
+int64_t MsSince(Clock::time_point t) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t).count();
+}
+
+void Scripted(input::Pad& p) {
+    const auto& steps = Script();
+    if (steps.empty()) return;
+    static const Clock::time_point start = Clock::now();
+    Press(p, steps, MsSince(start));
+}
+
+// CV_PAD_LIVE: the command running, its entries and when it is over
+struct Live {
+    std::filesystem::path dir;
+    int n = 0;
+    bool running = false;
+    std::vector<Step> steps;
+    Clock::time_point start;
+    int64_t end = 0;
+};
+
+Live& LiveState() {
+    static Live live = [] {
+        Live l;
+        if (const char* v = std::getenv("CV_PAD_LIVE"); v && *v) l.dir = v;
+        return l;
+    }();
+    return live;
+}
+
+bool LiveOn() { return !LiveState().dir.empty(); }
+
+// the ranges in <folder>\dump.txt (read at each command's end, so they can change while the game runs) or
+// CV_PAD_LIVE_DUMP, written beside the done file
+void LiveDump(const Live& l) {
+    std::string spec;
+    if (std::ifstream f(l.dir / "dump.txt"); f) std::getline(f, spec);
+    else if (const char* v = std::getenv("CV_PAD_LIVE_DUMP")) spec = v;
+    std::stringstream all(spec);
+    std::string e;
+    while (std::getline(all, e, ',')) {
+        size_t colon = e.find(':');
+        if (colon == std::string::npos) continue;
+        uint32_t va = uint32_t(std::stoul(e.substr(0, colon), nullptr, 0));
+        uint32_t bytes = uint32_t(std::stoul(e.substr(colon + 1), nullptr, 0));
+        if (!mem::IsCommitted(va)) continue;
+        char name[48];
+        snprintf(name, sizeof(name), "mem-%d-%08X.bin", l.n, va);
+        std::ofstream(l.dir / name, std::ios::binary).write(reinterpret_cast<const char*>(mem::Base() + va), bytes);
+    }
+}
+
+// the game reads the pad on more than one thread: one at a time takes a command, the others wait with it
+std::mutex g_live_m;
+
+// at each pad read: the command over, its done file; no command, wait here for the next
+void LiveWait() {
+    std::lock_guard lock(g_live_m);
+    Live& l = LiveState();
+    if (l.running && MsSince(l.start) >= l.end) {
+        LiveDump(l);
+        std::ofstream(l.dir / ("done-" + std::to_string(l.n) + ".txt")) << l.n << "\n";
+        l.running = false;
+    }
+    while (!l.running && !g_closing && !(g_hwnd && !IsWindow(g_hwnd))) {
+        std::filesystem::path cmd = l.dir / ("cmd-" + std::to_string(l.n + 1) + ".txt");
+        std::error_code ec;
+        if (std::filesystem::exists(cmd, ec)) {
+            std::ifstream f(cmd);
+            std::stringstream ss;
+            ss << f.rdbuf();
+            l.steps = ParseScript(ss.str());
+            l.end = 0;
+            for (const Step& s : l.steps) l.end = (std::max)(l.end, s.until);  // windows.h defines max
+            l.n++;
+            l.start = Clock::now();
+            l.running = true;
+            break;
+        }
+        Sleep(20);
     }
 }
 
@@ -171,8 +270,9 @@ void KeyboardPad(int port, input::Pad& p) {
     if (port != 0) return;
     // pause on focus loss: the game stops at its pad read until the window is in front again; not in scripted runs,
     // which go on behind other windows
-    if (g_pause_on_focus_loss && Script().empty())
+    if (g_pause_on_focus_loss && Script().empty() && !LiveOn())
         while (!Focused() && !g_closing && IsWindow(g_hwnd)) Sleep(50);
+    if (LiveOn()) LiveWait();
     p.connected = true;
     // both sticks clicked in together: the menu from a controller
     static bool sticks = false;
@@ -187,4 +287,8 @@ void KeyboardPad(int port, input::Pad& p) {
     }
     Keyboard(p);
     Scripted(p);
+    if (LiveOn()) {
+        std::lock_guard lock(g_live_m);
+        if (LiveState().running) Press(p, LiveState().steps, MsSince(LiveState().start));
+    }
 }
