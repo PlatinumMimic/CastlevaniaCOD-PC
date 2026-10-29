@@ -189,8 +189,13 @@ Changes this game needed beyond the generated config:
     is drawn that much taller, so the copy fills the frame row for row.
 
 ### Testing
+- `python -I tools\cvtest\cvtest.py tools\cvtest\scenarios\newgame.json` plays a scenario in a test folder of its own
+  (`out\test\<scenario>-<time>`, its own settings and saves) through `CV_PAD_LIVE`, checks the game state after
+  every step (`src\common\telemetry.cpp`: map and room, Hector's position, HP, the camera, menus), the log and
+  the screen, and writes `report.md` with a screenshot per step. Scenario format: the top of `cvtest.py`.
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
-  it at the given seconds into `tools\shots`, and closes it.
+  it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
+  give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.
 - `CV_PAD_SCRIPT` presses buttons on a timeline (see `src\common\keyboard.cpp`).
 - `XBE_VERBOSE=1` logs info lines to `logs\castlevania.log`; with `XBE_CAPTURE_DIR` set, F3 saves a frame with its
   draw list.
