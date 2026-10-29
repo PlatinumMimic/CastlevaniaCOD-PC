@@ -155,8 +155,9 @@ Changes this game needed beyond the generated config:
   every single texture quad drew white); `XBE_VERBOSE` lets a release build log info lines; a `widescreen` setting;
   for renderer extensions, `ShaderHooks::Position` (HLSL after the vertex position is set), `Extension::Vertices`
   (each draw's assembled vertices) and `gpu::ReadsConstant`; an extension's replacement is drawn before the SDK's own
-  texture pack image. The SDK's mixer plays every channel of a voice by itself now (cutscene audio is a 5.1 stream
-  with the voices in the centre channel).
+  texture pack image; multisampled draws (2X, 4X) on the hardware's smaller grid, which puts Hector's 4X stencil
+  shadow volume back in place (found by Neguchads). The SDK's mixer plays every channel of a voice by itself now
+  (cutscene audio is a 5.1 stream with the voices in the centre channel).
 - Releases (`release.bat`, `split\`, `src\common\setup.cpp`): the game code lives in `CastlevaniaGame.dll`, built on the
   player's PC on the first start. `split\glue.py` reads a whole build's objects and writes both sides of the split:
   the DLL forwards the runtime's functions and the 240 game functions the host replaces to `Castlevania.exe` through

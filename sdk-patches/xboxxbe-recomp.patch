@@ -65,7 +65,7 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..a3d57fb 100644
+index fe65837..e3edb1d 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -345,6 +345,10 @@ struct Tex {
@@ -96,6 +96,15 @@ index fe65837..a3d57fb 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
+@@ -583,7 +590,7 @@ private:
+     void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
+     uint32_t EnsureViewSet(const DrawTextures& stages);
+     uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
+-    void SetViewportScissor(const State& s, uint32_t gw);
++    void SetViewportScissor(const State& s, GuestExtent size);
+     void SetBlendFactorStencilRef(const State& s);
+     void UpdateTargetUsed(uint32_t data);
+     void DrawGeometry(const Assembled& a);
 @@ -1727,6 +1734,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
@@ -190,7 +199,63 @@ index fe65837..a3d57fb 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2815,6 +2877,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2218,6 +2280,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+     c.fog[3] = float(s.rs[kRsFogTableMode]);
+ }
+ 
++// D3DRS_MULTISAMPLEMODE on the back buffer, D3DRS_MULTISAMPLERENDERTARGETMODE on any other target: on a linear surface
++// 2X and 4X draw on a grid of half its columns, 4X of half its rows too, which the hardware spreads over the whole
++// surface (a title draws a 4X shadow volume on 320x240 over a 640x480 back buffer)
++GuestExtent MultisampleGrid(const State& s, const Surface& target, GuestExtent size) {
++    constexpr uint32_t kMode2x = 1;  // D3DMULTISAMPLEMODE_2X
++    constexpr uint32_t kMode4x = 2;  // D3DMULTISAMPLEMODE_4X
++    uint32_t mode = s.rt_back_buffer ? s.rs[kRsMultiSampleMode] : s.rs[kRsMultiSampleRenderTargetMode];
++    TextureDesc d;
++    if ((mode != kMode2x && mode != kMode4x) || !Describe(target.header, d) || !d.linear) return size;
++    LOG_FIRST(2, "d3d12: multisample %uX on %ux%u at %08X, drawn on %ux%u", mode * 2, size.w, size.h, target.data,
++              (size.w + 1) / 2, mode == kMode4x ? (size.h + 1) / 2 : size.h);
++    size.w = (size.w + 1) / 2;
++    if (mode == kMode4x) size.h = (size.h + 1) / 2;
++    return size;
++}
++
+ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
+     c.surf[0] = float(size.w);
+     c.surf[1] = float(size.h);
+@@ -2618,20 +2696,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+ }
+ 
+ // viewport covers the target, the guest viewport is in the shader; scissor clips to it
+-void D3D12Backend::SetViewportScissor(const State& s, uint32_t gw) {
++void D3D12Backend::SetViewportScissor(const State& s, GuestExtent size) {
+     float W = float(bound_rt_ ? bound_rt_->w : bound_ds_->w);
+     float H = float(bound_rt_ ? bound_rt_->h : bound_ds_->h);
+     D3D12_VIEWPORT vp{0, 0, W, H, 0, 1};
+-    float sc = W / gw;
+-    LONG x0 = LONG(s.viewport.x * sc);
+-    LONG y0 = LONG(s.viewport.y * sc);
+-    LONG x1 = LONG((s.viewport.x + s.viewport.w) * sc);
+-    LONG y1 = LONG((s.viewport.y + s.viewport.h) * sc);
++    // by axis: a multisampled grid may be narrower than the target and not shorter
++    float sx = W / size.w;
++    float sy = H / size.h;
++    LONG x0 = LONG(s.viewport.x * sx);
++    LONG y0 = LONG(s.viewport.y * sy);
++    LONG x1 = LONG((s.viewport.x + s.viewport.w) * sx);
++    LONG y1 = LONG((s.viewport.y + s.viewport.h) * sy);
+     if (s.scissor_count) {
+-        x0 = std::max(x0, LONG(s.scissors[0] * sc));
+-        y0 = std::max(y0, LONG(s.scissors[1] * sc));
+-        x1 = std::min(x1, LONG(s.scissors[2] * sc));
+-        y1 = std::min(y1, LONG(s.scissors[3] * sc));
++        x0 = std::max(x0, LONG(s.scissors[0] * sx));
++        y0 = std::max(y0, LONG(s.scissors[1] * sy));
++        x1 = std::min(x1, LONG(s.scissors[2] * sx));
++        y1 = std::min(y1, LONG(s.scissors[3] * sy));
+     }
+     D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
+                     std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
+@@ -2815,6 +2895,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -198,7 +263,24 @@ index fe65837..a3d57fb 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -3275,6 +3338,7 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -2848,6 +2929,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+     // constants
+     GuestExtent size;
+     SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
++    size = MultisampleGrid(s, bound_rt_ ? s.rt : s.zs, size);
+     DrawConstants c{};
+     UploadConstants(s, sh, k, stages, size, c);
+     if (ext_) binds_ = {};
+@@ -2860,7 +2942,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+ 
+     // texture views and samplers, viewport and scissor, blend factor and stencil reference
+     SetTextureViewsAndSamplers(s, a, stages);
+-    SetViewportScissor(s, size.w);
++    SetViewportScissor(s, size);
+     SetBlendFactorStencilRef(s);
+ 
+     // geometry, counted while the title runs a visibility test
+@@ -3275,6 +3357,7 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -206,7 +288,7 @@ index fe65837..a3d57fb 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,6 +3355,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,6 +3374,7 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -385,6 +467,20 @@ index 08d9bff..1195a1f 100644
  };
  inline const ShaderHooks* g_shader_hooks = nullptr;
  inline bool g_reversed_depth = false;  // the renderer stores depth reversed: shadow compares turn r with it
+diff --git a/runtime/gpu/state.h b/runtime/gpu/state.h
+index 2a57947..33a7c30 100644
+--- a/runtime/gpu/state.h
++++ b/runtime/gpu/state.h
+@@ -185,6 +185,9 @@ struct State {
+     uint32_t light_enable = 0;                         // bit per light
+     float ss_offset_x = 0, ss_offset_y = 0;
+     float zscale = 16777215.0f;  // depth buffer units per 1.0
++    // rt is the device's back buffer: D3DRS_MULTISAMPLEMODE applies to it, MULTISAMPLERENDERTARGETMODE to other targets.
++    // Known where the target is set: the render thread's rt header is a copy
++    bool rt_back_buffer = true;
+ };
+ 
+ }  // namespace gpu
 diff --git a/runtime/gpu/texture.cpp b/runtime/gpu/texture.cpp
 index c778ba0..5ea37dd 100644
 --- a/runtime/gpu/texture.cpp
@@ -422,7 +518,7 @@ index 6adb65a..d1dcd43 100644
  uint32_t LinearDepthFormat(uint32_t fmt);
  void SurfaceSize(const Surface& s, uint32_t& w, uint32_t& h);
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
-index 975e977..1ed86ca 100644
+index 975e977..e4bd7e4 100644
 --- a/runtime/xdk/d3d8.cpp
 +++ b/runtime/xdk/d3d8.cpp
 @@ -81,6 +81,10 @@ bool InCode(uint32_t va);  // cpu/dispatch.cpp
@@ -436,7 +532,31 @@ index 975e977..1ed86ca 100644
  
  namespace d3d {
  
-@@ -1398,6 +1402,23 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
+@@ -306,6 +310,7 @@ void SetFrameBuffers(const char* caller, uint32_t pp) {
+         std::memcpy(HostPtr(kDevice + XDK_CDevice_BackBufferScale + 4), &one, 4);
+     }
+     g_state.rt = SurfaceOf(g_buffers[1]);
++    g_state.rt_back_buffer = true;
+     g_state.zs = SurfaceOf(g_depth);
+     UpdateViewportConstants();
+ }
+@@ -554,6 +559,7 @@ void ApplyRenderTarget(X86Context& ctx, uint32_t rt, uint32_t zs) {
+     Release(ctx, old_rt);
+     Release(ctx, old_zs);
+     g_state.rt = SurfaceOf(rt);
++    g_state.rt_back_buffer = rt == g_buffers[1];  // the buffers swap their memory, not their headers
+     g_state.zs = SurfaceOf(zs);
+ }
+ }  // namespace
+@@ -635,6 +641,7 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
+     W32(g_buffers[0] + 4, data);
+     W32(g_buffers[0] + 8, lk);
+     g_state.rt = SurfaceOf(Dev(kDevRenderTarget));
++    g_state.rt_back_buffer = Dev(kDevRenderTarget) == g_buffers[1];
+     uint32_t n = Dev(kDevSwapCount) + 1;
+     SetDev(kDevSwapCount, n);
+     return n;
+@@ -1398,6 +1405,23 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
      return 0;
  }
  

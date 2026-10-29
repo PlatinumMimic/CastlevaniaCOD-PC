@@ -63,6 +63,8 @@ if(CV_SPLIT)
 else()
     # target name = GAME_EXE in build.bat, xbe = GAME_XBE
     add_xbe_image(Castlevania default.xbe game.toml ${GAME_PARTITIONS} game)
+    # the DLL is linked again whenever the exe is: one older than the exe is built again on the first start
+    set_property(TARGET Castlevania_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:Castlevania>)
 endif()
 
 target_include_directories(Castlevania SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
