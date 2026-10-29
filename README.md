@@ -122,7 +122,7 @@ Clone this repository and the SDK beside it with [Git](https://git-scm.com/), th
 ```
 git clone https://github.com/Pazzi7054/CastlevaniaCOD-PC
 git clone https://github.com/TGP482/XboxXBERecomp XboxXBE-Recomp
-git -C XboxXBE-Recomp checkout 99078b1
+git -C XboxXBE-Recomp checkout 91146ff
 git -C XboxXBE-Recomp apply ..\CastlevaniaCOD-PC\sdk-patches\xboxxbe-recomp.patch
 ```
 
@@ -147,15 +147,16 @@ and checks that nothing of the game went into the package.
 
 Changes this game needed beyond the generated config:
 
-- `config\game.toml`, by hand: `D3DDevice_SetPalette`, `D3DDevice_DrawIndexedVerticesUP` and five DirectSound buffer
-  methods (`SetPitch`, `Pause`, `PlayEx`, `SetDopplerFactor`, `SetRolloffFactor`) that no 5849 signature matched; the
-  DirectSound ones are named from the image's `.XTLID` table.
-- `sdk-patches\xboxxbe-recomp.patch`: host versions of `DrawIndexedVerticesUP` and the five DirectSound methods; a
+- `config\game.toml`, by hand: `D3DDevice_SetPalette`, `D3DDevice_DrawIndexedVerticesUP` and four DirectSound buffer
+  methods (`SetPitch`, `PlayEx`, `SetDopplerFactor`, `SetRolloffFactor`) that no 5849 signature matched; the
+  DirectSound ones are named from the image's `.XTLID` table (the SDK now finds `Pause` itself).
+- `sdk-patches\xboxxbe-recomp.patch`: host versions of `DrawIndexedVerticesUP` and the four DirectSound methods; a
   fixed-function stage with no texture that reads `D3DTA_TEXTURE` ends the stage cascade, as XDK D3D does (without it
   every single texture quad drew white); `XBE_VERBOSE` lets a release build log info lines; a `widescreen` setting;
   for renderer extensions, `ShaderHooks::Position` (HLSL after the vertex position is set), `Extension::Vertices`
-  (each draw's assembled vertices) and `gpu::ReadsConstant`; the DirectSound mixer plays every channel of a voice,
-  not only the first two (cutscene audio is a 5.1 stream with the voices in the centre channel, which was silent).
+  (each draw's assembled vertices) and `gpu::ReadsConstant`; an extension's replacement is drawn before the SDK's own
+  texture pack image. The SDK's mixer plays every channel of a voice by itself now (cutscene audio is a 5.1 stream
+  with the voices in the centre channel).
 - Releases (`release.bat`, `split\`, `src\common\setup.cpp`): the game code lives in `CastlevaniaGame.dll`, built on the
   player's PC on the first start. `split\glue.py` reads a whole build's objects and writes both sides of the split:
   the DLL forwards the runtime's functions and the 240 game functions the host replaces to `Castlevania.exe` through
@@ -195,6 +196,8 @@ Changes this game needed beyond the generated config:
 
 ## Known Issues
 - Only the first areas have been tested so far.
+- Releases: since 91146ff the SDK builds the game code into `Castlevania.dll` and compiles it on the player's PC
+  itself; `release.bat` and `split\` still make the earlier `CastlevaniaGame.dll` split and are to move over to it.
 
 ## Legal
 

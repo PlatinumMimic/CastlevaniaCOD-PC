@@ -1,16 +1,16 @@
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index d3519d5..ec36f97 100644
+index e1c1254..aa45026 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
-@@ -22,6 +22,7 @@ struct Settings {
-     uint32_t fps_cap = 60;           // 0 unlimited
-     bool vsync = true;
-     uint32_t aniso = 0;              // 0 as the game asks
+@@ -26,6 +26,7 @@ struct Settings {
+     bool custom_textures = true;     // images in textures\replacement\ beside the exe replace the game's
+     bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
+     uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
 +    bool widescreen = true;          // false: 4:3 on a wide output too
      std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
  };
  
-@@ -37,7 +38,8 @@ struct Mode {
+@@ -41,7 +42,8 @@ struct Mode {
  Mode Desktop();
  Mode Output();
  float RenderScale(uint32_t guest_height);
@@ -21,26 +21,26 @@ index d3519d5..ec36f97 100644
  
  std::filesystem::path ExeDir();
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 4b494d0..64714f0 100644
+index 075b3b7..a5bf770 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
-@@ -49,6 +49,7 @@ void Load() {
-     s.fps_cap = t["fps_cap"].value_or(s.fps_cap);
-     s.vsync = t["vsync"].value_or(s.vsync);
-     s.aniso = t["anisotropic_filtering"].value_or(s.aniso);
+@@ -53,6 +53,7 @@ void Load() {
+     s.custom_textures = t["custom_textures"].value_or(s.custom_textures);
+     s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
+     s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
 +    s.widescreen = t["widescreen"].value_or(s.widescreen);
      s.join_ip = t["join_ip"].value_or(s.join_ip);
      for (const Option& o : kGame.options) {
          if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
-@@ -68,6 +69,7 @@ toml::table Table() {
-                   {"fps_cap", int64_t(s.fps_cap)},
-                   {"vsync", s.vsync},
-                   {"anisotropic_filtering", int64_t(s.aniso)},
+@@ -75,6 +76,7 @@ toml::table Table() {
+                   {"custom_textures", s.custom_textures},
+                   {"dump_textures", s.dump_textures},
+                   {"texture_dump_format", int64_t(s.texture_dump_format)},
 +                  {"widescreen", s.widescreen},
                    {"join_ip", s.join_ip}};
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
-@@ -120,7 +122,7 @@ bool Widescreen() {
+@@ -127,7 +129,7 @@ bool Widescreen() {
          Mode m = Output();
          wide = m.width * 2 >= m.height * 3;  // 3:2 or wider
      }
@@ -48,7 +48,7 @@ index 4b494d0..64714f0 100644
 +    return wide && s.widescreen;
  }
  
- float RenderScale(uint32_t guest_height) {
+ // Output for every frame: the desktop mode lookup reads the registry, so it runs again only when the resolution
 diff --git a/runtime/core/log.cpp b/runtime/core/log.cpp
 index 7e6507d..d3c271d 100644
 --- a/runtime/core/log.cpp
@@ -65,13 +65,13 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index c410f12..d7a0466 100644
+index fe65837..a3d57fb 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
-@@ -321,6 +321,10 @@ struct Tex {
-     uint64_t frame = 0;
-     uint64_t palette = 0;  // hash of the colours a P8 texture was decoded with
-     uint8_t flags = 0;  // Extension::Decoded's
+@@ -345,6 +345,10 @@ struct Tex {
+     const Tex* swap = nullptr;  // the texture pack's image drawn in its place
+     uint64_t pack_key = 0;      // its pack image is still loading
+     uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
 +    // Extension::Replace's: the picture drawn instead, made once the extension has it
 +    uint64_t repl_id = 0;
 +    ComPtr<ID3D12Resource> repl;
@@ -79,15 +79,15 @@ index c410f12..d7a0466 100644
  };
  
  struct PsoKey {
-@@ -381,6 +385,7 @@ struct DrawTextures {
+@@ -406,6 +410,7 @@ struct DrawTextures {
      bool rt[4] = {};            // stage samples a render target
      float k[4] = {1, 1, 1, 1};  // Extension::Sample's k
      float wide[4] = {};         // host texels per console texel of a target read into a smaller one, 0 otherwise
 +    bool replaced[4] = {};      // drawn from an extension's replacement, filtered across all its levels
  };
  
- // a draw's shaders: what they are made from, their cache keys, the hashes Compile returned and the compiled blobs
-@@ -499,6 +504,8 @@ private:
+ // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
+@@ -549,6 +554,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -96,7 +96,7 @@ index c410f12..d7a0466 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -1608,6 +1615,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +1734,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -104,7 +104,7 @@ index c410f12..d7a0466 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1724,6 +1732,39 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +1851,39 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -144,11 +144,11 @@ index c410f12..d7a0466 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1749,9 +1790,23 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
-             g_perf.texup_bytes += total;
+@@ -1870,8 +1911,24 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
-             UploadTexture(tx, d, fi, p, palette.va ? palette.colours : nullptr, same);
-+            uint64_t id = ext_ ? ext_->Replace(d, p, palette.va ? palette.colours : nullptr) : 0;
+             UploadTexture(tx, d, fi, p, colours, same);
+             tx.pack_gen = 0;
++            uint64_t id = ext_ ? ext_->Replace(d, p, colours) : 0;
 +            if (id != tx.repl_id) {
 +                if (tx.repl) CurrentFrame().garbage.push_back(tx.repl);
 +                tx.repl.Reset();
@@ -157,18 +157,19 @@ index c410f12..d7a0466 100644
          }
      }
 +    if (tx.repl_id && !tx.repl && repl_budget_) MakeReplacement(tx);
-     FillTextureView(tx, d, stages.sv[stage]);
++    // an extension's replacement is drawn before the texture pack's image
 +    if (tx.repl) {
++        FillTextureView(tx, d, stages.sv[stage]);
 +        stages.sv[stage].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 +        stages.sv[stage].Texture2D.MipLevels = tx.repl_levels;
 +        stages.replaced[stage] = true;
 +        if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
 +        return tx.repl.Get();
 +    }
-     if (fi.depth) info.shadow = ShadowDepthKind(d.format);
-     if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
-     return tx.res.Get();
-@@ -1806,6 +1861,11 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+     if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
+     if (tx.pack_key) LatchPackImage(tx);
+     const Tex& drawn = tx.swap ? *tx.swap : tx;
+@@ -1982,6 +2039,11 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -180,7 +181,7 @@ index c410f12..d7a0466 100644
      // forced only where the title filters across mip levels and the texture has them
      if (aniso && lin(min) && mip && stages.sv[i].Texture2D.MipLevels > 1 && !stages.info[i].shadow) an = aniso;
      if (an > 1) {
-@@ -1817,7 +1877,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2055,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -189,7 +190,7 @@ index c410f12..d7a0466 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2478,6 +2538,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,6 +2877,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -197,7 +198,7 @@ index c410f12..d7a0466 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -2892,6 +2953,7 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +3338,7 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -205,7 +206,7 @@ index c410f12..d7a0466 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -2908,6 +2970,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,6 +3355,7 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -258,10 +259,10 @@ index ce6acda..3309a42 100644
      virtual void Decoded(const TextureDesc&, const FormatInfo&, uint32_t /*face*/, uint32_t /*level*/, const std::vector<uint8_t>& /*px*/,
                           uint32_t /*pitch*/, uint8_t& /*flags*/) {}
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 7e67b26..d639366 100644
+index 6d263d6..ac3c53c 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
-@@ -232,7 +232,7 @@ const char* kVsEpilogue = R"(
+@@ -233,7 +233,7 @@ const char* kVsEpilogue = R"(
      q.xyz *= p.w;
      q.w = p.w;
      o.pos = q;
@@ -270,7 +271,7 @@ index 7e67b26..d639366 100644
      o.d1 = saturate(oD1);
      o.b0 = saturate(oB0);
      o.b1 = saturate(oB1);
-@@ -245,6 +245,16 @@ const char* kVsEpilogue = R"(
+@@ -246,6 +246,16 @@ const char* kVsEpilogue = R"(
  }
  )";
  
@@ -287,7 +288,7 @@ index 7e67b26..d639366 100644
  const char* kVsPrologue = R"(
      int a0 = 0;
      // precise: EQUAL depth passes need bit exact positions
-@@ -625,6 +635,16 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
+@@ -667,6 +677,16 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
          const auto& t = s.tss[size_t(i)];
          uint32_t v[9] = {t[kTssColorOp], t[kTssColorArg1], t[kTssColorArg2], t[kTssColorArg0], t[kTssAlphaOp],
                           t[kTssAlphaArg1],  t[kTssAlphaArg2], t[kTssAlphaArg0], t[kTssResultArg]};
@@ -302,9 +303,9 @@ index 7e67b26..d639366 100644
 +        };
 +        if (i > 0 && !tex[i].kind && t[kTssColorOp] > 1 && (reads_texture(1, 3) || reads_texture(5, 3))) break;
          std::memcpy(k.ff[i], v, sizeof(v));
+         if (!tex[i].kind) PassMissingTexture(k.ff[i]);
          if (program || (t[kTssTextureTransformFlags] & 0x100)) k.proj |= 1u << i;  // D3DTTFF_PROJECTED
-         if (t[kTssColorOp] <= 1) break;
-@@ -635,17 +655,19 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
+@@ -678,17 +698,19 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
  constexpr uint32_t kMuxConstant = 3;
  constexpr uint32_t kViewportOffsetConstant = 59;  // c-37: constants start at c-96
  
@@ -326,7 +327,7 @@ index 7e67b26..d639366 100644
  std::string VertexProgramHlsl(const std::vector<uint32_t>& prog, uint16_t regs, uint64_t decode) {
      std::string s = Common();
      s += kVsHelpers;
-@@ -684,7 +706,7 @@ std::string VertexProgramHlsl(const std::vector<uint32_t>& prog, uint16_t regs,
+@@ -727,7 +749,7 @@ std::string VertexProgramHlsl(const std::vector<uint32_t>& prog, uint16_t regs,
          }
          if (k.f(3, 0, 1)) break;  // last instruction
      }
@@ -335,7 +336,7 @@ index 7e67b26..d639366 100644
      return s;
  }
  
-@@ -797,7 +819,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -840,7 +862,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
          s += "    }\n";
      }
      s += "    oFog = " + v(5, "float4(0,0,0,0)") + ";\n";
@@ -344,7 +345,7 @@ index 7e67b26..d639366 100644
      s += R"(
      VOut o;
      // like the pretransformed ones, target sized passes end half a console pixel short of the far edges
-@@ -805,7 +827,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -848,7 +870,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      if (surf.w == 0 && abs(sp.x - (surf.x - 0.5)) < 1e-3) cp.x = cp.w;
      if (surf.w == 0 && abs(sp.y - (surf.y - 0.5)) < 1e-3) cp.y = -cp.w;
      o.pos = cp;
@@ -353,7 +354,7 @@ index 7e67b26..d639366 100644
      o.d1 = saturate(oD1);
      o.b0 = o.d0;
      o.b1 = o.d1;
-@@ -817,7 +839,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -860,7 +882,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      return o;
  }
  )";
@@ -363,10 +364,10 @@ index 7e67b26..d639366 100644
  
  std::string PixelHlsl(const PixelKey& k) {
 diff --git a/runtime/gpu/shaders.h b/runtime/gpu/shaders.h
-index 9b8cbdd..e636653 100644
+index 08d9bff..1195a1f 100644
 --- a/runtime/gpu/shaders.h
 +++ b/runtime/gpu/shaders.h
-@@ -45,6 +45,8 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]);
+@@ -46,6 +46,8 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]);
  std::string VertexProgramHlsl(const std::vector<uint32_t>& program, uint16_t regs, uint64_t decode = 0);
  // the program reads c-37, the viewport offset that carries the XDK's half pixel screen space offset
  bool ReadsViewportOffset(const std::vector<uint32_t>& program);
@@ -375,7 +376,7 @@ index 9b8cbdd..e636653 100644
  // fixed function vertex state a shader is built for
  struct FixedKey {
      uint32_t light = 0;    // bit 0 lighting, 1 specular, 2 local viewer, 3 normalize, then D3DMCS 2 bits each from bit 8:
-@@ -75,6 +77,8 @@ struct ShaderHooks {
+@@ -78,6 +80,8 @@ struct ShaderHooks {
      virtual std::string Fetched(const TexInfo&, int) const { return {}; }
      // outc to the target, after the alpha test
      virtual std::string Output() const;
@@ -383,12 +384,12 @@ index 9b8cbdd..e636653 100644
 +    virtual std::string Position() const { return {}; }
  };
  inline const ShaderHooks* g_shader_hooks = nullptr;
- 
+ inline bool g_reversed_depth = false;  // the renderer stores depth reversed: shadow compares turn r with it
 diff --git a/runtime/gpu/texture.cpp b/runtime/gpu/texture.cpp
-index 7c896d3..e5c7d8b 100644
+index c778ba0..5ea37dd 100644
 --- a/runtime/gpu/texture.cpp
 +++ b/runtime/gpu/texture.cpp
-@@ -393,6 +393,18 @@ void DecodeLevel(const TextureDesc& d, uint32_t level, uint32_t face, const uint
+@@ -399,6 +399,18 @@ void DecodeLevel(const TextureDesc& d, uint32_t level, uint32_t face, const uint
              }
  }
  
@@ -421,21 +422,21 @@ index 6adb65a..d1dcd43 100644
  uint32_t LinearDepthFormat(uint32_t fmt);
  void SurfaceSize(const Surface& s, uint32_t& w, uint32_t& h);
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
-index cb38363..40af2dd 100644
+index 975e977..1ed86ca 100644
 --- a/runtime/xdk/d3d8.cpp
 +++ b/runtime/xdk/d3d8.cpp
-@@ -39,6 +39,10 @@ using namespace kernel;
- #define SYM_D3DDevice_GetVertexShaderFunction FFFFFE03
- #define HAS_D3DDevice_GetVertexShaderFunction 0
+@@ -81,6 +81,10 @@ bool InCode(uint32_t va);  // cpu/dispatch.cpp
+ #define SYM_D3D_BlockOnNonSurfaceResource FFFFFE0A
+ #define HAS_D3D_BlockOnNonSurfaceResource 0
  #endif
 +#ifndef SYM_D3DDevice_DrawIndexedVerticesUP
-+#define SYM_D3DDevice_DrawIndexedVerticesUP FFFFFE04
++#define SYM_D3DDevice_DrawIndexedVerticesUP FFFFFE0B
 +#define HAS_D3DDevice_DrawIndexedVerticesUP 0
 +#endif
  
  namespace d3d {
  
-@@ -1113,6 +1117,23 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
+@@ -1398,6 +1402,23 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
      return 0;
  }
  
@@ -457,155 +458,46 @@ index cb38363..40af2dd 100644
 +}
 +
  // BeginPush(dwords) hands out room for raw hardware commands, EndPush(end) runs what the title wrote there:
- // a primitive between two begin/end writes with its vertices inline, any other method as a simple state.
+ // a primitive between two begin/end writes with its vertices inline or as vertex data, other methods as simple states.
  HLE_STDCALL(D3DDevice_BeginPush, 1) {
 diff --git a/runtime/xdk/dsound.cpp b/runtime/xdk/dsound.cpp
-index b54aa04..142f8a5 100644
+index b322778..105d14f 100644
 --- a/runtime/xdk/dsound.cpp
 +++ b/runtime/xdk/dsound.cpp
-@@ -75,6 +75,27 @@ X86Func* Find(uint32_t guest);
- #define SYM_IDirectSoundStream_SetEG FFFFFF0C
- #define HAS_IDirectSoundStream_SetEG 0
+@@ -85,6 +85,23 @@ X86Func* Find(uint32_t guest);
+ #define SYM_IDirectSoundBuffer_SetEG FFFFFF0E
+ #define HAS_IDirectSoundBuffer_SetEG 0
  #endif
 +// no signature yet; a config names them by hand from the .XTLID ids (Castlevania: Curse of Darkness)
 +#ifndef SYM_IDirectSoundBuffer_SetPitch
-+#define SYM_IDirectSoundBuffer_SetPitch FFFFFF0D
++#define SYM_IDirectSoundBuffer_SetPitch FFFFFF0F
 +#define HAS_IDirectSoundBuffer_SetPitch 0
 +#endif
-+#ifndef SYM_IDirectSoundBuffer_Pause
-+#define SYM_IDirectSoundBuffer_Pause FFFFFF0E
-+#define HAS_IDirectSoundBuffer_Pause 0
-+#endif
 +#ifndef SYM_IDirectSoundBuffer_PlayEx
-+#define SYM_IDirectSoundBuffer_PlayEx FFFFFF0F
++#define SYM_IDirectSoundBuffer_PlayEx FFFFFF10
 +#define HAS_IDirectSoundBuffer_PlayEx 0
 +#endif
 +#ifndef SYM_IDirectSoundBuffer_SetDopplerFactor
-+#define SYM_IDirectSoundBuffer_SetDopplerFactor FFFFFF10
++#define SYM_IDirectSoundBuffer_SetDopplerFactor FFFFFF11
 +#define HAS_IDirectSoundBuffer_SetDopplerFactor 0
 +#endif
 +#ifndef SYM_IDirectSoundBuffer_SetRolloffFactor
-+#define SYM_IDirectSoundBuffer_SetRolloffFactor FFFFFF11
++#define SYM_IDirectSoundBuffer_SetRolloffFactor FFFFFF12
 +#define HAS_IDirectSoundBuffer_SetRolloffFactor 0
 +#endif
  
  namespace {
  
-@@ -209,18 +230,23 @@ float StereoFold(uint32_t bin) {
-     return folded ? 0.707f : 1.0f;
- }
- 
-+constexpr uint32_t kMaxChannels = 8;
-+
- // gain of voice channel c on host left and right. A hardware voice holds two channels and owns a run of slots,
--// which alternate left and right.
--void Levels(Voice& v, float g[2][2]) {
-+// which alternate left and right: a 5.1 stream is three of them, front, centre and LFE, back.
-+void Levels(Voice& v, float g[kMaxChannels][2]) {
-     static const uint8_t kFront[2] = {0, 1};
-     const uint8_t* bin = v.nbins ? v.bin : kFront;
-     uint32_t n = v.nbins ? v.nbins : 2, voices = (std::max<uint32_t>(v.channels, 1) - 1) / 2 + 1;
-     uint32_t per = std::max<uint32_t>(n / voices, 2), step = v.channels == 1 ? 1 : 2;
-     bool speakers = false;
-     for (uint32_t s = 0; s < n; s++) speakers |= bin[s] < 10 && bin[s] != 3;
--    for (uint32_t c = 0; c < 2; c++) {
-+    for (uint32_t c = 0; c < kMaxChannels; c++) {
-         g[c][0] = g[c][1] = 0;
--        for (uint32_t s = c; c < v.channels && s < per && s < n; s += step) {
-+        // the slots of channel c: its hardware voice's run, its own side of it
-+        uint32_t first = v.channels == 1 ? 0 : (c / 2) * per + (c % 2);
-+        uint32_t last = v.channels == 1 ? n : std::min(n, (c / 2 + 1) * per);
-+        for (uint32_t s = first; c < v.channels && s < last; s += step) {
-             uint32_t b = bin[s];
-             if (speakers && (b == 3 || b > 9)) continue;  // sub and effect sends
-             float x = Db(v.bin_mb[b]) * v.volume * v.headroom * StereoFold(b);
-@@ -256,7 +282,7 @@ void Levels(Voice& v, float g[2][2]) {
-                       g_top[0] * g_front[1] - g_top[1] * g_front[0]};
-     float side = rel ? d[0] : d[0] * right[0] + d[1] * right[1] + d[2] * right[2];
-     float pan = dist > 1e-3f ? side / dist : 0.0f;
--    for (int c = 0; c < 2; c++) {
-+    for (uint32_t c = 0; c < kMaxChannels; c++) {
-         g[c][0] *= att * std::min(1.0f, 1.0f - pan);
-         g[c][1] *= att * std::min(1.0f, 1.0f + pan);
-     }
-@@ -273,13 +299,14 @@ void Render(float* out, uint32_t frames) {
-     std::lock_guard<std::recursive_mutex> lock(g_lock);
-     for (auto& [obj, v] : g_voices) {
-         if (v.paused || v.sync || (!v.stream && !v.playing)) continue;
--        float g[2][2];
-+        float g[kMaxChannels][2];
-         Levels(v, g);
-+        uint32_t chans = std::min<uint32_t>(v.channels, kMaxChannels);
-         uint32_t base = v.data + v.play_start;
-         double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
-         for (uint32_t i = 0; i < frames; i++) {
-             uint32_t f = uint32_t(v.pos);
--            float a, b, a1, b1;  // this frame and the next, interpolated between
-+            float s0[kMaxChannels], s1[kMaxChannels];  // this frame and the next, interpolated between
-             if (v.stream) {
-                 while (!v.packets.empty() && f >= FramesOf(v, v.packets.front().size)) {
-                     Packet pk = v.packets.front();
-@@ -295,17 +322,10 @@ void Render(float* out, uint32_t frames) {
-                     break;
-                 }
-                 Packet& pk = v.packets.front();
--                a = Sample(v, pk.data, f, 0);
--                b = Sample(v, pk.data, f, 1);
--                if (f + 1 < FramesOf(v, pk.size)) {
--                    a1 = Sample(v, pk.data, f + 1, 0);
--                    b1 = Sample(v, pk.data, f + 1, 1);
--                } else if (v.packets.size() > 1) {
--                    a1 = Sample(v, v.packets[1].data, 0, 0);
--                    b1 = Sample(v, v.packets[1].data, 0, 1);
--                } else {
--                    a1 = a;
--                    b1 = b;
-+                bool inside = f + 1 < FramesOf(v, pk.size), next = v.packets.size() > 1;
-+                for (uint32_t c = 0; c < chans; c++) {
-+                    s0[c] = Sample(v, pk.data, f, int(c));
-+                    s1[c] = inside ? Sample(v, pk.data, f + 1, int(c)) : next ? Sample(v, v.packets[1].data, 0, int(c)) : s0[c];
-                 }
-             } else {
-                 uint32_t start = v.looping ? FramesOf(v, v.loop_start) : 0;
-@@ -320,17 +340,18 @@ void Render(float* out, uint32_t frames) {
-                     f = uint32_t(v.pos);
-                 }
-                 if (!v.data) break;
--                a = Sample(v, base, f, 0);
--                b = Sample(v, base, f, 1);
-                 uint32_t next = f + 1 < end ? f + 1 : v.looping ? start : f;
--                a1 = Sample(v, base, next, 0);
--                b1 = Sample(v, base, next, 1);
-+                for (uint32_t c = 0; c < chans; c++) {
-+                    s0[c] = Sample(v, base, f, int(c));
-+                    s1[c] = Sample(v, base, next, int(c));
-+                }
-             }
-             float t = float(v.pos - f);
--            a += (a1 - a) * t;
--            b += (b1 - b) * t;
--            out[i * 2] += a * g[0][0] + b * g[1][0];
--            out[i * 2 + 1] += a * g[0][1] + b * g[1][1];
-+            for (uint32_t c = 0; c < chans; c++) {
-+                float s = s0[c] + (s1[c] - s0[c]) * t;
-+                out[i * 2] += s * g[c][0];
-+                out[i * 2 + 1] += s * g[c][1];
-+            }
-             v.pos += step;
-         }
-     }
-@@ -461,7 +482,9 @@ static void AuditExports() {
-         SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter), SYM(CDirectSoundStream_SetHeadroom),
-         SYM(CDirectSoundStream_SetMixBinVolumes), SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
-         SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition), SYM(CDirectSoundStream_SetVelocity),
--        SYM(CDirectSoundStream_SetI3DL2Source), SYM(IDirectSoundStream_SetEG)};
-+        SYM(CDirectSoundStream_SetI3DL2Source), SYM(IDirectSoundStream_SetEG),
-+        SYM(IDirectSoundBuffer_SetPitch), SYM(IDirectSoundBuffer_Pause), SYM(IDirectSoundBuffer_PlayEx),
-+        SYM(IDirectSoundBuffer_SetDopplerFactor), SYM(IDirectSoundBuffer_SetRolloffFactor)};
-     std::string left;
-     // the library's own section: the WMA decoder shares the export ids and touches no DSOUND object
-     uint32_t lo = 0, hi = 0;
-@@ -702,6 +725,28 @@ BUFFER(SetFrequency, 2) {
+@@ -740,6 +757,8 @@ static void AuditExports() {
+         SYM(IDirectSound_GetOutputLevels), SYM(IDirectSoundBuffer_SetPlayRegion), SYM(IDirectSoundBuffer_SetAllParameters),
+         SYM(IDirectSoundBuffer_SetFormat), SYM(IDirectSoundBuffer_SetOutputBuffer), SYM(IDirectSoundBuffer_SetRolloffCurve),
+         SYM(IDirectSoundBuffer_StopEx), SYM(IDirectSoundBuffer_Pause), SYM(IDirectSoundBuffer_SetEG),
++        SYM(IDirectSoundBuffer_SetPitch), SYM(IDirectSoundBuffer_PlayEx), SYM(IDirectSoundBuffer_SetDopplerFactor),
++        SYM(IDirectSoundBuffer_SetRolloffFactor),
+         SYM(XAudioDownloadEffectsImage), SYM(DirectSoundCreateBuffer), SYM(IDirectSound_CreateSoundBuffer),
+         SYM(IDirectSoundBuffer_Release), SYM(IDirectSoundBuffer_Unlock), SYM(IDirectSoundBuffer_SetBufferData),
+         SYM(IDirectSoundBuffer_Play), SYM(IDirectSoundBuffer_Stop), SYM(IDirectSoundBuffer_SetLoopRegion),
+@@ -1044,6 +1063,23 @@ BUFFER(SetFrequency, 2) {
      v.freq = a[1];
      return 0;
  }
@@ -614,14 +506,9 @@ index b54aa04..142f8a5 100644
 +    v.freq = uint32_t(48000.0 * std::exp2(int32_t(a[1]) / 4096.0) + 0.5);
 +    return 0;
 +}
-+// (this, DSBPAUSE_RESUME 0 / DSBPAUSE_PAUSE 1 / DSBPAUSE_SYNCHPLAYBACK 2)
-+BUFFER(Pause, 2) {
-+    v.paused = a[1] == 1;
-+    v.sync = a[1] == 2;
-+    return 0;
-+}
 +// (this, time low, time high, flags): starts now, the timestamp is not honoured
 +BUFFER(PlayEx, 4) {
++    v.has_gain = false;  // as Play
 +    v.playing = true;
 +    v.paused = false;
 +    v.looping = a[3] & 1;

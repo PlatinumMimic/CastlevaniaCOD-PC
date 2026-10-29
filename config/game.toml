@@ -8,6 +8,7 @@ xdk = 5849
 out = "generated/game"
 partitions = 128
 code_sections = [".text", "D3D", "D3DX", "XGRPH", "DSOUND", "XMV", "XPP"]
+library = "Castlevania.dll"  # <exe>.dll, which the executable delay loads
 
 # extra entry points
 [functions]
@@ -85,11 +86,13 @@ D3DDevice_FlushVertexCache                           = 0
 D3DDevice_GetBackBuffer2                             = 0x3B7230
 D3DDevice_GetDepthStencilSurface2                    = 0x3B75D0
 D3DDevice_GetRenderTarget2                           = 0x3B75B0
+D3DDevice_GetTile                                    = 0
 D3DDevice_GetVertexShaderFunction                    = 0
 D3DDevice_InsertFence                                = 0
 D3DDevice_IsFencePending                             = 0
 D3DDevice_LightEnable                                = 0
 D3DDevice_LoadVertexShader                           = 0x3B8AE0
+D3DDevice_LoadVertexShaderProgram                    = 0
 D3DDevice_MakeSpace                                  = 0x3BCE70
 D3DDevice_PersistDisplay                             = 0
 D3DDevice_Release                                    = 0
@@ -134,6 +137,7 @@ D3DDevice_SetRenderState_YuvEnable                   = 0x3BA3C0
 D3DDevice_SetRenderState_ZEnable                     = 0x3BA220
 D3DDevice_SetRenderStateNotInline                    = 0x3B9000
 D3DDevice_SetRenderTarget                            = 0x3B6FB0
+D3DDevice_SetRenderTargetFast                        = 0
 D3DDevice_SetScissors                                = 0x3B7C40
 D3DDevice_SetScreenSpaceOffset                       = 0x3B7F40
 D3DDevice_SetShaderConstantMode                      = 0x3B8BE0
@@ -199,6 +203,7 @@ IDirectSoundBuffer_Release                           = 0x3E15F7
 IDirectSoundBuffer_SetAllParameters                  = 0
 IDirectSoundBuffer_SetBufferData                     = 0x3E3713
 IDirectSoundBuffer_SetCurrentPosition                = 0
+IDirectSoundBuffer_SetEG                             = 0
 IDirectSoundBuffer_SetFilter                         = 0
 IDirectSoundBuffer_SetFormat                         = 0x3E36F7
 IDirectSoundBuffer_SetFrequency                      = 0
