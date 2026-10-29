@@ -9,14 +9,16 @@
 //   Enter  Start            Backspace  Back
 //
 // CV_PAD_SCRIPT="<ms>:<button>[+<button>...][:<hold ms>],..." presses buttons at times measured from the game's
-// first read of the pad (default hold 150 ms). Buttons: up down left right start back a b x y black white lt rt
-// lsu lsd lsl lsr (left stick) rsu rsd rsl rsr (right stick). "@file" reads the same entries from a file, one per
-// line or comma separated.
+// first read of the pad (default hold 150 ms). A time ending in f counts the game's frames instead, its hold too
+// ("120f:a:10f", default hold 9 frames), so a run does not drift when frames take longer. Buttons: up down left
+// right start back a b x y black white lt rt lsu lsd lsl lsr (left stick) rsu rsd rsl rsr (right stick). "@file"
+// reads the same entries from a file, one per line or comma separated.
 //
 // CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
 // its entries as CV_PAD_SCRIPT does, times from the command's start ("<ms>:wait" only waits), then writes
-// done-<n>.txt and waits for the next. The window need not be in front. <va>:<bytes>[,...] in <folder>\dump.txt (or
-// CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each command's end, as mem-<n>-<va>.bin.
+// state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next. The window need not be in front.
+// <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
+// command's end, as mem-<n>-<va>.bin.
 #include <windows.h>
 
 #include <algorithm>
@@ -33,8 +35,11 @@
 
 #include "core/input.h"
 #include "kernel/memory.h"
+#include "xdk/d3d8.h"
 
 extern std::atomic<bool> g_closing;  // below: the window is closing
+std::string GameStateJson();         // telemetry.cpp
+void TelemetryFrame();               // telemetry.cpp
 
 namespace {
 
@@ -86,7 +91,8 @@ void Keyboard(input::Pad& p) {
 }
 
 struct Step {
-    int64_t at, until;
+    int64_t at, until;  // ms, or frames
+    bool frames;
     uint16_t buttons;
     uint32_t analog;  // bit per analog slot
     int16_t lx, ly, rx, ry;
@@ -106,8 +112,8 @@ std::vector<Step> ParseScript(std::string text) {
         std::getline(e, names, ':');
         std::getline(e, hold, ':');
         if (at.empty() || names.empty()) continue;
-        Step s{std::atoll(at.c_str()), 0, 0, 0, 0, 0, 0, 0};
-        s.until = s.at + (hold.empty() ? 150 : std::atoll(hold.c_str()));
+        Step s{std::atoll(at.c_str()), 0, at.back() == 'f', 0, 0, 0, 0, 0, 0};
+        s.until = s.at + (hold.empty() ? (s.frames ? 9 : 150) : std::atoll(hold.c_str()));  // atoll stops at the f
         std::stringstream n(names);
         std::string b;
         while (std::getline(n, b, '+')) {
@@ -155,8 +161,10 @@ const std::vector<Step>& Script() {
     return steps;
 }
 
-void Press(input::Pad& p, const std::vector<Step>& steps, int64_t now) {
+// ms and frames since the script or command started
+void Press(input::Pad& p, const std::vector<Step>& steps, int64_t ms, int64_t frames) {
     for (const Step& s : steps) {
+        int64_t now = s.frames ? frames : ms;
         if (now < s.at || now >= s.until) continue;
         p.buttons |= s.buttons;
         for (int i = 0; i < 8; i++)
@@ -178,7 +186,8 @@ void Scripted(input::Pad& p) {
     const auto& steps = Script();
     if (steps.empty()) return;
     static const Clock::time_point start = Clock::now();
-    Press(p, steps, MsSince(start));
+    static const uint32_t start_frame = d3d::Swaps();
+    Press(p, steps, MsSince(start), int64_t(d3d::Swaps() - start_frame));
 }
 
 // CV_PAD_LIVE: the command running, its entries and when it is over
@@ -188,7 +197,8 @@ struct Live {
     bool running = false;
     std::vector<Step> steps;
     Clock::time_point start;
-    int64_t end = 0;
+    uint32_t start_frame = 0;
+    int64_t end_ms = 0, end_frames = 0;  // over when both are reached
 };
 
 Live& LiveState() {
@@ -229,8 +239,9 @@ std::mutex g_live_m;
 void LiveWait() {
     std::lock_guard lock(g_live_m);
     Live& l = LiveState();
-    if (l.running && MsSince(l.start) >= l.end) {
+    if (l.running && MsSince(l.start) >= l.end_ms && int64_t(d3d::Swaps() - l.start_frame) >= l.end_frames) {
         LiveDump(l);
+        std::ofstream(l.dir / ("state-" + std::to_string(l.n) + ".json")) << GameStateJson() << "\n";
         std::ofstream(l.dir / ("done-" + std::to_string(l.n) + ".txt")) << l.n << "\n";
         l.running = false;
     }
@@ -242,10 +253,14 @@ void LiveWait() {
             std::stringstream ss;
             ss << f.rdbuf();
             l.steps = ParseScript(ss.str());
-            l.end = 0;
-            for (const Step& s : l.steps) l.end = (std::max)(l.end, s.until);  // windows.h defines max
+            l.end_ms = l.end_frames = 0;
+            for (const Step& s : l.steps) {
+                int64_t& end = s.frames ? l.end_frames : l.end_ms;
+                end = (std::max)(end, s.until);  // windows.h defines max
+            }
             l.n++;
             l.start = Clock::now();
+            l.start_frame = d3d::Swaps();
             l.running = true;
             break;
         }
@@ -273,6 +288,7 @@ void KeyboardPad(int port, input::Pad& p) {
     if (g_pause_on_focus_loss && Script().empty() && !LiveOn())
         while (!Focused() && !g_closing && IsWindow(g_hwnd)) Sleep(50);
     if (LiveOn()) LiveWait();
+    TelemetryFrame();
     p.connected = true;
     // both sticks clicked in together: the menu from a controller
     static bool sticks = false;
@@ -289,6 +305,7 @@ void KeyboardPad(int port, input::Pad& p) {
     Scripted(p);
     if (LiveOn()) {
         std::lock_guard lock(g_live_m);
-        if (LiveState().running) Press(p, LiveState().steps, MsSince(LiveState().start));
+        const Live& l = LiveState();
+        if (l.running) Press(p, l.steps, MsSince(l.start), int64_t(d3d::Swaps() - l.start_frame));
     }
 }
