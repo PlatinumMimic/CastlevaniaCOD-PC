@@ -16,7 +16,8 @@
 //
 // CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
 // its entries as CV_PAD_SCRIPT does, times from the command's start ("<ms>:wait" only waits), then writes
-// state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next. The window need not be in front.
+// state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next. The window need not be in front. An entry
+// "0:warp=<map>.<room>[.<entry>]" sends Hector to that room at the command's start (game/warp.cpp).
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
 #include <windows.h>
@@ -40,6 +41,7 @@
 extern std::atomic<bool> g_closing;  // below: the window is closing
 std::string GameStateJson();         // telemetry.cpp
 void TelemetryFrame();               // telemetry.cpp
+void RequestWarp(int map, int room, int entry);  // game/warp.cpp
 
 namespace {
 
@@ -96,6 +98,7 @@ struct Step {
     uint16_t buttons;
     uint32_t analog;  // bit per analog slot
     int16_t lx, ly, rx, ry;
+    int map = -1, room = 0, entry = 0;  // warp=<map>.<room>[.<entry>]: live commands send Hector there at their start
 };
 
 std::vector<Step> ParseScript(std::string text) {
@@ -139,6 +142,7 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b == "rsd") s.ry = -32767;
             else if (b == "rsl") s.rx = -32767;
             else if (b == "rsr") s.rx = 32767;
+            else if (b.rfind("warp=", 0) == 0) std::sscanf(b.c_str() + 5, "%d.%d.%d", &s.map, &s.room, &s.entry);
         }
         steps.push_back(s);
     }
@@ -258,6 +262,8 @@ void LiveWait() {
                 int64_t& end = s.frames ? l.end_frames : l.end_ms;
                 end = (std::max)(end, s.until);  // windows.h defines max
             }
+            for (const Step& s : l.steps)
+                if (s.map >= 0) RequestWarp(s.map, s.room, s.entry);
             l.n++;
             l.start = Clock::now();
             l.start_frame = d3d::Swaps();

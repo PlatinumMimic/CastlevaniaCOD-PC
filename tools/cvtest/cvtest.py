@@ -5,6 +5,7 @@ usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/relea
 
 A scenario is JSON:
   {"name": "...",
+   "after": "<scenario>.json",            optional: that scenario's steps first (a path beside this one)
    "save": "<name>",                      optional: start from the saves a step kept with save_as
    "settings": {"display_mode": ...},     optional: castlevania.toml lines (windowed 960x540 by default)
    "steps": [step, ...]}
@@ -222,8 +223,18 @@ class Game:
                 self.proc.kill()
 
 
+def load(path):
+    """a scenario with the steps of the ones it comes after"""
+    scenario = json.loads(Path(path).read_text(encoding="utf-8"))
+    if scenario.get("after"):
+        first = load(Path(path).parent / scenario["after"])
+        scenario["steps"] = first["steps"] + scenario["steps"]
+        scenario.setdefault("save", first.get("save"))
+    return scenario
+
+
 def run(scenario_path, build, keep):
-    scenario = json.loads(Path(scenario_path).read_text(encoding="utf-8"))
+    scenario = load(scenario_path)
     name = scenario.get("name", Path(scenario_path).stem)
     out = REPO / "out" / "test" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     game = Game(build, out / "game", scenario)
