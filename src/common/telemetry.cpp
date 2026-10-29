@@ -15,6 +15,7 @@
 //                        screen and debug views run callback 0x345020 or 0x4E7D0, at [u32 0xC36B70] + 0x1D0
 //   menus                u32 0xB25518 is not 0 while the pause or inventory menu is up; a modal box sets bit 16 of the
 //                        word at u32 [0x548C10]
+//   scene                u32 0xB23410 (found here, by comparing memory in play and in a story scene)
 //
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
 // the pad; turn by turn play (keyboard.cpp) writes it beside each done file.
@@ -161,10 +162,49 @@ std::string GameStateJson() {
     }
     Player(j);
     Camera(j);
+    // u32 0xB23410, seen in play: 0x20000 for a story scene (the room 5.11 tombstone, from its start until Start skips
+    // it), 0x8000 while a room change loads, 0 in play, menus and the title
+    uint32_t scene = 0;
+    if (Read(0xB23410u, scene)) {
+        j.Int("scene", scene);
+        j.Bool("cutscene", scene & 0x20000);
+        j.Bool("loading", scene & 0x8000);
+    }
     uint32_t menu = 0, flags_at = 0, flags = 0;
     if (Read(0xB25518u, menu)) j.Bool("menu", menu != 0);
     if (Read(0x548C10u, flags_at) && flags_at && Read(flags_at, flags)) j.Bool("modal", (flags >> 16) & 1);
     return j.Done();
+}
+
+// every map's rooms from the table the map screen draws from (header 0x55BA00, after Neguchads' minimap.cpp): flags
+// +4 (bit 0: absolute pointers, else from the header), group count int16 +10, groups +12; a group is int8 map, int8
+// room count, pointer +4 to 24 byte room records, the room ID at +8. [{"map": m, "rooms": [r, ...]}, ...], or "" when
+// the table is not there yet
+std::string RoomListJson() {
+    constexpr uint32_t kHeader = 0x55BA00;
+    uint32_t flags = 0, groups = 0;
+    int16_t count = 0;
+    if (!Read(kHeader + 4, flags) || !Read(kHeader + 10, count) || count < 1 || count > 32 || !Read(kHeader + 12, groups))
+        return "";
+    auto pointer = [&](uint32_t v) { return flags & 1 ? v : kHeader + v; };
+    groups = pointer(groups);
+    std::string out = "[";
+    for (int i = 0; i < count; i++) {
+        int8_t map = 0, n = 0;
+        uint32_t records = 0;
+        if (!Read(groups + i * 8, map) || !Read(groups + i * 8 + 1, n) || n < 1 || !Read(groups + i * 8 + 4, records))
+            continue;
+        records = pointer(records);
+        if (out.size() > 1) out += ',';
+        out += "{\"map\":" + std::to_string(map) + ",\"rooms\":[";
+        for (int j = 0; j < n; j++) {
+            uint8_t room = 0;
+            if (!Read(records + j * 24 + 8, room)) continue;
+            out += (out.back() == '[' ? "" : ",") + std::to_string(room);
+        }
+        out += "]}";
+    }
+    return out.size() > 1 ? out + "]" : "";
 }
 
 // CV_TELEMETRY: at a pad read, the state once every CV_TELEMETRY_EVERY frames

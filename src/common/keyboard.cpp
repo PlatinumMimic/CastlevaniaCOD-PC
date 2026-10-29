@@ -16,7 +16,8 @@
 //
 // CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
 // its entries as CV_PAD_SCRIPT does, times from the command's start ("<ms>:wait" only waits), then writes
-// state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next. The window need not be in front. An entry
+// state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next, and rooms.json (every map's rooms) once the
+// game has its room table. The window need not be in front. An entry
 // "0:warp=<map>.<room>[.<entry>]" sends Hector to that room at the command's start (game/warp.cpp).
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
@@ -40,6 +41,7 @@
 
 extern std::atomic<bool> g_closing;  // below: the window is closing
 std::string GameStateJson();         // telemetry.cpp
+std::string RoomListJson();          // telemetry.cpp
 void TelemetryFrame();               // telemetry.cpp
 void RequestWarp(int map, int room, int entry);  // game/warp.cpp
 
@@ -246,6 +248,12 @@ void LiveWait() {
     if (l.running && MsSince(l.start) >= l.end_ms && int64_t(d3d::Swaps() - l.start_frame) >= l.end_frames) {
         LiveDump(l);
         std::ofstream(l.dir / ("state-" + std::to_string(l.n) + ".json")) << GameStateJson() << "\n";
+        static bool rooms = false;  // the map screen's room table, once it is there
+        if (!rooms) {
+            std::string list = RoomListJson();
+            if (!list.empty()) std::ofstream(l.dir / "rooms.json") << list << "\n";
+            rooms = !list.empty();
+        }
         std::ofstream(l.dir / ("done-" + std::to_string(l.n) + ".txt")) << l.n << "\n";
         l.running = false;
     }

@@ -8,11 +8,16 @@ A scenario is JSON:
    "after": "<scenario>.json",            optional: that scenario's steps first (a path beside this one)
    "save": "<name>",                      optional: start from the saves a step kept with save_as
    "settings": {"display_mode": ...},     optional: castlevania.toml lines (windowed 960x540 by default)
+   "dump": "<va>:<bytes>,...",            optional: guest memory saved after every command (game/live/mem-<n>-<va>.bin)
    "steps": [step, ...]}
 A step plays one of
   "press": "<entries>"                    keyboard.cpp's syntax, "0:a,500:b:300" or frames "0f:lsu:60f"
   "until": "<expression>"                 plays "poll" (default "30f:wait") again until the expression holds, at most
-                                          "timeout" seconds (default 60)
+                                          "timeout" seconds (default 60); "poll_by": [["<expression>", "<entries>"],
+                                          ...] plays the first whose expression held after the last poll instead
+  "sweep": {"maps": [m, ...]}             warps to every room of those maps (all when left out), from the room
+                                          table the game wrote (rooms.json), and keeps a screenshot of each; a room
+                                          that fails does not stop the sweep
 and may have
   "expect": ["<expression>", ...]         each must hold after the step
   "shot": "<name>"                        keeps the screenshot as <name>.png
@@ -169,6 +174,8 @@ class Game:
             shutil.copytree(SAVES / scenario["save"], folder / "hdd")
         self.live = folder / "live"
         self.live.mkdir()
+        if scenario.get("dump"):  # "<va>:<bytes>,...": guest memory saved after each command, mem-<n>-<va>.bin
+            (self.live / "dump.txt").write_text(scenario["dump"] + "\n")
         self.log = folder / "logs" / "castlevania.log"
         self.log_pos = 0
         env = dict(os.environ, CV_PAD_LIVE=str(self.live))
@@ -223,6 +230,26 @@ class Game:
                 self.proc.kill()
 
 
+def sweep_steps(game, spec):
+    """a warp, a wait and a screenshot for each room in the game's room table"""
+    table = json.loads((game.live / "rooms.json").read_text()) if (game.live / "rooms.json").exists() else []
+    maps = set(spec.get("maps") or [g["map"] for g in table])
+    out = []
+    for g in table:
+        if g["map"] not in maps:
+            continue
+        for room in g["rooms"]:
+            m = g["map"]
+            out.append({"press": f"0:warp={m}.{room},10f:wait:20f", "note": f"warp {m}.{room}", "stop_on_fail": False})
+            # a story scene the room starts is skipped with Start, a menu that opens instead is closed
+            out.append({"until": f"map == {m} and room == {room} and player.active and not cutscene and not loading "
+                                 f"and not menu", "timeout": spec.get("timeout", 30),
+                        "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]],
+                        "shot": f"room-{m}-{room}", "expect": ["not screen.flat"], "stop_on_fail": False,
+                        "sweep_room": f"{m}.{room}"})
+    return out
+
+
 def load(path):
     """a scenario with the steps of the ones it comes after"""
     scenario = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -241,19 +268,34 @@ def run(scenario_path, build, keep):
     shots = out / "shots"
     shots.mkdir()
     results, prev, failed = [], None, False
+    places = {}  # sweep: where each room put Hector and the camera
     print(f"{name}: {out}")
     try:
         if not game.hwnd:
             raise RuntimeError("no game window")
-        for i, step in enumerate(scenario["steps"], 1):
+        steps = scenario["steps"]
+        for i, step in enumerate(steps, 1):
+            if "sweep" in step:
+                rooms = sweep_steps(game, step["sweep"])
+                steps[i:i] = rooms  # played next
+                results.append({"step": i, "label": f"sweep: {len(rooms) // 2} rooms", "ok": bool(rooms),
+                                "errors": [] if rooms else ["no rooms.json from the game"], "warnings": []})
+                print(f"  {i:3d} sweep of {len(rooms) // 2} rooms")
+                continue
             label = step.get("shot") or step.get("note") or step.get("press") or step.get("until")
             r = {"step": i, "label": label, "errors": [], "warnings": []}
             frame0 = prev.get("frame") if prev else None
             if "until" in step:
                 limit = time.time() + step.get("timeout", 60)
                 seconds = 0
+                state = prev
                 while True:
-                    state, s, err = game.play(step.get("poll", "30f:wait"))
+                    poll = step.get("poll", "30f:wait")
+                    for expr, entries in step.get("poll_by", []):
+                        if state and holds(expr, state, prev, {}, {})[0]:
+                            poll = entries
+                            break
+                    state, s, err = game.play(poll)
                     seconds += s or 0
                     if err or holds(step["until"], state, prev, {}, {})[0]:
                         break
@@ -284,6 +326,13 @@ def run(scenario_path, build, keep):
                 r.update(state=state, screen=screen, **info)
                 if screen.get("flat"):
                     r["warnings"].append(f"screen is one colour (mean {screen['mean']})")
+                # a room ID that lands where another one did: the same room, or an ID the warp falls back from
+                p, c = (state.get("player") or {}).get("pos"), (state.get("camera") or {}).get("pos")
+                if step.get("sweep_room") and p and c:
+                    place = tuple(round(v) for v in p + c)
+                    if place in places:
+                        r["warnings"].append(f"same place and camera as room {places[place]}")
+                    places.setdefault(place, step["sweep_room"])
             if step.get("save_as") and not r["errors"]:
                 dest = SAVES / step["save_as"]
                 shutil.rmtree(dest, ignore_errors=True)
