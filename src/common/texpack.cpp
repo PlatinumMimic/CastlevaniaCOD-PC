@@ -4,7 +4,7 @@
 // by PCSX2's hashes of the PS2 texture, so each P8 texture the game uploads is hashed the way PCSX2 hashes it in GS
 // memory, and a picture with that name replaces it:
 //
-//   <texture hash>-<palette hash>-<TEX0 bits>.png
+//   <texture hash>-<palette hash>-<TEX0 bits>.png (or .dds, BC1 to BC3, which WIC also decodes)
 //
 //   texture hash   XXH3-64 of the texture's 256 byte GS blocks, row by row, each block in the GS's own layout of
 //                  8 bit (16x16 texels) or 4 bit (32x16) indices; a texture smaller than a block, of its indices
@@ -26,6 +26,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cctype>
 #include <condition_variable>
 #include <cstdlib>
 #include <deque>
@@ -115,7 +116,10 @@ public:
         if (dir_.empty()) return;
         std::error_code ec;
         for (auto it = fs::recursive_directory_iterator(dir_, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (!it->is_regular_file(ec) || it->path().extension() != ".png") continue;
+            if (!it->is_regular_file(ec)) continue;
+            std::string ext = it->path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            if (ext != ".png" && ext != ".dds") continue;
             // texture-palette-bits, no region
             std::string name = it->path().stem().string();
             unsigned long long t = 0, p = 0;
