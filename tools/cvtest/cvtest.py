@@ -13,7 +13,11 @@ A scenario is JSON:
    "settings": {"display_mode": ...},     optional: castlevania.toml lines (windowed 960x540 by default)
    "dump": "<va>:<bytes>,...",            optional: guest memory saved after every command (game/live/mem-<n>-<va>.bin)
    "telemetry": <frames>,                 optional: the state every that many frames, game/telemetry.jsonl
-   "judge": "gpt-6-luna",                 optional: every screenshot judged (judge.py; a step's "judge": false
+   "perf": true,                          optional: the SDK's timings (XBE_PERF, a log line set each second): a
+                                          step's own, those of the seconds it played, are its perf, in the report
+   "shader_cache": "<name>",              optional: compiled shaders kept in out/test/shader-cache/<name> for the
+                                          next run with that name (a run's own, so cold, when left out)
+   "judge": "gpt-6-luna",                optional: every screenshot judged (judge.py; a step's "judge": false
                                           skips it, true is gpt-6-luna): screen.judge has scene, defect and hector,
                                           and a likely rendering defect or a scene the game state disagrees with is
                                           a warning. A Codex model takes some 4 s a shot; "jev-latest" well under
@@ -28,7 +32,9 @@ A step plays one of
                                           ...] plays the first whose expression held after the last poll instead
   "sweep": {"maps": [m, ...]}             warps to every room of those maps (all when left out), from the room
                                           table the game wrote (rooms.json), and keeps a screenshot of each; a room
-                                          that fails does not stop the sweep
+                                          that fails does not stop the sweep. "rooms": ["m.r", ...] warps to those
+                                          instead, "hold": <frames> stands that long in each after (with "perf",
+                                          the room's timings)
   "route": "<route>"                      walks routes/<route>.json from its first room: the bot (src/common/bot.cpp)
                                           through each room's points, pressing where the recording pressed and
                                           playing its menus where it played them, out by the way the recording
@@ -57,6 +63,7 @@ import itertools
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -217,6 +224,10 @@ class Game:
         self.log_pos = 0
         env = dict(os.environ, CV_PAD_LIVE=str(self.live))
         env.pop("CV_PAD_SCRIPT", None)
+        if scenario.get("perf"):
+            env["XBE_PERF"] = "1"
+        if scenario.get("shader_cache"):
+            env["XBE_SHADER_CACHE"] = str(REPO / "out" / "test" / "shader-cache" / scenario["shader_cache"])
         if scenario.get("telemetry"):  # the state every n frames, as a recording would have it
             env.update(CV_TELEMETRY=str(folder / "telemetry.jsonl"), CV_TELEMETRY_EVERY=str(scenario["telemetry"]))
         self.proc = subprocess.Popen([str(folder / "Castlevania.exe")], cwd=folder, env=env)
@@ -316,22 +327,51 @@ SKIP_SCENES = [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]]
 
 
 def sweep_steps(game, spec):
-    """a warp, a wait and a screenshot for each room in the game's room table"""
+    """a warp, a wait and a screenshot for each room in the game's room table (or those spec picks), and a stand
+    in each when it asks for one"""
     table = json.loads((game.live / "rooms.json").read_text()) if (game.live / "rooms.json").exists() else []
     maps = set(spec.get("maps") or [g["map"] for g in table])
+    rooms = [tuple(int(v) for v in r.split(".")) for r in spec.get("rooms", [])]
     out = []
-    for g in table:
-        if g["map"] not in maps:
-            continue
-        for room in g["rooms"]:
-            m = g["map"]
-            out.append({"press": f"0:warp={m}.{room},10f:wait:20f", "note": f"warp {m}.{room}", "stop_on_fail": False})
-            # a story scene the room starts is skipped with Start, a menu that opens instead is closed
-            out.append({"until": f"map == {m} and room == {room} and player.active and not cutscene and not loading "
-                                 f"and not menu", "timeout": spec.get("timeout", 30), "poll_by": SKIP_SCENES,
-                        "shot": f"room-{m}-{room}", "expect": ["not screen.flat"], "stop_on_fail": False,
-                        "sweep_room": f"{m}.{room}"})
+    for m, room in rooms or [(g["map"], room) for g in table if g["map"] in maps for room in g["rooms"]]:
+        out.append({"press": f"0:warp={m}.{room},10f:wait:20f", "note": f"warp {m}.{room}", "stop_on_fail": False})
+        # a story scene the room starts is skipped with Start, a menu that opens instead is closed
+        out.append({"until": f"map == {m} and room == {room} and player.active and not cutscene and not loading "
+                             f"and not menu", "timeout": spec.get("timeout", 30), "poll_by": SKIP_SCENES,
+                    "shot": f"room-{m}-{room}", "expect": ["not screen.flat"], "stop_on_fail": False,
+                    "sweep_room": f"{m}.{room}"})
+        if spec.get("hold"):
+            out.append({"press": f"0f:wait:{spec['hold']}f", "shot": f"hold-{m}-{room}", "judge": False,
+                        "expect": [f"map == {m} and room == {room}"], "stop_on_fail": False, "perf_room": f"{m}.{room}"})
     return out
+
+
+PERF = [  # the SDK's perf lines (runtime/gpu/d3d12.cpp LogPerf), the figures kept of each
+    (r"perf: ([\d.]+) fps ([\d.]+) ms/frame \| host ([\d.]+) \(draw ([\d.]+): .*compile ([\d.]+) pso ([\d.]+);"
+     r".*present ([\d.]+) \[swap ([\d.]+) wait ([\d.]+)\]\) other ([\d.]+)",
+     ("fps", "ms", "host", "draw", "compile", "pso", "present", "swap", "present_wait", "other")),
+    (r"recording ([\d.]+) ms, waiting ([\d.]+) ms \(([\d.]+) waits: read-back ([\d.]+) resource ([\d.]+) fence "
+     r"([\d.]+) flush ([\d.]+) copy ([\d.]+), next frame ([\d.]+)\)",
+     ("recording", "waiting", "waits", "wait_readback", "wait_resource", "wait_fence", "wait_flush", "wait_copy",
+      "wait_next_frame")),
+    (r"per frame ([\d.]+) draws \(([\d.]+) raw\) ([\d.]+)k verts ([\d.]+) MB upload .*\| ([\d.]+) tex uploads "
+     r"([\d.]+) MB, ([\d.]+) new tex, ([\d.]+) new targets, ([\d.]+) target uploads, ([\d.]+) shrinks, ([\d.]+) "
+     r"read-backs ([\d.]+) late", ("draws", "raw_draws", "kverts", "upload_mb", "tex_uploads", "tex_mb", "new_tex",
+                                   "new_targets", "target_uploads", "shrinks", "readbacks", "late")),
+]
+
+
+def perf_of(lines):
+    """the mean of each figure over a step's perf seconds, the first left out: the game stood still before the step
+    and that second has the wait in it"""
+    seconds = {}
+    for pattern, names in PERF:
+        found = [m for m in (re.search(pattern, line) for line in lines) if m][1:]
+        for i, name in enumerate(names):
+            if found:
+                seconds[name] = round(sum(float(m.group(i + 1)) for m in found) / len(found), 2)
+        seconds.setdefault("seconds", len(found))
+    return seconds if seconds.get("seconds") else None
 
 
 # --- routes -------------------------------------------------------------------------------------------------------
@@ -704,9 +744,10 @@ def run(scenario_path, build, keep, judge_model=None, review=None):
             if "sweep" in step:
                 rooms = sweep_steps(game, step["sweep"])
                 steps[i:i] = rooms  # played next
-                results.append({"step": i, "label": f"sweep: {len(rooms) // 2} rooms", "ok": bool(rooms),
+                n = sum("sweep_room" in s for s in rooms)
+                results.append({"step": i, "label": f"sweep: {n} rooms", "ok": bool(rooms),
                                 "errors": [] if rooms else ["no rooms.json from the game"], "warnings": []})
-                print(f"  {i:3d} sweep of {len(rooms) // 2} rooms")
+                print(f"  {i:3d} sweep of {n} rooms")
                 continue
             label = step.get("shot") or step.get("note") or step.get("press") or step.get("until") or step.get("route")
             r = {"step": i, "label": label, "errors": [], "warnings": []}
@@ -723,9 +764,14 @@ def run(scenario_path, build, keep, judge_model=None, review=None):
                 state, seconds, err = game.play(step["press"])
             if err:
                 r["errors"].append(err)
-            for line in game.new_log_lines():
+            log = game.new_log_lines()
+            for line in log:
                 if "error: " in line or "guest trap" in line:
                     r["errors"].append("log: " + line.strip())
+            if scenario.get("perf"):
+                r["perf"] = perf_of(log)
+                if step.get("perf_room"):
+                    r["perf_room"] = step["perf_room"]
             screen = {}
             if game.alive():
                 img = capture(game.hwnd)
@@ -817,6 +863,19 @@ def report(out, name, results, failed):
         lines.append(f"| {r['step']} {r.get('label', '')} | {'ok' if r['ok'] else '**FAIL**'} | {s.get('frame', '')} | "
                      f"{s.get('map', '')}/{s.get('room', '')} | {pos} | {p.get('hp', '')} | {r.get('fps') or ''} | "
                      f"{seen} | {notes.replace('|', '/')} |")
+    timed = [r for r in results if r.get("perf") and r.get("perf_room")]
+    if timed:  # the rooms stood in, slowest first: where a frame's time goes
+        lines += ["", "## Timings", "", "Milliseconds a frame (the SDK's XBE_PERF), the slowest room first. host: the "
+                  "renderer's work, on its own thread; recording: the game thread's time in its D3D calls (the game's "
+                  "own code is not timed); waiting: the game thread's on the renderer, of which next frame is for the "
+                  "frame before to finish drawing.", "",
+                  "| room | fps | ms | host | draw | present | recording | waiting | next frame | draws | k verts | "
+                  "tex uploads |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for r in sorted(timed, key=lambda r: r["perf"].get("fps", 0)):
+            f = r["perf"]
+            lines.append("| " + " | ".join([r["perf_room"]] + [str(f.get(k, "")) for k in (
+                "fps", "ms", "host", "draw", "present", "recording", "waiting", "wait_next_frame", "draws", "kverts",
+                "tex_uploads")]) + " |")
     (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

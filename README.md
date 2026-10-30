@@ -78,6 +78,8 @@ pictures are not used yet.
   drawn natively.
 - **Render Scale** - 50% to 200% of the output height; above 100% supersamples.
 - **Anisotropic Filtering** - Up to 16x.
+- **Shader Cache** - Shaders compiled while playing are kept in `cache\shaders` beside the game, so later sessions
+  do not stutter the first time an effect is drawn.
 
 ### General
 - **FPS Counter** - Optional, in the corner.
@@ -207,6 +209,10 @@ Changes this game needed beyond the generated config:
   `.env` file named by `TYPESAFE_ENV_FILE`) screens every shot in about 0.35 s and Luna looks again at those it
   flags (`--review=none` for Jev alone). `tools\cvtest\bakeoff.py` builds the labelled set (shots from test runs,
   rendering defects planted in some) that Jev, GPT-6 Luna and Haiku 5.5 were compared on.
+- `perf.json` stands 5 s in the heaviest rooms with the SDK's timings (`XBE_PERF`) and ends its report with them:
+  the frame rate, the renderer's milliseconds a frame, the game thread's in D3D calls and waiting on the renderer,
+  the draws. A scenario's `"perf": true` times any run; `"shader_cache": "<name>"` keeps its compiled shaders for
+  the next run with that name (a test starts cold otherwise).
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.

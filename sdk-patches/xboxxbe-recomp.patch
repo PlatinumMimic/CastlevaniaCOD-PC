@@ -65,10 +65,26 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..e3edb1d 100644
+index fe65837..e5882f0 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
-@@ -345,6 +345,10 @@ struct Tex {
+@@ -72,6 +72,7 @@ struct Perf {
+     double sig = 0;
+     double texup = 0;
+     double compile = 0;
++    double pso = 0;
+     double clear = 0;
+     double copy = 0;
+     double present = 0;
+@@ -94,6 +95,7 @@ struct Perf {
+     uint64_t syncs = 0;
+     uint64_t psos = 0;
+     uint64_t shaders = 0;
++    uint64_t shaders_kept = 0;  // read from the disk cache instead
+     uint64_t raw = 0;
+     uint64_t lates = 0;
+ };
+@@ -345,6 +347,10 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -79,7 +95,7 @@ index fe65837..e3edb1d 100644
  };
  
  struct PsoKey {
-@@ -406,6 +410,7 @@ struct DrawTextures {
+@@ -406,6 +412,7 @@ struct DrawTextures {
      bool rt[4] = {};            // stage samples a render target
      float k[4] = {1, 1, 1, 1};  // Extension::Sample's k
      float wide[4] = {};         // host texels per console texel of a target read into a smaller one, 0 otherwise
@@ -87,7 +103,7 @@ index fe65837..e3edb1d 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -549,6 +554,8 @@ private:
+@@ -549,6 +556,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -96,7 +112,7 @@ index fe65837..e3edb1d 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -583,7 +590,7 @@ private:
+@@ -583,7 +592,7 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -105,7 +121,110 @@ index fe65837..e3edb1d 100644
      void SetBlendFactorStencilRef(const State& s);
      void UpdateTargetUsed(uint32_t data);
      void DrawGeometry(const Assembled& a);
-@@ -1727,6 +1734,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1414,6 +1423,64 @@ void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect
+     DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
+ }
+ 
++namespace {
++
++constexpr UINT kCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL1;
++
++// compiled shaders kept between sessions, a file each: <exe>/cache/shaders, or the folder XBE_SHADER_CACHE names. A
++// shader takes some 25 ms to compile the first time it is drawn, more than a frame; its file reads in well under a
++// millisecond. Empty when the folder cannot be made: nothing kept then.
++const std::filesystem::path& ShaderCacheDir() {
++    static const std::filesystem::path dir = [] {
++        const wchar_t* v = _wgetenv(L"XBE_SHADER_CACHE");
++        std::filesystem::path d = v && *v ? std::filesystem::path(v) : app::ExeDir() / "cache" / "shaders";
++        std::error_code ec;
++        std::filesystem::create_directories(d, ec);
++        return ec ? std::filesystem::path() : d;
++    }();
++    return dir;
++}
++
++// the file of a shader: its key is its source's hash with the compile flags, so a change to either is a new file
++std::filesystem::path ShaderFile(uint64_t key) {
++    char name[24];
++    std::snprintf(name, sizeof(name), "%016llx.cso", (unsigned long long)key);
++    return ShaderCacheDir() / name;
++}
++
++// a file is the blob behind its size and hash: one cut short or changed is not read, and the shader compiles again
++ComPtr<ID3DBlob> LoadShader(uint64_t key) {
++    if (ShaderCacheDir().empty()) return nullptr;
++    FILE* f = _wfopen(ShaderFile(key).c_str(), L"rb");
++    if (!f) return nullptr;
++    uint64_t head[2] = {};  // size, hash
++    ComPtr<ID3DBlob> blob;
++    bool ok = std::fread(head, sizeof(head), 1, f) == 1 && head[0] && head[0] < (16u << 20) &&
++              SUCCEEDED(D3DCreateBlob(SIZE_T(head[0]), &blob)) &&
++              std::fread(blob->GetBufferPointer(), 1, size_t(head[0]), f) == head[0] &&
++              Hash(blob->GetBufferPointer(), size_t(head[0])) == head[1];
++    std::fclose(f);
++    return ok ? blob : nullptr;
++}
++
++// written beside it and renamed, so a file is whole or not there, whichever instance wrote it
++void SaveShader(uint64_t key, ID3DBlob* blob) {
++    if (ShaderCacheDir().empty()) return;
++    std::filesystem::path file = ShaderFile(key), tmp = file;
++    tmp += "." + std::to_string(GetCurrentProcessId()) + ".tmp";
++    FILE* f = _wfopen(tmp.c_str(), L"wb");
++    if (!f) return;
++    uint64_t head[2] = {blob->GetBufferSize(), Hash(blob->GetBufferPointer(), blob->GetBufferSize())};
++    bool ok = std::fwrite(head, sizeof(head), 1, f) == 1 &&
++              std::fwrite(blob->GetBufferPointer(), 1, blob->GetBufferSize(), f) == blob->GetBufferSize();
++    ok = std::fclose(f) == 0 && ok;
++    std::error_code ec;
++    if (ok) std::filesystem::rename(tmp, file, ec);
++    if (!ok || ec) std::filesystem::remove(tmp, ec);
++}
++
++}  // namespace
++
+ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
+     // one source can hold several entry points
+     uint64_t profile_seed = Hash(profile, std::strlen(profile));
+@@ -1421,12 +1488,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+     hash = Hash(src.data(), src.size(), entry_seed);
+     auto it = blobs_.find(hash);
+     if (it != blobs_.end()) return it->second.Get();
++    PerfScope perf_compile{g_perf.compile};
++    uint64_t key = Hash(&kCompileFlags, sizeof(kCompileFlags), hash);
++    if (ComPtr<ID3DBlob> kept = LoadShader(key)) {
++        g_perf.shaders_kept++;
++        blobs_[hash] = kept;
++        return kept.Get();
++    }
+     ComPtr<ID3DBlob> code;
+     ComPtr<ID3DBlob> err;
+-    PerfScope perf_compile{g_perf.compile};
+     g_perf.shaders++;
+-    HRESULT hr = D3DCompile(src.data(), src.size(), nullptr, nullptr, nullptr, entry, profile,
+-                            D3DCOMPILE_OPTIMIZATION_LEVEL1, 0, &code, &err);
++    HRESULT hr = D3DCompile(src.data(), src.size(), nullptr, nullptr, nullptr, entry, profile, kCompileFlags, 0,
++                            &code, &err);
+     if (FAILED(hr)) {
+         LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
+         LOGE("%s", src.c_str());
+@@ -1434,6 +1507,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+         return nullptr;
+     }
+     blobs_[hash] = code;
++    SaveShader(key, code.Get());
+     return code.Get();
+ }
+ 
+@@ -1674,6 +1748,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+     if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
+     ComPtr<ID3D12PipelineState> pso;
+     g_perf.psos++;
++    PerfScope perf_pso{g_perf.pso};
+     if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
+     psos_[h] = pso;
+     return pso.Get();
+@@ -1727,6 +1802,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -113,7 +232,7 @@ index fe65837..e3edb1d 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +1851,39 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +1919,39 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -153,7 +272,7 @@ index fe65837..e3edb1d 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,8 +1911,24 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,8 +1979,24 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -178,7 +297,7 @@ index fe65837..e3edb1d 100644
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
      const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1982,6 +2039,11 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,6 +2107,11 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -190,7 +309,7 @@ index fe65837..e3edb1d 100644
      // forced only where the title filters across mip levels and the texture has them
      if (aniso && lin(min) && mip && stages.sv[i].Texture2D.MipLevels > 1 && !stages.info[i].shadow) an = aniso;
      if (an > 1) {
-@@ -1993,7 +2055,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2123,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -199,7 +318,7 @@ index fe65837..e3edb1d 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2218,6 +2280,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +2348,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -222,7 +341,7 @@ index fe65837..e3edb1d 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2618,20 +2696,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2618,20 +2764,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
  }
  
  // viewport covers the target, the guest viewport is in the shader; scissor clips to it
@@ -255,7 +374,7 @@ index fe65837..e3edb1d 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2815,6 +2895,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,6 +2963,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -263,7 +382,7 @@ index fe65837..e3edb1d 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -2848,6 +2929,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2848,6 +2997,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      // constants
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
@@ -271,7 +390,7 @@ index fe65837..e3edb1d 100644
      DrawConstants c{};
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
-@@ -2860,7 +2942,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,7 +3010,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -280,7 +399,7 @@ index fe65837..e3edb1d 100644
      SetBlendFactorStencilRef(s);
  
      // geometry, counted while the title runs a visibility test
-@@ -3275,6 +3357,7 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +3425,7 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -288,7 +407,7 @@ index fe65837..e3edb1d 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,6 +3374,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,6 +3442,7 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -296,6 +415,42 @@ index fe65837..e3edb1d 100644
      f.used = 0;
      f.srv = 0;
      cl_->Reset(f.alloc.Get(), nullptr);
+@@ -3317,12 +3469,14 @@ void LogPerf() {
+         Perf& p = g_perf;
+         double n = double(perf_frames);
+         double host = p.draw + p.clear + p.copy + p.present + p.sync;
+-        LOGI("perf: %.1f fps %.2f ms/frame | host %.2f (draw %.2f: assemble %.2f bind %.2f [check %.2f, upload %.2f] "
+-             "compile %.2f; clear %.2f copy %.2f sync %.2f present %.2f [swap %.2f wait %.2f]) other %.2f",
++        // asked for with XBE_PERF, so written as a report: a release build keeps it, and it is in the file as
++        // the second ends
++        LOGR("perf: %.1f fps %.2f ms/frame | host %.2f (draw %.2f: assemble %.2f bind %.2f [check %.2f, upload %.2f] "
++             "compile %.2f pso %.2f; clear %.2f copy %.2f sync %.2f present %.2f [swap %.2f wait %.2f]) other %.2f",
+              n * 1000.0 / el, el / n, host / n, p.draw / n, p.assemble / n, p.bind / n, p.sig / n, p.texup / n,
+-             p.compile / n, p.clear / n, p.copy / n, p.sync / n, p.present / n, p.swap / n, p.wait / n,
++             p.compile / n, p.pso / n, p.clear / n, p.copy / n, p.sync / n, p.present / n, p.swap / n, p.wait / n,
+              (el - host) / n);
+-        LOGI("perf: title thread per frame: recording %.2f ms, waiting %.2f ms (%.1f waits: read-back %.2f "
++        LOGR("perf: title thread per frame: recording %.2f ms, waiting %.2f ms (%.1f waits: read-back %.2f "
+              "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
+              "%.1f NOOVERWRITE",
+              g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
+@@ -3331,13 +3485,13 @@ void LogPerf() {
+              g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
+              g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
+              g_perf_sync_late.exchange(0) / n);
+-        LOGI("perf: per frame %.0f draws (%.0f raw) %.0fk verts %.1f MB upload %.1f overflow | %.0f checks %.2f MB "
++        LOGR("perf: per frame %.0f draws (%.0f raw) %.0fk verts %.1f MB upload %.1f overflow | %.0f checks %.2f MB "
+              "hashed | %.1f tex uploads %.2f MB, %.1f new tex, %.1f new targets, %.1f target uploads, %.1f shrinks, "
+-             "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
++             "%.1f read-backs %.1f late | %llu shaders compiled %llu kept %llu psos this second",
+              p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
+              p.sig_bytes / n / 1048576.0, p.texups / n, p.texup_bytes / n / 1048576.0, p.newtex / n,
+              p.targets / n, p.rtups / n, p.shrinks / n, p.syncs / n, p.lates / n,
+-             (unsigned long long)p.shaders, (unsigned long long)p.psos);
++             (unsigned long long)p.shaders, (unsigned long long)p.shaders_kept, (unsigned long long)p.psos);
+         g_perf = Perf{};
+         perf_start = PerfClock::now();
+         perf_frames = 0;
 diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
 index ce6acda..3309a42 100644
 --- a/runtime/gpu/ext.h
