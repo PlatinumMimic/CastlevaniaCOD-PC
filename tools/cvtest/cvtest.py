@@ -2,6 +2,8 @@
 touched), plays a scenario turn by turn through CV_PAD_LIVE (src/common/keyboard.cpp) and checks every step.
 
 usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/release] [--keep]
+       python -I tools/cvtest/cvtest.py --record <route> [--save <name>]    play, and keep it as routes/<route>.json
+       python -I tools/cvtest/cvtest.py --make-route <telemetry.jsonl> <route>
 
 A scenario is JSON:
   {"name": "...",
@@ -9,6 +11,7 @@ A scenario is JSON:
    "save": "<name>",                      optional: start from the saves a step kept with save_as
    "settings": {"display_mode": ...},     optional: castlevania.toml lines (windowed 960x540 by default)
    "dump": "<va>:<bytes>,...",            optional: guest memory saved after every command (game/live/mem-<n>-<va>.bin)
+   "telemetry": <frames>,                 optional: the state every that many frames, game/telemetry.jsonl
    "steps": [step, ...]}
 A step plays one of
   "press": "<entries>"                    keyboard.cpp's syntax, "0:a,500:b:300" or frames "0f:lsu:60f"
@@ -18,6 +21,11 @@ A step plays one of
   "sweep": {"maps": [m, ...]}             warps to every room of those maps (all when left out), from the room
                                           table the game wrote (rooms.json), and keeps a screenshot of each; a room
                                           that fails does not stop the sweep
+  "route": "<route>"                      walks routes/<route>.json from its first room: the bot (src/common/bot.cpp)
+                                          through each room's points, pressing where the recording pressed and
+                                          playing its menus where it played them, out by the way the recording
+                                          left; enemies within "guard" (default 600, 0 for none) are fought on the
+                                          way and story scenes skipped
 and may have
   "expect": ["<expression>", ...]         each must hold after the step
   "shot": "<name>"                        keeps the screenshot as <name>.png
@@ -30,9 +38,15 @@ report is None.
 
 Each step also fails when the game exits, a command does not finish in time, or the log has a new error or guest
 trap. The report (report.md, results.json, a screenshot per step) goes to out/test/<scenario>-<time>/.
+
+--record starts the game as for play (the play folder's settings, keyboard and controllers; a fresh new game, or
+the saves of --save) with its state recorded (CV_TELEMETRY, src/common/telemetry.cpp). Once the game is closed the
+recording becomes a route, a leg per room as played, and the game's saves become saves/<route>.
 """
 import ctypes
+import itertools
 import json
+import math
 import os
 import shutil
 import struct
@@ -45,6 +59,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SAVES = REPO / "out" / "test" / "saves"
+ROUTES = Path(__file__).resolve().parent / "routes"
+ROUTE_BUTTONS = ("a", "b", "y")  # presses a route keeps: A jumps; X attacks are the bot's own, with guard
 DEFAULT_SETTINGS = {"display_mode": "windowed", "width": 960, "height": 540, "texture_pack": True,
                     "pause_on_focus_loss": False}
 FRAME_MS = 17  # a frame at 60 fps, for how long a frame-timed command may take
@@ -189,6 +205,8 @@ class Game:
         self.log_pos = 0
         env = dict(os.environ, CV_PAD_LIVE=str(self.live))
         env.pop("CV_PAD_SCRIPT", None)
+        if scenario.get("telemetry"):  # the state every n frames, as a recording would have it
+            env.update(CV_TELEMETRY=str(folder / "telemetry.jsonl"), CV_TELEMETRY_EVERY=str(scenario["telemetry"]))
         self.proc = subprocess.Popen([str(folder / "Castlevania.exe")], cwd=folder, env=env)
         self.n = 0
         self.hwnd = None
@@ -239,6 +257,27 @@ class Game:
                 self.proc.kill()
 
 
+def poll_until(game, expr, timeout, poll, poll_by, state):
+    """plays poll (or the poll_by entries whose expression holds) until expr holds; the state, seconds, an error"""
+    limit = time.time() + timeout
+    seconds, prev = 0, state
+    while True:
+        entries = poll or "30f:wait"
+        for when, then in poll_by:
+            if state and holds(when, state, prev, {}, {})[0]:
+                entries = then
+                break
+        state, s, err = game.play(entries)
+        seconds += s or 0
+        if err or holds(expr, state, prev, {}, {})[0]:
+            return state, seconds, err
+        if time.time() > limit:
+            return state, seconds, f"until {expr!r} did not hold within {timeout} s"
+
+
+SKIP_SCENES = [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]]
+
+
 def sweep_steps(game, spec):
     """a warp, a wait and a screenshot for each room in the game's room table"""
     table = json.loads((game.live / "rooms.json").read_text()) if (game.live / "rooms.json").exists() else []
@@ -252,11 +291,239 @@ def sweep_steps(game, spec):
             out.append({"press": f"0:warp={m}.{room},10f:wait:20f", "note": f"warp {m}.{room}", "stop_on_fail": False})
             # a story scene the room starts is skipped with Start, a menu that opens instead is closed
             out.append({"until": f"map == {m} and room == {room} and player.active and not cutscene and not loading "
-                                 f"and not menu", "timeout": spec.get("timeout", 30),
-                        "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]],
+                                 f"and not menu", "timeout": spec.get("timeout", 30), "poll_by": SKIP_SCENES,
                         "shot": f"room-{m}-{room}", "expect": ["not screen.flat"], "stop_on_fail": False,
                         "sweep_room": f"{m}.{room}"})
     return out
+
+
+# --- routes -------------------------------------------------------------------------------------------------------
+
+def playing(s):
+    p = s.get("player") or {}
+    return bool(p.get("active") and p.get("pos") and not s.get("cutscene") and not s.get("loading")
+                and not s.get("menu") and not s.get("modal"))
+
+
+def simplify(pts, eps):
+    """Ramer-Douglas-Peucker: the indices of the points that keep the path within eps of it (of each segment, so
+    walking back the same way is kept too)"""
+    keep, stack = {0, len(pts) - 1}, [(0, len(pts) - 1)]
+    while stack:
+        a, b = stack.pop()
+        (ax, az), (bx, bz) = pts[a], pts[b]
+        sx, sz = bx - ax, bz - az
+        length2 = sx * sx + sz * sz or 1e-9
+        far, at = 0, None
+        for i in range(a + 1, b):
+            x, z = pts[i]
+            t = max(0.0, min(1.0, ((x - ax) * sx + (z - az) * sz) / length2))
+            d = math.hypot(x - ax - t * sx, z - az - t * sz)
+            if d > far:
+                far, at = d, i
+        if at is not None and far > eps:
+            keep.add(at)
+            stack += [(a, at), (at, b)]
+    return sorted(keep)
+
+
+def menu_macros(lines, presses):
+    """the menus played through (the pause menu, a save box, ...): {line index of the last play before it: the
+    presses from the one that opened it until play went on, as frame-timed entries}, and the lines they took"""
+    macros, taken, last_play, i = {}, set(), None, 0
+    while i < len(lines):
+        s = lines[i]
+        if playing(s):
+            last_play = i
+        elif last_play is not None and (s.get("menu") or s.get("modal")):
+            # from the press that opened it, when one came in the half second before (the pause menu is up ~16
+            # frames after Start), until play goes on
+            near = itertools.takewhile(lambda j: lines[i]["frame"] - lines[j]["frame"] <= 30, range(i, -1, -1))
+            start = next((j for j in near if j in presses and j not in taken), i)
+            end = next((j for j in range(i, len(lines)) if playing(lines[j])), len(lines))
+            f0 = lines[start]["frame"]
+            entries = [f"{lines[j]['frame'] - f0}f:{b}:{held}f" for j in range(start, end) for b, held in presses.get(j, [])]
+            if entries:
+                macros[last_play] = ",".join(entries)
+                taken.update(range(start, end))
+            i = end
+            continue
+        i += 1
+    return macros, taken
+
+
+def make_route(lines):
+    """recorded play (CV_TELEMETRY lines with "pad") as a route: a leg per room in the order played, each a list of
+    points to walk through, [x, z] or [x, z, button, frames] for a press there (A jumps) or [x, z, "macro",
+    "<entries>"] for a menu played through there, and where it walked out"""
+    held_from, presses = {}, {}  # button: frame pressed; line index: [(button, frames held)]
+    for i, s in enumerate(lines):
+        for b in filter(None, s.get("pressed", "").split("+")):
+            held_from[b] = (i, s["frame"])
+        for b in filter(None, s.get("released", "").split("+")):
+            if b in held_from:
+                at, frame = held_from.pop(b)
+                presses.setdefault(at, []).append((b, max(1, s["frame"] - frame)))
+    macros, taken = menu_macros(lines, presses)
+    legs = []
+    for i, s in enumerate(lines):
+        if not playing(s):
+            continue
+        if not legs or (legs[-1]["map"], legs[-1]["room"]) != (s["map"], s["room"]):
+            legs.append({"map": s["map"], "room": s["room"], "samples": [], "enemies": 0, "frames": [s["frame"]] * 2})
+        leg = legs[-1]
+        x, _, z = s["player"]["pos"]
+        press = [p for p in presses.get(i, []) if p[0] in ROUTE_BUTTONS and i not in taken]
+        if i in macros:
+            press = [("macro", macros[i])]
+        leg["samples"].append((x, z, press[0] if press else None))
+        leg["enemies"] = max(leg["enemies"], len(s.get("enemies") or []))
+        leg["frames"][1] = s["frame"]
+    route = {"legs": []}
+    for n, leg in enumerate(legs):
+        samples = leg.pop("samples")
+        pts = [(x, z) for x, z, _ in samples]
+        forced = [i for i, (_, _, p) in enumerate(samples) if p]
+        cuts = sorted({0, len(pts) - 1, *forced})
+        idx = sorted({i for a, b in zip(cuts, cuts[1:]) for i in (a + j for j in simplify(pts[a:b + 1], 40))} | set(cuts))
+        points, last = [], None
+        for i in idx:
+            x, z, press = samples[i]
+            if not press and last and math.hypot(x - last[0], z - last[1]) < 150 and i != len(pts) - 1:
+                continue
+            points.append([round(x), round(z)] + ([press[0], press[1]] if press else []))
+            last = (x, z)
+        leg["points"] = points
+        if n + 1 < len(legs) and len(pts) > 1:  # walked out: on past the last point, the way it was going
+            ex, ez = pts[-1]
+            back = next(((x, z) for x, z in reversed(pts) if math.hypot(ex - x, ez - z) >= 100), pts[0])
+            d = math.hypot(ex - back[0], ez - back[1]) or 1
+            leg["exit"] = [round(ex + (ex - back[0]) / d * 600), round(ez + (ez - back[1]) / d * 600)]
+        route["legs"].append(leg)
+    return route
+
+
+def play_route(game, route, step, prev):
+    """walks a route leg by leg: each point a command of its own (the game waits between commands, so Hector walks
+    on), a press where the recording pressed, story scenes skipped, enemies within "guard" fought on the way"""
+    guard = step.get("guard", 600)
+    state, seconds, notes = prev, 0.0, []
+
+    def play(entries):
+        nonlocal state, seconds
+        st, s, err = game.play(entries)
+        seconds += s or 0
+        if st:
+            state = st
+        return err
+
+    legs = route["legs"]
+    n = 0
+    while n < len(legs):
+        leg = legs[n]
+        here = f"map == {leg['map']} and room == {leg['room']}"
+        st, s, err = poll_until(game, f"{here} and player.active and not cutscene and not loading and not menu", 30,
+                                None, SKIP_SCENES, state)
+        seconds += s
+        state = st or state
+        if err:
+            return state, seconds, f"leg {n + 1}: not playing in room {leg['map']}.{leg['room']} ({err})", notes
+        press, left = None, False
+        targets = [(p, 60 if len(p) > 2 else 120) for p in leg["points"]]
+        if leg.get("exit"):
+            targets.append((leg["exit"], 30))
+        for k, (p, radius) in enumerate(targets):
+            exit_ = leg.get("exit") and k == len(targets) - 1
+            for attempt in range(6):
+                pos = (state.get("player") or {}).get("pos") or [p[0], 0, p[1]]
+                ms = 5000 + 3 * int(math.hypot(p[0] - pos[0], p[1] - pos[2])) + (20000 if guard else 0)
+                entries = [f"0:walk={p[0]}/{p[1]}/{radius}:{ms}"] + ([f"0:guard={guard}"] if guard else [])
+                if press and attempt == 0:
+                    entries.append(f"0f:{press[0]}:{press[1]}f")
+                err = play(",".join(entries))
+                if err:
+                    return state, seconds, f"leg {n + 1} point {k + 1}: {err}", notes
+                result = ((state.get("bot") or {}).get("results") or ["?"])[0]
+                if result == "room":
+                    left = True
+                    break
+                if result == "reached" and not exit_:
+                    break
+                if result == "stuck":
+                    return state, seconds, f"leg {n + 1} point {k + 1} {p[:2]}: stuck", notes
+                if state.get("cutscene") or state.get("menu"):
+                    play("0:start,45f:wait" if state.get("cutscene") else "0:b,30f:wait")
+                    notes.append(f"leg {n + 1} point {k + 1}: a {'story scene' if state.get('cutscene') else 'menu'} "
+                                 f"on the way")
+                    continue
+                if exit_:  # reached the point past the exit, or timed out, in the same room
+                    return state, seconds, f"leg {n + 1}: the exit at {p} did not lead out of the room", notes
+            else:
+                return state, seconds, f"leg {n + 1} point {k + 1} {p[:2]}: not reached in 6 tries", notes
+            press = p[2:4] if len(p) > 2 and p[2] != "macro" else None
+            if left:
+                break
+            if len(p) > 2 and p[2] == "macro":  # the menu as it was played, standing here, then a moment
+                err = play(f"{p[3]},{command_ms(p[3]) // FRAME_MS + 30}f:wait")
+                if err:
+                    return state, seconds, f"leg {n + 1} point {k + 1}: menu {p[3]!r}: {err}", notes
+                if state.get("menu") or state.get("modal"):
+                    notes.append(f"leg {n + 1} point {k + 1}: a menu is still up after {p[3]!r}")
+        if press and not left:  # a press on the route's last point
+            play(f"0f:{press[0]}:{press[1]}f,0f:wait:30f")
+        if left:  # where did it go: the next leg's room, or the route lost
+            st, s, err = poll_until(game, "player.active and not loading", 30, None, SKIP_SCENES, state)
+            seconds += s
+            state = st or state
+            got = (state.get("map"), state.get("room"))
+            nxt = next((j for j in range(n + 1, len(legs)) if (legs[j]["map"], legs[j]["room"]) == got), None)
+            if nxt is None:
+                return state, seconds, f"leg {n + 1}: walked into room {got[0]}.{got[1]}, not on the route", notes
+            if nxt != n + 1:
+                notes.append(f"leg {n + 1}: walked into room {got[0]}.{got[1]}, the route's leg {nxt + 1}")
+            n = nxt
+        else:
+            n += 1
+    return state, seconds, None, notes
+
+
+def record(name, build, save):
+    """the game as usual (the play folder's settings, the keyboard and controllers), its state recorded; once it is
+    closed the recording becomes routes/<name>.json, and its saves saves/<name>"""
+    out = REPO / "out" / "test" / f"record-{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder = out / "game"
+    folder.mkdir(parents=True)
+    for f in ("Castlevania.exe", "Castlevania.dll"):
+        shutil.copy2(build / f, folder / f)
+    if (build / "castlevania.toml").exists():
+        shutil.copy2(build / "castlevania.toml", folder / "castlevania.toml")
+    if save:
+        shutil.copytree(SAVES / save, folder / "hdd")
+    tel = out / "telemetry.jsonl"
+    env = dict(os.environ, CV_TELEMETRY=str(tel), CV_TELEMETRY_EVERY="6")
+    for k in ("CV_PAD_LIVE", "CV_PAD_SCRIPT"):
+        env.pop(k, None)
+    print(f"recording {name}: play, then close the game ({out})")
+    subprocess.run([str(folder / "Castlevania.exe")], cwd=folder, env=env)
+    if (folder / "hdd").exists():
+        shutil.rmtree(SAVES / name, ignore_errors=True)
+        shutil.copytree(folder / "hdd", SAVES / name)
+    return save_route(tel, name)
+
+
+def save_route(telemetry, name):
+    lines = [json.loads(l) for l in Path(telemetry).read_text().splitlines() if l.strip()]
+    route = make_route(lines)
+    if not route["legs"]:
+        print("nothing recorded in play")
+        return False
+    ROUTES.mkdir(exist_ok=True)
+    legs = ",\n  ".join(json.dumps(l) for l in route["legs"])  # a leg a line
+    (ROUTES / f"{name}.json").write_text(f'{{"recorded": "{time.strftime("%Y-%m-%d %H:%M")}",\n "legs": [\n  {legs}\n ]}}\n')
+    rooms = " -> ".join(f"{l['map']}.{l['room']}" for l in route["legs"])
+    points = sum(len(l["points"]) for l in route["legs"])
+    print(f"routes/{name}.json: {len(route['legs'])} legs, {points} points, {rooms}")
+    return True
 
 
 def load(path):
@@ -295,22 +562,12 @@ def run(scenario_path, build, keep):
             r = {"step": i, "label": label, "errors": [], "warnings": []}
             frame0 = prev.get("frame") if prev else None
             if "until" in step:
-                limit = time.time() + step.get("timeout", 60)
-                seconds = 0
-                state = prev
-                while True:
-                    poll = step.get("poll", "30f:wait")
-                    for expr, entries in step.get("poll_by", []):
-                        if state and holds(expr, state, prev, {}, {})[0]:
-                            poll = entries
-                            break
-                    state, s, err = game.play(poll)
-                    seconds += s or 0
-                    if err or holds(step["until"], state, prev, {}, {})[0]:
-                        break
-                    if time.time() > limit:
-                        err = f"until {step['until']!r} did not hold within {step.get('timeout', 60)} s"
-                        break
+                state, seconds, err = poll_until(game, step["until"], step.get("timeout", 60), step.get("poll"),
+                                                 step.get("poll_by", []), prev)
+            elif "route" in step:
+                route = json.loads((ROUTES / f"{step['route']}.json").read_text())
+                state, seconds, err, notes = play_route(game, route, step, prev)
+                r["warnings"] += notes
             else:
                 state, seconds, err = game.play(step["press"])
             if err:
@@ -390,12 +647,17 @@ def report(out, name, results, failed):
 
 def main():
     args = sys.argv[1:]
-    if not args or args[0].startswith("-"):
+    if not args or (args[0].startswith("-") and args[0] not in ("--record", "--make-route")):
         print(__doc__)
         return 2
     build = REPO / "out" / "build" / "release"
     if "--build" in args:
         build = Path(args[args.index("--build") + 1]).resolve()
+    if args[0] == "--record":
+        save = args[args.index("--save") + 1] if "--save" in args else None
+        return 0 if record(args[1], build, save) else 1
+    if args[0] == "--make-route":
+        return 0 if save_route(args[1], args[2]) else 1
     return 0 if run(args[0], build, "--keep" in args) else 1
 
 

@@ -193,6 +193,11 @@ Changes this game needed beyond the generated config:
   (`out\test\<scenario>-<time>`, its own settings and saves) through `CV_PAD_LIVE`, checks the game state after
   every step (`src\common\telemetry.cpp`: map and room, Hector's position, HP, the camera, menus), the log and
   the screen, and writes `report.md` with a screenshot per step. Scenario format: the top of `cvtest.py`.
+  `bot.json` has the test bot (`src\common\bot.cpp`) walk Hector to points and fight the knights of room 5.12.
+- `python -I tools\cvtest\cvtest.py --record <route> [--save <name>]` starts the game for play (the play folder's
+  settings, keyboard and controllers) and records it; once the game is closed the recording becomes
+  `tools\cvtest\routes\<route>.json`, a leg per room with the points walked, the jumps and the menus played. A
+  scenario step `{"route": "<route>"}` plays it back with the bot (`route.json`).
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.

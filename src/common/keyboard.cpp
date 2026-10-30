@@ -22,6 +22,7 @@
 //   0:heal                            his HP back to full at the command's start
 //   0:walk=<x>/<z>[/<r>]:<hold>       the bot (bot.cpp) walks him there; fight[=<r>] fights the enemies near
 //                                     him. The command ends once its goals are done, or at the hold at most
+//   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
 //   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
@@ -47,14 +48,14 @@
 extern std::atomic<bool> g_closing;  // below: the window is closing
 std::string GameStateJson();         // telemetry.cpp
 std::string RoomListJson();          // telemetry.cpp
-void TelemetryFrame();               // telemetry.cpp
+void TelemetryFrame(const input::Pad& p);        // telemetry.cpp
 void RequestWarp(int map, int room, int entry);  // game/warp.cpp
 void HealPlayer();                               // telemetry.cpp
 struct BotGoal {                                 // bot.cpp
     bool fight;
     float x, z, radius;
 };
-void BotStart(const std::vector<BotGoal>& goals);
+void BotStart(const std::vector<BotGoal>& goals, float guard);
 bool BotBusy();
 void BotStop();
 void BotPad(input::Pad& p);
@@ -117,6 +118,7 @@ struct Step {
     int map = -1, room = 0, entry = 0;  // warp=<map>.<room>[.<entry>]: live commands send Hector there at their start
     bool goal = false, heal = false;    // walk=, fight (bot.cpp) and heal, live commands too
     BotGoal bot{};
+    float guard = 0;  // guard=<r>, for the bot's walks
 };
 
 // "-0.5/1" as a stick: x and y from -1 to 1
@@ -173,6 +175,7 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b.rfind("ls=", 0) == 0) Stick(b.substr(3), s.lx, s.ly);
             else if (b.rfind("rs=", 0) == 0) Stick(b.substr(3), s.rx, s.ry);
             else if (b == "heal") s.heal = true;
+            else if (b.rfind("guard=", 0) == 0) s.guard = float(std::atof(b.c_str() + 6));
             else if (b.rfind("walk=", 0) == 0) {
                 s.goal = true;
                 s.bot = {false, 0, 0, 150};
@@ -311,13 +314,15 @@ void LiveWait() {
                 end = (std::max)(end, s.until);  // windows.h defines max
             }
             std::vector<BotGoal> goals;
+            float guard = 0;
             for (const Step& s : l.steps) {
                 if (s.map >= 0) RequestWarp(s.map, s.room, s.entry);
                 if (s.heal) HealPlayer();
                 if (s.goal) goals.push_back(s.bot);
+                guard = (std::max)(guard, s.guard);
             }
             l.goals = !goals.empty();
-            if (l.goals) BotStart(goals);
+            if (l.goals) BotStart(goals, guard);
             l.n++;
             l.start = Clock::now();
             l.start_frame = d3d::Swaps();
@@ -348,7 +353,6 @@ void KeyboardPad(int port, input::Pad& p) {
     if (g_pause_on_focus_loss && Script().empty() && !LiveOn())
         while (!Focused() && !g_closing && IsWindow(g_hwnd)) Sleep(50);
     if (LiveOn()) LiveWait();
-    TelemetryFrame();
     p.connected = true;
     // both sticks clicked in together: the menu from a controller
     static bool sticks = false;
@@ -359,6 +363,7 @@ void KeyboardPad(int port, input::Pad& p) {
         // the menu has the keyboard and controller
         p = input::Pad{};
         p.connected = true;
+        TelemetryFrame(p);
         return;
     }
     Keyboard(p);
@@ -369,4 +374,5 @@ void KeyboardPad(int port, input::Pad& p) {
         if (l.running) Press(p, l.steps, MsSince(l.start), int64_t(d3d::Swaps() - l.start_frame));
         if (l.running && l.goals) BotPad(p);
     }
+    TelemetryFrame(p);  // the pad as the game gets it, for recorded routes
 }

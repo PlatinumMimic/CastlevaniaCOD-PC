@@ -4,7 +4,8 @@
 //   walk=<x>/<z>[/<radius>]    to that point across the floor, reached within radius (default 150)
 //   fight[=<radius>]           the enemies within radius of Hector (default 2500): to the nearest one, attacking from
 //                              close by, cleared once none has been there for half a second
-// A goal also ends when its command's time is up. Stick up walks the way the camera looks: with heading h, forward is
+//   guard=<radius>             on this command's walks, an enemy within radius is fought first
+// A goal also ends when its command's time is up, and all of them when the room changes ("room"). Stick up walks the way the camera looks: with heading h, forward is
 // (sin h, cos h) in x and z and right is (cos h, -sin h). Getting no closer, and in a fight landing no hit, for 3/4 of
 // a second, it steps aside for half a second, the other way each time, and gives up after 8 tries. While a story scene plays, a room loads or the
 // pause menu is up it leaves the pad alone.
@@ -21,6 +22,7 @@ bool PlayerPose(float pos[3], float& yaw);  // telemetry.cpp
 bool CameraHeading(float& heading);         // telemetry.cpp
 uint32_t SceneWord();                       // telemetry.cpp
 bool PauseMenuUp();                         // telemetry.cpp
+int RoomId();                               // telemetry.cpp
 struct EnemyInfo {                          // game/enemies.cpp
     uint32_t actor;
     uint16_t type;
@@ -40,15 +42,19 @@ constexpr int kX = 2;                  // the attack button's analog slot
 constexpr float kAttackRange = 300;    // close enough to swing: the armoured knights stop Hector ~250 away
 constexpr uint32_t kScenes = 0x28000;  // story scene, room change (telemetry.cpp)
 constexpr uint32_t kStuckFrames = 45, kAsideFrames = 30, kMaxAside = 8, kClearFrames = 30;
+constexpr int kNoRoom = -2;            // RoomId() gives -1 before the game has a room
 
 struct Bot {
     std::vector<BotGoal> goals;
     size_t at = 0;
     std::vector<std::string> results;  // per goal: reached, cleared, stuck, timeout
+    float guard = 0;
     float dist = 0, best = 1e30f, enemy_hp = 1e30f;
     uint32_t best_frame = 0, aside_until = 0, aside = 0, empty_since = 0;
     float side = 1;
+    bool fighting = false;
     int start_enemies = -1;
+    int room = kNoRoom;  // RoomId() at the first frame
     // what the last frame pressed, for the game's second pad read in the same frame
     uint32_t frame = ~0u;
     bool press = false, attack = false;
@@ -70,29 +76,45 @@ void Finish(Bot& b, const char* result) {
 // this frame's stick and buttons for the current goal
 void Steer(Bot& b, uint32_t frame) {
     b.press = b.attack = false;
-    float pos[3], yaw, h;
-    if (b.at >= b.goals.size() || (SceneWord() & kScenes) || PauseMenuUp() || !PlayerPose(pos, yaw) ||
-        !CameraHeading(h))
+    if (b.at >= b.goals.size()) return;
+    int room = RoomId();
+    if (b.room == kNoRoom) {
+        b.room = room;
+    } else if (room != b.room) {  // what is left ends: its points are in the room left behind
+        while (b.at < b.goals.size()) Finish(b, "room");
         return;
+    }
+    float pos[3], yaw, h;
+    if ((SceneWord() & kScenes) || PauseMenuUp() || !PlayerPose(pos, yaw) || !CameraHeading(h)) return;
     BotGoal& g = b.goals[b.at];
+    // the enemies to fight: those within a fight's radius, or on a walk those within the guard radius
+    float reach = g.fight ? g.radius : b.guard;
+    std::vector<EnemyInfo> list;
+    if (reach > 0) list = Enemies();
+    const EnemyInfo* near = nullptr;
+    float nd = 0, hp = 0;
+    for (const EnemyInfo& e : list) {
+        float d = std::hypot(e.pos[0] - pos[0], e.pos[2] - pos[2]);
+        if (d > reach) continue;
+        hp += e.hp;
+        if (!near || d < nd) near = &e, nd = d;
+    }
+    if (g.fight && b.start_enemies < 0) b.start_enemies = int(list.size());
+    if (g.fight && !near) {
+        if (!b.empty_since) b.empty_since = frame;
+        if (frame - b.empty_since >= kClearFrames) Finish(b, "cleared");
+        return;
+    }
+    b.empty_since = 0;
+    bool fighting = near != nullptr;
+    if (fighting != b.fighting) {  // to an enemy or back to the walk: distances start over
+        b.fighting = fighting;
+        b.best = 1e30f;
+        b.best_frame = frame;
+        b.enemy_hp = 1e30f;
+    }
     float tx = g.x, tz = g.z;
-    if (g.fight) {
-        const EnemyInfo* near = nullptr;
-        float nd = 0, hp = 0;
-        std::vector<EnemyInfo> list = Enemies();
-        for (const EnemyInfo& e : list) {
-            float d = std::hypot(e.pos[0] - pos[0], e.pos[2] - pos[2]);
-            if (d > g.radius) continue;
-            hp += e.hp;
-            if (!near || d < nd) near = &e, nd = d;
-        }
-        if (b.start_enemies < 0) b.start_enemies = int(list.size());
-        if (!near) {
-            if (!b.empty_since) b.empty_since = frame;
-            if (frame - b.empty_since >= kClearFrames) Finish(b, "cleared");
-            return;
-        }
-        b.empty_since = 0;
+    if (fighting) {
         if (hp < b.enemy_hp && b.enemy_hp < 1e30f) {  // a hit landed: progress, like getting closer
             b.best_frame = frame;
             b.aside = 0;
@@ -102,12 +124,12 @@ void Steer(Bot& b, uint32_t frame) {
     }
     float dx = tx - pos[0], dz = tz - pos[2], d = std::hypot(dx, dz);
     b.dist = d;
-    if (!g.fight && d <= g.radius) {
+    if (!fighting && d <= g.radius) {
         Finish(b, "reached");
         return;
     }
     float amount = 1;
-    if (g.fight && d <= kAttackRange) {
+    if (fighting && d <= kAttackRange) {
         b.attack = (frame / 4) % 2 == 0;  // 4 frames pressed, 4 let go
         amount = 0.35f;                   // turned to face it, hardly walking
         b.best = d;                       // fighting is not being stuck
@@ -138,11 +160,12 @@ void Steer(Bot& b, uint32_t frame) {
 
 }  // namespace
 
-// a command's goals, replacing any left from the last one
-void BotStart(const std::vector<BotGoal>& goals) {
+// a command's goals, replacing any left from the last one, and the guard radius for its walks (0: none)
+void BotStart(const std::vector<BotGoal>& goals, float guard) {
     std::lock_guard lock(g_m);
     g_bot = Bot{};
     g_bot.goals = goals;
+    g_bot.guard = guard;
 }
 
 // goals left

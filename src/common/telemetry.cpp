@@ -18,7 +18,9 @@
 //   scene                u32 0xB23410 (found here, by comparing memory in play and in a story scene)
 //
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
-// the pad; turn by turn play (keyboard.cpp) writes it beside each done file.
+// the pad, with "pad": the buttons held as the game got them; a button pressed or let go also writes the state right
+// then, with "pressed" or "released". Recorded play becomes a route this way (tools/cvtest). Turn by turn play
+// (keyboard.cpp) writes the state beside each done file.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -29,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "core/input.h"
 #include "kernel/memory.h"
 #include "xdk/d3d8.h"
 
@@ -199,6 +202,13 @@ bool PauseMenuUp() {
     return Read(0xB25518u, v) && v;
 }
 
+// map * 256 + room, -1 before the game has one
+int RoomId() {
+    int8_t map = 0, room = 0;
+    if (!Read(0xB234F4u, map) || !Read(0xB234F5u, room)) return -1;
+    return map * 256 + room;
+}
+
 // the state now, one JSON object on one line
 std::string GameStateJson() {
     Json j;
@@ -275,8 +285,36 @@ std::string RoomListJson() {
     return out.size() > 1 ? out + "]" : "";
 }
 
-// CV_TELEMETRY: at a pad read, the state once every CV_TELEMETRY_EVERY frames
-void TelemetryFrame() {
+namespace {
+
+// the pad as a bit per button: the analog slots A B X Y black white LT RT pressed past half, the digital buttons,
+// then the left stick past half each way (menus are moved through with it)
+uint32_t PadBits(const input::Pad& p) {
+    uint32_t bits = 0;
+    for (int i = 0; i < 8; i++)
+        if (p.analog[i] > 0x80) bits |= 1u << i;
+    bits |= uint32_t(p.buttons) << 8;
+    if (p.ly > 16384) bits |= 1u << 16;
+    if (p.ly < -16384) bits |= 1u << 17;
+    if (p.lx < -16384) bits |= 1u << 18;
+    if (p.lx > 16384) bits |= 1u << 19;
+    return bits;
+}
+
+// "a+x", in keyboard.cpp's names
+std::string PadNames(uint32_t bits) {
+    static const char* names[] = {"a",  "b",    "x",    "y",     "black", "white", "lt", "rt",  "up",  "down",
+                                  "left", "right", "start", "back", "ls",   "rs",    "lsu", "lsd", "lsl", "lsr"};
+    std::string out;
+    for (int i = 0; i < 20; i++)
+        if (bits >> i & 1) out += (out.empty() ? "" : "+") + std::string(names[i]);
+    return out;
+}
+
+}  // namespace
+
+// CV_TELEMETRY: at a pad read, the state once every CV_TELEMETRY_EVERY frames, and when a button goes down or up
+void TelemetryFrame(const input::Pad& p) {
     static const std::string path = [] {
         const char* v = std::getenv("CV_TELEMETRY");
         return std::string(v ? v : "");
@@ -288,10 +326,19 @@ void TelemetryFrame() {
         return uint32_t(n > 0 ? n : 30);
     }();
     static std::mutex m;
-    static uint32_t last = ~0u;
-    uint32_t frame = d3d::Swaps();
+    static uint32_t last = ~0u, held = 0;
+    uint32_t frame = d3d::Swaps(), bits = PadBits(p);
     std::lock_guard lock(m);  // the game reads the pad on more than one thread
-    if (last != ~0u && frame - last < every) return;
+    uint32_t down = bits & ~held, up = held & ~bits;
+    held = bits;
+    if (!down && !up && last != ~0u && frame - last < every) return;
     last = frame;
-    std::ofstream(path, std::ios::app) << GameStateJson() << "\n";
+    std::string out = GameStateJson();
+    out.pop_back();
+    char sticks[64];
+    snprintf(sticks, sizeof(sticks), ",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d}", p.lx, p.ly, p.rx, p.ry);
+    out += ",\"pad\":{\"held\":\"" + PadNames(bits) + "\"" + sticks;
+    if (down) out += ",\"pressed\":\"" + PadNames(down) + "\"";
+    if (up) out += ",\"released\":\"" + PadNames(up) + "\"";
+    std::ofstream(path, std::ios::app) << out << "}\n";
 }
