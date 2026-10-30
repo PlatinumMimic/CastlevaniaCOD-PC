@@ -202,6 +202,12 @@ bool PauseMenuUp() {
     return Read(0xB25518u, v) && v;
 }
 
+// a message box is up: the save point's, an item's, a hint
+bool ModalUp() {
+    uint32_t at = 0, flags = 0;
+    return Read(0x548C10u, at) && at && Read(at, flags) && ((flags >> 16) & 1);
+}
+
 // map * 256 + room, -1 before the game has one
 int RoomId() {
     int8_t map = 0, room = 0;

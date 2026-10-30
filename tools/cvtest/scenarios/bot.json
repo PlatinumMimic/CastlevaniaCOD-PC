@@ -14,6 +14,9 @@
     {"press": "0:heal,0:fight:20000", "shot": "fight-1"},
     {"press": "0:heal,0:fight:20000", "shot": "fight-2"},
     {"press": "0:heal,0:fight:20000", "shot": "fight-3"},
-    {"press": "0:heal,0:fight:20000", "shot": "fight-4", "expect": ["player.exp > 0", "bot.results != ['stuck']"]}
+    {"press": "0:heal,0:fight:20000", "shot": "fight-4", "expect": ["player.exp > 0", "bot.results != ['stuck']"]},
+    {"until": "not modal", "poll": "60f:wait", "timeout": 6, "shot": "level-up",
+     "note": "the level up's box (scene 0x30C10000) after the kills goes by itself in ~2 s",
+     "expect": ["not menu", "player.active", "player.hp_max > 100"]}
   ]
 }

@@ -196,8 +196,10 @@ Changes this game needed beyond the generated config:
   `bot.json` has the test bot (`src\common\bot.cpp`) walk Hector to points and fight the knights of room 5.12.
 - `python -I tools\cvtest\cvtest.py --record <route> [--save <name>]` starts the game for play (the play folder's
   settings, keyboard and controllers) and records it; once the game is closed the recording becomes
-  `tools\cvtest\routes\<route>.json`, a leg per room with the points walked, the jumps and the menus played. A
-  scenario step `{"route": "<route>"}` plays it back with the bot (`route.json`).
+  `tools\cvtest\routes\<route>.json`, a leg per room with the points walked, the jumps and B presses (doors,
+  save points), the menus and message boxes as they were answered, and the fights that were won. A scenario step
+  `{"route": "<route>"}` plays it back with the bot: `route.json`, and `first-save.json` (a new game to the first
+  save room, a save there, the pause menu and the map).
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.

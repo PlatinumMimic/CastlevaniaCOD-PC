@@ -5,10 +5,11 @@
 //   fight[=<radius>]           the enemies within radius of Hector (default 2500): to the nearest one, attacking from
 //                              close by, cleared once none has been there for half a second
 //   guard=<radius>             on this command's walks, an enemy within radius is fought first
-// A goal also ends when its command's time is up, and all of them when the room changes ("room"). Stick up walks the way the camera looks: with heading h, forward is
-// (sin h, cos h) in x and z and right is (cos h, -sin h). Getting no closer, and in a fight landing no hit, for 3/4 of
-// a second, it steps aside for half a second, the other way each time, and gives up after 8 tries. While a story scene plays, a room loads or the
-// pause menu is up it leaves the pad alone.
+// A goal also ends when its command's time is up, and all of them when the room changes ("room") or a message box
+// comes up ("modal"). Stick up walks the way the camera looks: with heading h, forward is (sin h, cos h) in x and z
+// and right is (cos h, -sin h). Getting no closer, and in a fight landing no hit, for 3/4 of a second, it steps aside
+// for half a second, the other way each time, and gives up after 8 tries (20 in a fight). While a story scene plays,
+// a room loads or the pause menu is up it leaves the pad alone.
 #include <cmath>
 #include <cstdio>
 #include <mutex>
@@ -22,6 +23,7 @@ bool PlayerPose(float pos[3], float& yaw);  // telemetry.cpp
 bool CameraHeading(float& heading);         // telemetry.cpp
 uint32_t SceneWord();                       // telemetry.cpp
 bool PauseMenuUp();                         // telemetry.cpp
+bool ModalUp();                             // telemetry.cpp
 int RoomId();                               // telemetry.cpp
 struct EnemyInfo {                          // game/enemies.cpp
     uint32_t actor;
@@ -38,10 +40,12 @@ struct BotGoal {
 
 namespace {
 
-constexpr int kX = 2;                  // the attack button's analog slot
-constexpr float kAttackRange = 300;    // close enough to swing: the armoured knights stop Hector ~250 away
+constexpr int kB = 1, kX = 2;          // the attack buttons' analog slots: X hits for 15 HP, B for 25
+constexpr float kAttackRange = 450;    // close enough to swing: his attacks lunge, an enemy of room 5.2 keeps ~400
+                                       // away and the armoured knights stop him ~250 away
 constexpr uint32_t kScenes = 0x28000;  // story scene, room change (telemetry.cpp)
 constexpr uint32_t kStuckFrames = 45, kAsideFrames = 30, kMaxAside = 8, kClearFrames = 30;
+constexpr uint32_t kMaxAsideFighting = 20;  // an enemy that keeps backing off is chased longer
 constexpr int kNoRoom = -2;            // RoomId() gives -1 before the game has a room
 
 struct Bot {
@@ -58,6 +62,7 @@ struct Bot {
     // what the last frame pressed, for the game's second pad read in the same frame
     uint32_t frame = ~0u;
     bool press = false, attack = false;
+    int button = kX;
     int16_t lx = 0, ly = 0;
 };
 std::mutex g_m;
@@ -84,8 +89,15 @@ void Steer(Bot& b, uint32_t frame) {
         while (b.at < b.goals.size()) Finish(b, "room");
         return;
     }
+    if (ModalUp()) {  // a message box (a save point's, say) ends them too: whoever gave them answers it
+        while (b.at < b.goals.size()) Finish(b, "modal");
+        return;
+    }
     float pos[3], yaw, h;
-    if ((SceneWord() & kScenes) || PauseMenuUp() || !PlayerPose(pos, yaw) || !CameraHeading(h)) return;
+    if ((SceneWord() & kScenes) || PauseMenuUp() || !PlayerPose(pos, yaw) || !CameraHeading(h)) {
+        b.best_frame = frame;  // waiting is not being stuck
+        return;
+    }
     BotGoal& g = b.goals[b.at];
     // the enemies to fight: those within a fight's radius, or on a walk those within the guard radius
     float reach = g.fight ? g.radius : b.guard;
@@ -130,7 +142,9 @@ void Steer(Bot& b, uint32_t frame) {
     }
     float amount = 1;
     if (fighting && d <= kAttackRange) {
-        b.attack = (frame / 4) % 2 == 0;  // 4 frames pressed, 4 let go
+        int beat = (frame / 4) % 6;       // 4 frames pressed, 4 let go: X, X, B, as recorded play fights
+        b.attack = beat % 2 == 0;
+        b.button = beat == 4 ? kB : kX;
         amount = 0.35f;                   // turned to face it, hardly walking
         b.best = d;                       // fighting is not being stuck
         b.best_frame = frame;
@@ -138,7 +152,7 @@ void Steer(Bot& b, uint32_t frame) {
         b.best = d;
         b.best_frame = frame;
     } else if (frame - b.best_frame > kStuckFrames && frame >= b.aside_until) {
-        if (++b.aside > kMaxAside) {
+        if (++b.aside > (fighting ? kMaxAsideFighting : kMaxAside)) {
             Finish(b, "stuck");
             return;
         }
@@ -193,7 +207,7 @@ void BotPad(input::Pad& p) {
     if (!b.press) return;
     p.lx = b.lx;
     p.ly = b.ly;
-    if (b.attack) p.analog[kX] = 0xFF;
+    if (b.attack) p.analog[b.button] = 0xFF;
 }
 
 // for the state: the goals, how each ended, the distance to the current one
