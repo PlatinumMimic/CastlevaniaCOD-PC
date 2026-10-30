@@ -5,8 +5,8 @@
 //   fight[=<radius>]           the enemies within radius of Hector (default 2500): to the nearest one, attacking from
 //                              close by, cleared once none has been there for half a second
 // A goal also ends when its command's time is up. Stick up walks the way the camera looks: with heading h, forward is
-// (sin h, cos h) in x and z and right is (cos h, -sin h). Getting no closer for 3/4 of a second, it steps aside for
-// half a second, the other way each time, and gives up after 8 tries. While a story scene plays, a room loads or the
+// (sin h, cos h) in x and z and right is (cos h, -sin h). Getting no closer, and in a fight landing no hit, for 3/4 of
+// a second, it steps aside for half a second, the other way each time, and gives up after 8 tries. While a story scene plays, a room loads or the
 // pause menu is up it leaves the pad alone.
 #include <cmath>
 #include <cstdio>
@@ -37,7 +37,7 @@ struct BotGoal {
 namespace {
 
 constexpr int kX = 2;                  // the attack button's analog slot
-constexpr float kAttackRange = 220;    // close enough to swing
+constexpr float kAttackRange = 300;    // close enough to swing: the armoured knights stop Hector ~250 away
 constexpr uint32_t kScenes = 0x28000;  // story scene, room change (telemetry.cpp)
 constexpr uint32_t kStuckFrames = 45, kAsideFrames = 30, kMaxAside = 8, kClearFrames = 30;
 
@@ -45,7 +45,7 @@ struct Bot {
     std::vector<BotGoal> goals;
     size_t at = 0;
     std::vector<std::string> results;  // per goal: reached, cleared, stuck, timeout
-    float dist = 0, best = 1e30f;
+    float dist = 0, best = 1e30f, enemy_hp = 1e30f;
     uint32_t best_frame = 0, aside_until = 0, aside = 0, empty_since = 0;
     float side = 1;
     int start_enemies = -1;
@@ -61,6 +61,7 @@ void Finish(Bot& b, const char* result) {
     b.results.push_back(result);
     b.at++;
     b.best = 1e30f;
+    b.enemy_hp = 1e30f;
     b.aside = 0;
     b.aside_until = 0;
     b.empty_since = 0;
@@ -77,11 +78,13 @@ void Steer(Bot& b, uint32_t frame) {
     float tx = g.x, tz = g.z;
     if (g.fight) {
         const EnemyInfo* near = nullptr;
-        float nd = 0;
+        float nd = 0, hp = 0;
         std::vector<EnemyInfo> list = Enemies();
         for (const EnemyInfo& e : list) {
             float d = std::hypot(e.pos[0] - pos[0], e.pos[2] - pos[2]);
-            if (d <= g.radius && (!near || d < nd)) near = &e, nd = d;
+            if (d > g.radius) continue;
+            hp += e.hp;
+            if (!near || d < nd) near = &e, nd = d;
         }
         if (b.start_enemies < 0) b.start_enemies = int(list.size());
         if (!near) {
@@ -90,6 +93,11 @@ void Steer(Bot& b, uint32_t frame) {
             return;
         }
         b.empty_since = 0;
+        if (hp < b.enemy_hp && b.enemy_hp < 1e30f) {  // a hit landed: progress, like getting closer
+            b.best_frame = frame;
+            b.aside = 0;
+        }
+        b.enemy_hp = hp;
         tx = near->pos[0], tz = near->pos[2];
     }
     float dx = tx - pos[0], dz = tz - pos[2], d = std::hypot(dx, dz);

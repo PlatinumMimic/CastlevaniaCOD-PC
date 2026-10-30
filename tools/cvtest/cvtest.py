@@ -130,16 +130,25 @@ class View:
         self._d = d or {}
 
     def __getattr__(self, k):
-        v = self._d.get(k)
-        return View(v) if isinstance(v, dict) else v
+        return view(self._d.get(k))
 
     def __repr__(self):
         return json.dumps(self._d)
 
 
+def view(v):
+    """objects as Views, also inside lists, so `enemies[0].dist` reads"""
+    if isinstance(v, dict):
+        return View(v)
+    if isinstance(v, list):
+        return [view(x) for x in v]
+    return v
+
+
 def holds(expr, state, prev, screen, step):
-    names = {k: (View(v) if isinstance(v, dict) else v) for k, v in (state or {}).items()}
-    names.update(prev=View(prev), screen=View(screen), step=View(step), abs=abs, min=min, max=max, round=round)
+    names = {k: view(v) for k, v in (state or {}).items()}
+    names.update(prev=View(prev), screen=View(screen), step=View(step), abs=abs, min=min, max=max, round=round,
+                 len=len, any=any, all=all)
     try:
         return bool(eval(expr, {"__builtins__": {}}, names)), None
     except Exception as e:  # a field the game did not report, usually

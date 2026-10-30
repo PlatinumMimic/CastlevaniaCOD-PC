@@ -3,8 +3,8 @@
 // its AI checks its HP; the actors seen there are kept, each with the room it was seen in.
 //
 // Actor layout, after Neguchads (Castlevania-COD-Recomp: enemy_edits.cpp, indicators.cpp): u16 +0 the character
-// kind, 2 for an enemy; u16 +2 the enemy type; float +0x1C HP; a scene node at +0x80, its position float3 first
-// and its scale at +0x20.
+// kind, 2 for an enemy; u16 +2 the enemy type; float +0x1C HP. The world position, float3 at +0xD0, was found by
+// dumping the knights of room 5.12 (two actors 0x420 apart, each with its own position there).
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -66,7 +66,7 @@ std::vector<EnemyInfo> Enemies() {
         std::memcpy(&kind, a, 2);
         std::memcpy(&e.type, a + 2, 2);
         std::memcpy(&e.hp, a + 0x1C, 4);
-        std::memcpy(e.pos, a + 0x80, 12);
+        std::memcpy(e.pos, a + 0xD0, 12);
         if (kind != kEnemy || !std::isfinite(e.hp) || e.hp <= 0 || !std::isfinite(e.pos[0]) || !std::isfinite(e.pos[2]))
             continue;
         out.push_back(e);

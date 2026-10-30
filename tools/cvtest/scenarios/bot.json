@@ -13,6 +13,7 @@
     {"press": "0f:wait:30f", "shot": "knights", "expect": ["len(enemies) > 0"]},
     {"press": "0:heal,0:fight:20000", "shot": "fight-1"},
     {"press": "0:heal,0:fight:20000", "shot": "fight-2"},
-    {"press": "0:heal,0:fight:20000", "shot": "fight-3", "expect": ["player.exp > 0"]}
+    {"press": "0:heal,0:fight:20000", "shot": "fight-3"},
+    {"press": "0:heal,0:fight:20000", "shot": "fight-4", "expect": ["player.exp > 0", "bot.results != ['stuck']"]}
   ]
 }
