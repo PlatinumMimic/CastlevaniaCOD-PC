@@ -1,7 +1,7 @@
 """Gameplay tests: runs the built game in a test folder of its own (its own settings and saves, the play folder is not
 touched), plays a scenario turn by turn through CV_PAD_LIVE (src/common/keyboard.cpp) and checks every step.
 
-usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/release] [--keep]
+usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/release] [--keep] [--judge[=<model>]]
        python -I tools/cvtest/cvtest.py --record <route> [--save <name>]    play, and keep it as routes/<route>.json
        python -I tools/cvtest/cvtest.py --make-route <telemetry.jsonl> <route>
 
@@ -12,6 +12,9 @@ A scenario is JSON:
    "settings": {"display_mode": ...},     optional: castlevania.toml lines (windowed 960x540 by default)
    "dump": "<va>:<bytes>,...",            optional: guest memory saved after every command (game/live/mem-<n>-<va>.bin)
    "telemetry": <frames>,                 optional: the state every that many frames, game/telemetry.jsonl
+   "judge": "jev-latest",                 optional: every screenshot judged (judge.py; a step's "judge": false
+                                          skips it): screen.judge has scene, defect and hector, and a likely
+                                          rendering defect or a scene the game state disagrees with is a warning
    "steps": [step, ...]}
 A step plays one of
   "press": "<entries>"                    keyboard.cpp's syntax, "0:a,500:b:300" or frames "0f:lsu:60f"
@@ -33,8 +36,9 @@ and may have
   "note": "..."                           shown in the report
 Expressions are Python over the game state (src/common/telemetry.cpp) after the step: frame, map, room,
 player.active, player.pos (x, y, z), player.yaw, player.hp, camera.heading, menu, modal, ...; prev is the state
-before the step, screen has mean, std and flat (one colour), step has fps, seconds and saved (the game wrote a
-save during it). A field the game did not report is None.
+before the step, screen has mean, std and flat (one colour) and, with a judge, judge.scene, judge.defect and
+judge.hector, step has fps, seconds and saved (the game wrote a save during it). A field the game did not report is
+None.
 
 Each step also fails when the game exits, a command does not finish in time, or the log has a new error or guest
 trap. The report (report.md, results.json, a screenshot per step) goes to out/test/<scenario>-<time>/.
@@ -258,6 +262,27 @@ class Game:
                 self.proc.wait(8)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+
+
+JEV_DEFECT = 0.88  # Jev's defect answer from which a screenshot is called defective (tools/cvtest/bakeoff.py: 41 of
+#                   44 right there; its answers run high, 13 of 26 clean pictures were over 0.5)
+
+
+def judge_warnings(j, state, screen):
+    """what the judge saw that the step should hear of: a likely rendering defect, or a scene other than the one
+    the game state says (when the state is sure: in play, the pause menu, a one-colour screen)"""
+    if not j:
+        return []
+    out = []
+    if j["defect"] >= JEV_DEFECT:
+        out.append(f"the judge sees a rendering defect ({j['defect']:.2f})")
+    p = state.get("player") or {}
+    said = ("blank" if screen.get("flat") else "pause_menu" if state.get("menu") else
+            None if state.get("modal") or state.get("cutscene") or state.get("loading")
+            or (state.get("camera") or {}).get("special") else "gameplay" if p.get("active") and p.get("pos") else None)
+    if said and j["scene"] != said and j["scene_p"].get(j["scene"], 0) >= 0.8:
+        out.append(f"the judge sees {j['scene']} where the game state says {said}")
+    return out
 
 
 def poll_until(game, expr, timeout, poll, poll_by, state):
@@ -640,8 +665,10 @@ def load(path):
     return scenario
 
 
-def run(scenario_path, build, keep):
+def run(scenario_path, build, keep, judge_model=None):
     scenario = load(scenario_path)
+    if judge_model:
+        scenario["judge"] = judge_model
     name = scenario.get("name", Path(scenario_path).stem)
     out = REPO / "out" / "test" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     game = Game(build, out / "game", scenario)
@@ -649,6 +676,12 @@ def run(scenario_path, build, keep):
     shots.mkdir()
     results, prev, failed = [], None, False
     places = {}  # sweep: where each room put Hector and the camera
+    judge_model = scenario.get("judge")
+    if judge_model:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))  # judge.py beside this (python -I leaves it off)
+        import judge
+        judge_model = "jev-latest" if judge_model is True else judge_model
+        judge_key = judge.key()
     print(f"{name}: {out}")
     try:
         if not game.hwnd:
@@ -685,7 +718,14 @@ def run(scenario_path, build, keep):
                 img = capture(game.hwnd)
                 if img:
                     screen = screen_stats(*img)
-                    write_png(shots / f"{i:03d}_{(step.get('shot') or 'step')}.png", *img)
+                    shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
+                    write_png(shot, *img)
+                    if judge_model and step.get("judge", True):
+                        try:
+                            answers, _ = judge.jev(shot, judge_key, judge_model)
+                            screen["judge"] = answers
+                        except Exception as e:  # the judge is advice: the step goes on without it
+                            r["warnings"].append(f"judge: {e}")
             if state:
                 frames = state.get("frame", 0) - (frame0 if frame0 is not None else state.get("frame", 0))
                 hdd = game.folder / "hdd"
@@ -701,6 +741,7 @@ def run(scenario_path, build, keep):
                 r.update(state=state, screen=screen, **info)
                 if screen.get("flat"):
                     r["warnings"].append(f"screen is one colour (mean {screen['mean']})")
+                r["warnings"] += judge_warnings(screen.get("judge"), state, screen)
                 # a room ID that lands where another one did: the same room, or an ID the warp falls back from
                 p, c = (state.get("player") or {}).get("pos"), (state.get("camera") or {}).get("pos")
                 if step.get("sweep_room") and p and c:
@@ -741,16 +782,18 @@ def run(scenario_path, build, keep):
 def report(out, name, results, failed):
     (out / "results.json").write_text(json.dumps(results, indent=1))
     lines = [f"# {name}: {'FAILED' if failed else 'passed'}", "",
-             "| step | result | frame | map/room | Hector (x, y, z) | HP | fps | notes |",
-             "|---|---|---|---|---|---|---|---|"]
+             "| step | result | frame | map/room | Hector (x, y, z) | HP | fps | judge | notes |",
+             "|---|---|---|---|---|---|---|---|---|"]
     for r in results:
         s = r.get("state") or {}
         p = s.get("player") or {}
         pos = ", ".join(f"{v:.0f}" for v in p["pos"]) if p.get("pos") else ""
         notes = "; ".join(r.get("errors", []) + r.get("warnings", []))
+        j = (r.get("screen") or {}).get("judge")
+        seen = f"{j['scene']}, defect {j['defect']:.2f}" if j else ""
         lines.append(f"| {r['step']} {r.get('label', '')} | {'ok' if r['ok'] else '**FAIL**'} | {s.get('frame', '')} | "
                      f"{s.get('map', '')}/{s.get('room', '')} | {pos} | {p.get('hp', '')} | {r.get('fps') or ''} | "
-                     f"{notes.replace('|', '/')} |")
+                     f"{seen} | {notes.replace('|', '/')} |")
     (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -767,7 +810,9 @@ def main():
         return 0 if record(args[1], build, save) else 1
     if args[0] == "--make-route":
         return 0 if save_route(args[1], args[2]) else 1
-    return 0 if run(args[0], build, "--keep" in args) else 1
+    flag = next((a for a in args if a.startswith("--judge")), None)  # --judge: Jev, the TypeSafe key from the env
+    judge_model = (flag.split("=", 1)[1] if "=" in flag else "jev-latest") if flag else None
+    return 0 if run(args[0], build, "--keep" in args, judge_model) else 1
 
 
 if __name__ == "__main__":
