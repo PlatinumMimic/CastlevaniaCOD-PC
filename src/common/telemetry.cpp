@@ -19,6 +19,7 @@
 //
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
 // the pad; turn by turn play (keyboard.cpp) writes it beside each done file.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -26,6 +27,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "kernel/memory.h"
 #include "xdk/d3d8.h"
@@ -150,6 +152,53 @@ void Camera(Json& j) {
 
 }  // namespace
 
+struct EnemyInfo {  // game/enemies.cpp
+    uint32_t actor;
+    uint16_t type;
+    float hp;
+    float pos[3];
+};
+std::vector<EnemyInfo> Enemies();
+std::string BotJson();  // bot.cpp
+
+// for the bot (bot.cpp), each frame: Hector's position and facing, the camera's heading (the direction stick up
+// walks), the scene word and the pause menu
+bool PlayerPose(float pos[3], float& yaw) {
+    uint32_t h = 0, record = 0;
+    Vec3 p;
+    if (!Read(0xB41394u, h) || !h || !Read(h, record) || record >= 128) return false;
+    uint32_t at = 0xB4129Cu + record * 0x1210;
+    if (!Read(at + 0x10, p) || !Finite(p) || !Read(at + 0x2C, yaw) || !std::isfinite(yaw)) return false;
+    pos[0] = p.x, pos[1] = p.y, pos[2] = p.z;
+    return true;
+}
+
+bool CameraHeading(float& heading) {
+    uint32_t view = 0;
+    Vec3 target, pos;
+    if (!Read(0xC36B74u, view) || !view || !Read(view + 0x30, target) || !Read(view + 0x40, pos) || !Finite(target) ||
+        !Finite(pos))
+        return false;
+    heading = std::atan2(target.x - pos.x, target.z - pos.z);
+    return true;
+}
+
+uint32_t SceneWord() {
+    uint32_t v = 0;
+    return Read(0xB23410u, v) ? v : 0;
+}
+
+// a test's "heal": Hector's HP set to his max HP (attributes 6 and 5)
+void HealPlayer() {
+    int32_t max = 0;
+    if (Read(0xB2CCD4u, max) && max > 0 && mem::IsCommitted(0xB2CCD8u)) std::memcpy(mem::Base() + 0xB2CCD8, &max, 4);
+}
+
+bool PauseMenuUp() {
+    uint32_t v = 0;
+    return Read(0xB25518u, v) && v;
+}
+
 // the state now, one JSON object on one line
 std::string GameStateJson() {
     Json j;
@@ -173,7 +222,26 @@ std::string GameStateJson() {
     uint32_t menu = 0, flags_at = 0, flags = 0;
     if (Read(0xB25518u, menu)) j.Bool("menu", menu != 0);
     if (Read(0x548C10u, flags_at) && flags_at && Read(flags_at, flags)) j.Bool("modal", (flags >> 16) & 1);
-    return j.Done();
+    // the enemies with HP left in this room, nearest first: actor, type, HP, position, distance across the floor
+    float me[3], yaw;
+    bool posed = PlayerPose(me, yaw);
+    std::vector<EnemyInfo> list = Enemies();
+    auto dist = [&](const EnemyInfo& e) { return posed ? std::hypot(e.pos[0] - me[0], e.pos[2] - me[2]) : 0.0f; };
+    std::sort(list.begin(), list.end(), [&](const EnemyInfo& a, const EnemyInfo& b) { return dist(a) < dist(b); });
+    std::string enemies = "[";
+    for (size_t i = 0; i < list.size() && i < 16; i++) {
+        char b[160];
+        snprintf(b, sizeof(b), "%s{\"actor\":%u,\"type\":%u,\"hp\":%.1f,\"pos\":[%.1f,%.1f,%.1f],\"dist\":%.1f}",
+                 i ? "," : "", list[i].actor, list[i].type, list[i].hp, list[i].pos[0], list[i].pos[1], list[i].pos[2],
+                 dist(list[i]));
+        enemies += b;
+    }
+    std::string out = j.Done();
+    out.pop_back();  // the closing brace: the lists go before it
+    out += ",\"enemies\":" + enemies + "]";
+    std::string bot = BotJson();
+    if (!bot.empty()) out += ",\"bot\":" + bot;
+    return out + "}";
 }
 
 // every map's rooms from the table the map screen draws from (header 0x55BA00, after Neguchads' minimap.cpp): flags

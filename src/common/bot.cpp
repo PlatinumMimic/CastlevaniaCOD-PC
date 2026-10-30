@@ -1,0 +1,179 @@
+// The test bot: walks Hector to a point and fights the enemies near him, steering every frame from the game state
+// (telemetry.cpp, game/enemies.cpp), so the fixed cameras cutting do not throw it off. Turn by turn commands give it
+// goals (keyboard.cpp), one after another:
+//   walk=<x>/<z>[/<radius>]    to that point across the floor, reached within radius (default 150)
+//   fight[=<radius>]           the enemies within radius of Hector (default 2500): to the nearest one, attacking from
+//                              close by, cleared once none has been there for half a second
+// A goal also ends when its command's time is up. Stick up walks the way the camera looks: with heading h, forward is
+// (sin h, cos h) in x and z and right is (cos h, -sin h). Getting no closer for 3/4 of a second, it steps aside for
+// half a second, the other way each time, and gives up after 8 tries. While a story scene plays, a room loads or the
+// pause menu is up it leaves the pad alone.
+#include <cmath>
+#include <cstdio>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "core/input.h"
+#include "xdk/d3d8.h"
+
+bool PlayerPose(float pos[3], float& yaw);  // telemetry.cpp
+bool CameraHeading(float& heading);         // telemetry.cpp
+uint32_t SceneWord();                       // telemetry.cpp
+bool PauseMenuUp();                         // telemetry.cpp
+struct EnemyInfo {                          // game/enemies.cpp
+    uint32_t actor;
+    uint16_t type;
+    float hp;
+    float pos[3];
+};
+std::vector<EnemyInfo> Enemies();
+
+struct BotGoal {
+    bool fight;
+    float x, z, radius;
+};
+
+namespace {
+
+constexpr int kX = 2;                  // the attack button's analog slot
+constexpr float kAttackRange = 220;    // close enough to swing
+constexpr uint32_t kScenes = 0x28000;  // story scene, room change (telemetry.cpp)
+constexpr uint32_t kStuckFrames = 45, kAsideFrames = 30, kMaxAside = 8, kClearFrames = 30;
+
+struct Bot {
+    std::vector<BotGoal> goals;
+    size_t at = 0;
+    std::vector<std::string> results;  // per goal: reached, cleared, stuck, timeout
+    float dist = 0, best = 1e30f;
+    uint32_t best_frame = 0, aside_until = 0, aside = 0, empty_since = 0;
+    float side = 1;
+    int start_enemies = -1;
+    // what the last frame pressed, for the game's second pad read in the same frame
+    uint32_t frame = ~0u;
+    bool press = false, attack = false;
+    int16_t lx = 0, ly = 0;
+};
+std::mutex g_m;
+Bot g_bot;
+
+void Finish(Bot& b, const char* result) {
+    b.results.push_back(result);
+    b.at++;
+    b.best = 1e30f;
+    b.aside = 0;
+    b.aside_until = 0;
+    b.empty_since = 0;
+}
+
+// this frame's stick and buttons for the current goal
+void Steer(Bot& b, uint32_t frame) {
+    b.press = b.attack = false;
+    float pos[3], yaw, h;
+    if (b.at >= b.goals.size() || (SceneWord() & kScenes) || PauseMenuUp() || !PlayerPose(pos, yaw) ||
+        !CameraHeading(h))
+        return;
+    BotGoal& g = b.goals[b.at];
+    float tx = g.x, tz = g.z;
+    if (g.fight) {
+        const EnemyInfo* near = nullptr;
+        float nd = 0;
+        std::vector<EnemyInfo> list = Enemies();
+        for (const EnemyInfo& e : list) {
+            float d = std::hypot(e.pos[0] - pos[0], e.pos[2] - pos[2]);
+            if (d <= g.radius && (!near || d < nd)) near = &e, nd = d;
+        }
+        if (b.start_enemies < 0) b.start_enemies = int(list.size());
+        if (!near) {
+            if (!b.empty_since) b.empty_since = frame;
+            if (frame - b.empty_since >= kClearFrames) Finish(b, "cleared");
+            return;
+        }
+        b.empty_since = 0;
+        tx = near->pos[0], tz = near->pos[2];
+    }
+    float dx = tx - pos[0], dz = tz - pos[2], d = std::hypot(dx, dz);
+    b.dist = d;
+    if (!g.fight && d <= g.radius) {
+        Finish(b, "reached");
+        return;
+    }
+    float amount = 1;
+    if (g.fight && d <= kAttackRange) {
+        b.attack = (frame / 4) % 2 == 0;  // 4 frames pressed, 4 let go
+        amount = 0.35f;                   // turned to face it, hardly walking
+        b.best = d;                       // fighting is not being stuck
+        b.best_frame = frame;
+    } else if (d < b.best - 20) {
+        b.best = d;
+        b.best_frame = frame;
+    } else if (frame - b.best_frame > kStuckFrames && frame >= b.aside_until) {
+        if (++b.aside > kMaxAside) {
+            Finish(b, "stuck");
+            return;
+        }
+        b.side = -b.side;
+        b.aside_until = frame + kAsideFrames;
+        b.best_frame = frame + kAsideFrames;
+    }
+    float ux = dx / d, uz = dz / d;
+    if (frame < b.aside_until) {  // a quarter turn aside
+        float t = ux;
+        ux = -uz * b.side;
+        uz = t * b.side;
+    }
+    float fx = std::sin(h), fz = std::cos(h), rx = std::cos(h), rz = -std::sin(h);
+    b.ly = int16_t(32767 * amount * (ux * fx + uz * fz));
+    b.lx = int16_t(32767 * amount * (ux * rx + uz * rz));
+    b.press = true;
+}
+
+}  // namespace
+
+// a command's goals, replacing any left from the last one
+void BotStart(const std::vector<BotGoal>& goals) {
+    std::lock_guard lock(g_m);
+    g_bot = Bot{};
+    g_bot.goals = goals;
+}
+
+// goals left
+bool BotBusy() {
+    std::lock_guard lock(g_m);
+    return g_bot.at < g_bot.goals.size();
+}
+
+// the command's time is up: what is left timed out
+void BotStop() {
+    std::lock_guard lock(g_m);
+    while (g_bot.at < g_bot.goals.size()) Finish(g_bot, "timeout");
+}
+
+// at each pad read
+void BotPad(input::Pad& p) {
+    std::lock_guard lock(g_m);
+    Bot& b = g_bot;
+    if (b.goals.empty()) return;
+    uint32_t frame = d3d::Swaps();
+    if (frame != b.frame) {
+        b.frame = frame;
+        Steer(b, frame);
+    }
+    if (!b.press) return;
+    p.lx = b.lx;
+    p.ly = b.ly;
+    if (b.attack) p.analog[kX] = 0xFF;
+}
+
+// for the state: the goals, how each ended, the distance to the current one
+std::string BotJson() {
+    std::lock_guard lock(g_m);
+    const Bot& b = g_bot;
+    if (b.goals.empty()) return "";
+    std::string r = "[";
+    for (const std::string& s : b.results) r += (r.size() > 1 ? ",\"" : "\"") + s + "\"";
+    char out[256];
+    snprintf(out, sizeof(out), "{\"goals\":%zu,\"done\":%zu,\"results\":%s],\"dist\":%.1f,\"aside\":%u,\"enemies_at_start\":%d}",
+             b.goals.size(), b.at, r.c_str(), b.dist, b.aside, b.start_enemies);
+    return out;
+}

@@ -17,8 +17,12 @@
 // CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
 // its entries as CV_PAD_SCRIPT does, times from the command's start ("<ms>:wait" only waits), then writes
 // state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next, and rooms.json (every map's rooms) once the
-// game has its room table. The window need not be in front. An entry
-// "0:warp=<map>.<room>[.<entry>]" sends Hector to that room at the command's start (game/warp.cpp).
+// game has its room table. The window need not be in front. Live entries can also be
+//   0:warp=<map>.<room>[.<entry>]     Hector sent to that room at the command's start (game/warp.cpp)
+//   0:heal                            his HP back to full at the command's start
+//   0:walk=<x>/<z>[/<r>]:<hold>       the bot (bot.cpp) walks him there; fight[=<r>] fights the enemies near
+//                                     him. The command ends once its goals are done, or at the hold at most
+//   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
 #include <windows.h>
@@ -26,6 +30,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -44,6 +49,15 @@ std::string GameStateJson();         // telemetry.cpp
 std::string RoomListJson();          // telemetry.cpp
 void TelemetryFrame();               // telemetry.cpp
 void RequestWarp(int map, int room, int entry);  // game/warp.cpp
+void HealPlayer();                               // telemetry.cpp
+struct BotGoal {                                 // bot.cpp
+    bool fight;
+    float x, z, radius;
+};
+void BotStart(const std::vector<BotGoal>& goals);
+bool BotBusy();
+void BotStop();
+void BotPad(input::Pad& p);
 
 namespace {
 
@@ -101,7 +115,18 @@ struct Step {
     uint32_t analog;  // bit per analog slot
     int16_t lx, ly, rx, ry;
     int map = -1, room = 0, entry = 0;  // warp=<map>.<room>[.<entry>]: live commands send Hector there at their start
+    bool goal = false, heal = false;    // walk=, fight (bot.cpp) and heal, live commands too
+    BotGoal bot{};
 };
+
+// "-0.5/1" as a stick: x and y from -1 to 1
+void Stick(const std::string& v, int16_t& x, int16_t& y) {
+    float fx = 0, fy = 0;
+    std::sscanf(v.c_str(), "%f/%f", &fx, &fy);
+    auto axis = [](float f) { return int16_t(std::lround(32767 * (std::max)(-1.0f, (std::min)(1.0f, f)))); };
+    x = axis(fx);
+    y = axis(fy);
+}
 
 std::vector<Step> ParseScript(std::string text) {
     std::vector<Step> steps;
@@ -145,6 +170,18 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b == "rsl") s.rx = -32767;
             else if (b == "rsr") s.rx = 32767;
             else if (b.rfind("warp=", 0) == 0) std::sscanf(b.c_str() + 5, "%d.%d.%d", &s.map, &s.room, &s.entry);
+            else if (b.rfind("ls=", 0) == 0) Stick(b.substr(3), s.lx, s.ly);
+            else if (b.rfind("rs=", 0) == 0) Stick(b.substr(3), s.rx, s.ry);
+            else if (b == "heal") s.heal = true;
+            else if (b.rfind("walk=", 0) == 0) {
+                s.goal = true;
+                s.bot = {false, 0, 0, 150};
+                std::sscanf(b.c_str() + 5, "%f/%f/%f", &s.bot.x, &s.bot.z, &s.bot.radius);
+            } else if (b == "fight" || b.rfind("fight=", 0) == 0) {
+                s.goal = true;
+                s.bot = {true, 0, 0, 2500};
+                if (b.size() > 6) std::sscanf(b.c_str() + 6, "%f", &s.bot.radius);
+            }
         }
         steps.push_back(s);
     }
@@ -204,7 +241,8 @@ struct Live {
     std::vector<Step> steps;
     Clock::time_point start;
     uint32_t start_frame = 0;
-    int64_t end_ms = 0, end_frames = 0;  // over when both are reached
+    int64_t end_ms = 0, end_frames = 0;  // over when both are reached, or once the bot's goals are done
+    bool goals = false;
 };
 
 Live& LiveState() {
@@ -245,7 +283,9 @@ std::mutex g_live_m;
 void LiveWait() {
     std::lock_guard lock(g_live_m);
     Live& l = LiveState();
-    if (l.running && MsSince(l.start) >= l.end_ms && int64_t(d3d::Swaps() - l.start_frame) >= l.end_frames) {
+    bool timed_out = MsSince(l.start) >= l.end_ms && int64_t(d3d::Swaps() - l.start_frame) >= l.end_frames;
+    if (l.running && (timed_out || (l.goals && !BotBusy()))) {
+        if (l.goals) BotStop();  // what is left timed out
         LiveDump(l);
         std::ofstream(l.dir / ("state-" + std::to_string(l.n) + ".json")) << GameStateJson() << "\n";
         static bool rooms = false;  // the map screen's room table, once it is there
@@ -270,8 +310,14 @@ void LiveWait() {
                 int64_t& end = s.frames ? l.end_frames : l.end_ms;
                 end = (std::max)(end, s.until);  // windows.h defines max
             }
-            for (const Step& s : l.steps)
+            std::vector<BotGoal> goals;
+            for (const Step& s : l.steps) {
                 if (s.map >= 0) RequestWarp(s.map, s.room, s.entry);
+                if (s.heal) HealPlayer();
+                if (s.goal) goals.push_back(s.bot);
+            }
+            l.goals = !goals.empty();
+            if (l.goals) BotStart(goals);
             l.n++;
             l.start = Clock::now();
             l.start_frame = d3d::Swaps();
@@ -321,5 +367,6 @@ void KeyboardPad(int port, input::Pad& p) {
         std::lock_guard lock(g_live_m);
         const Live& l = LiveState();
         if (l.running) Press(p, l.steps, MsSince(l.start), int64_t(d3d::Swaps() - l.start_frame));
+        if (l.running && l.goals) BotPad(p);
     }
 }
