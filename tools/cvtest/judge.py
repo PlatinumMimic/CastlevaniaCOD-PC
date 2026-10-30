@@ -1,21 +1,29 @@
 """The judge: asks a model what a screenshot shows, whether it rendered right and whether Hector is in it. Jev
-(TypeSafe System One, https://docs.typesafe.ai) answers with probabilities rather than text, in well under a second.
+(TypeSafe System One, https://docs.typesafe.ai) answers with probabilities rather than text, in well under a second;
+a model of the Codex CLI (codex exec, on its own sign-in) takes some 4 s and is the better judge
+(tools/cvtest/bakeoff.py): cvtest's own, and the one that looks again at what Jev flags when Jev screens.
 
-usage: python -I tools/cvtest/judge.py <shot.png> [...] [--model jev-latest] [--env-file <.env>]
+usage: python -I tools/cvtest/judge.py <shot.png> [...] [--model gpt-6-luna|jev-latest] [--env-file <.env>]
 
-The key is TYPESAFE_API_KEY, from the environment or a .env file (--env-file, or TYPESAFE_ENV_FILE). Answers are
-{"scene": "<one of SCENES>", "scene_p": {...}, "defect": <0..1>, "hector": <0..1>}.
+Jev's key is TYPESAFE_API_KEY, from the environment or a .env file (--env-file, or TYPESAFE_ENV_FILE). Answers are
+{"scene": "<one of SCENES>", "scene_p": {...}, "defect": <0..1>, "hector": <0..1>}; a Codex model's have no
+scene_p and add "what", the defect in a few words, and "colours", those it saw of the HUD and Hector's scarf.
 """
 import base64
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 API = "https://api.typesafe.ai/v1/systemone"
+LUNA = "gpt-6-luna"  # the Codex model that judged best (bakeoff.py)
 
 SCENES = {
     "gameplay": "the player controls Hector in a 3D level, the HUD (HP bar) at the top left",
@@ -28,8 +36,9 @@ SCENES = {
 }
 DEFECT = ("the picture has a rendering defect: garbage or exploded polygons (long slivers across the screen), "
           "corrupted textures (blocky noise), missing textures (flat white or solid areas), wrong colours (red and "
-          "blue swapped, say), black or unrendered regions, or an upside-down image. Effects, motion blur, light rays, "
-          "sparks, smoke and dark scenes are not defects")
+          "blue swapped, say: in play the icon beside the HP bar at the top left is red, the HP bar yellow and "
+          "Hector's scarf red, so blue ones there are swapped colours), black or unrendered regions, or an upside-down "
+          "image. Effects, motion blur, light rays, sparks, smoke and dark scenes are not defects")
 HECTOR = "Hector, the white-haired man in a long dark coat with a red scarf, is visible"
 
 # the same three questions, as Jev takes them; the picture is `screen` in the state
@@ -78,17 +87,81 @@ def jev(png, api_key, model="jev-latest", state=None, tries=4):
                      "model": res.get("model")}
 
 
+def codex(pngs, model=LUNA, effort="medium", timeout=600):
+    """screenshots judged by a Codex model in one codex exec call, the pictures attached: the answers of each, in
+    order, and {"seconds", "tokens", "model"}. The user's Codex config is left out (its plugins and hooks), its
+    sign-in is not; the model runs in a read-only sandbox in an empty folder and is told to run nothing."""
+    exe = shutil.which("codex")
+    if not exe:
+        raise RuntimeError("no codex on PATH (the Codex CLI)")
+    pngs = [Path(p).resolve() for p in pngs]
+    scenes = "; ".join(f"{k}: {v}" for k, v in SCENES.items())
+    prompt = (f"{len(pngs)} screenshot(s) of the game Castlevania: Curse of Darkness are attached, numbered from 1 in "
+              f"the order attached. For each one answer: shot, its number; scene, what the game is showing, one of "
+              f"{scenes}; icon, bar and scarf, the colour you see of the icon beside the HP bar at the top left, of "
+              f"the filled part of that HP bar and of Hector's scarf (blue for cyan too; none when it is not in the "
+              f"picture); defect, the probability (0 to 1) that {DEFECT}; what, that defect in a few words (empty when "
+              f"there is none); hector, the probability (0 to 1) that {HECTOR}. Look only at the attached pictures: "
+              f"run no commands and open no files.")
+    colour = {"type": "string", "enum": ["red", "yellow", "blue", "other", "none"]}
+    keys = ["shot", "scene", "icon", "bar", "scarf", "defect", "what", "hector"]
+    shot = {"type": "object", "additionalProperties": False, "required": keys,
+            "properties": {"shot": {"type": "integer"}, "scene": {"type": "string", "enum": list(SCENES)},
+                           "icon": colour, "bar": colour, "scarf": colour, "defect": {"type": "number"},
+                           "what": {"type": "string"}, "hector": {"type": "number"}}}
+    schema = {"type": "object", "additionalProperties": False, "required": ["shots"],
+              "properties": {"shots": {"type": "array", "items": shot}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "schema.json").write_text(json.dumps(schema))
+        last = Path(tmp) / "last.json"
+        cmd = [exe, "exec", "-m", model, "-c", f'model_reasoning_effort="{effort}"', "--ignore-user-config",
+               "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", tmp,
+               "--output-schema", str(Path(tmp) / "schema.json"), "-o", str(last), "--color", "never"]
+        for p in pngs:
+            cmd += ["-i", str(p)]
+        start = time.time()
+        r = subprocess.run(cmd + ["-"], input=prompt, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout)
+        if r.returncode or not last.exists():
+            raise RuntimeError(f"codex: exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]!r}")
+        got = {a.pop("shot"): a for a in json.loads(last.read_text(encoding="utf-8"))["shots"]}
+    if sorted(got) != list(range(1, len(pngs) + 1)):
+        raise RuntimeError(f"codex: answers for shots {sorted(got)} of {len(pngs)}")
+    used = re.search(r"tokens used\s+([\d.,]+)", r.stdout + r.stderr)  # "16.090" or "16,090", by the locale
+    answers = []
+    for _, a in sorted(got.items()):
+        j = {"scene": a["scene"], "defect": round(a["defect"], 3), "what": a["what"], "hector": round(a["hector"], 3),
+             "colours": {k: a[k] for k in ("icon", "bar", "scarf")}}
+        # the model reports a blue HP icon and bar and still calls the picture clean (bakeoff.py: 0 of 3 swaps found,
+        # at high effort too), so the swap is told from what it saw
+        if a["icon"] == "blue" and a["bar"] == "blue":
+            j["defect"] = max(j["defect"], 0.95)
+            j["what"] = j["what"] or "red and blue swapped (a blue HP icon and bar)"
+        answers.append(j)
+    return answers, {"seconds": round(time.time() - start, 2), "model": model,
+                     "tokens": int(re.sub(r"\D", "", used.group(1))) if used else None}
+
+
+def judged(png, model, api_key=None):
+    """one screenshot judged by Jev or a Codex model, with "by", the model"""
+    if model.startswith("jev"):
+        answers, info = jev(png, api_key, model)
+    else:
+        (answers,), info = codex([png], model)
+    return dict(answers, by=model), info
+
+
 def main():
     args = sys.argv[1:]
-    model = args[args.index("--model") + 1] if "--model" in args else "jev-latest"
+    model = args[args.index("--model") + 1] if "--model" in args else LUNA
     env_file = args[args.index("--env-file") + 1] if "--env-file" in args else None
     shots = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--model", "--env-file"))]
     if not shots:
         print(__doc__)
         return 2
-    k = key(env_file)
+    k = key(env_file) if model.startswith("jev") else None
     for shot in shots:
-        answers, info = jev(shot, k, model)
+        answers, info = judged(shot, model, k)
         print(json.dumps({"shot": shot, **answers, **info}))
     return 0
 

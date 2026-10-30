@@ -5,6 +5,8 @@ usage: python -I tools/cvtest/bakeoff.py pool                 the shots of out/t
                                                                and contact sheets of them (out/test/bakeoff/pool)
        python -I tools/cvtest/bakeoff.py build <picks.json>    the set: the picked shots, planted defects, truth.json
        python -I tools/cvtest/bakeoff.py jev [<model>] [--env-file <.env>]   Jev's answers, answers/<model>.json
+       python -I tools/cvtest/bakeoff.py codex [<model>]      a Codex model's, one call a picture as cvtest asks
+                                                               (gpt-6-luna by default), answers/<model>-cli.json
        python -I tools/cvtest/bakeoff.py prompt                the same questions for a model that opens the pictures
        python -I tools/cvtest/bakeoff.py score                 every answers/*.json against truth.json
 
@@ -18,6 +20,7 @@ import struct
 import sys
 import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -233,6 +236,19 @@ def run_jev(model, env_file):
     (dest / f"{model}.json").write_text(json.dumps(answers, indent=1))
 
 
+def run_codex(model):
+    pngs = sorted((OUT / "set").glob("img-*.png"))
+    with ThreadPoolExecutor(4) as workers:  # a call is mostly waiting on the model
+        done = list(workers.map(lambda png: judge.codex([png], model), pngs))
+    answers = {}
+    for png, ((a,), info) in zip(pngs, done):
+        answers[png.stem] = {**a, **info}
+        print(png.stem, a["scene"], a["defect"], a["hector"], f"{info['seconds']}s", a["what"])
+    dest = OUT / "answers"
+    dest.mkdir(exist_ok=True)
+    (dest / f"{model}-cli.json").write_text(json.dumps(answers, indent=1))
+
+
 def prompt():
     """the same questions, for a model that reads the pictures itself"""
     scenes = "\n".join(f"   - {k}: {v}" for k, v in judge.SCENES.items())
@@ -300,6 +316,8 @@ if __name__ == "__main__":
     elif cmd == "jev":
         run_jev(sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else "jev-latest",
                 sys.argv[sys.argv.index("--env-file") + 1] if "--env-file" in sys.argv else None)
+    elif cmd == "codex":
+        run_codex(sys.argv[2] if len(sys.argv) > 2 else judge.LUNA)
     elif cmd == "prompt":
         print(prompt())
     elif cmd == "score":

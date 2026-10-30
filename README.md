@@ -200,11 +200,13 @@ Changes this game needed beyond the generated config:
   save points), the menus and message boxes as they were answered, and the fights that were won. A scenario step
   `{"route": "<route>"}` plays it back with the bot: `route.json`, and `first-save.json` (a new game to the first
   save room, a save there, the pause menu and the map).
-- `--judge` has every screenshot judged by Jev (TypeSafe; `tools\cvtest\judge.py`, the key in `TYPESAFE_API_KEY` or
-  a `.env` file named by `TYPESAFE_ENV_FILE`): what the screen shows, whether it rendered right, whether Hector is
-  in it, about 0.35 s a picture. A likely defect, or a scene the game state disagrees with, is a warning in the
-  report. `tools\cvtest\bakeoff.py` builds the labelled set (shots from test runs, rendering defects planted in some)
-  that Jev, GPT-6 Luna and Haiku 5.5 were compared on.
+- `--judge` has every screenshot judged by GPT-6 Luna through the Codex CLI (`codex exec`, on its sign-in;
+  `tools\cvtest\judge.py`): what the screen shows, whether it rendered right, whether Hector is in it, about 4 s a
+  picture. A likely defect, or a scene the game state disagrees with, is a warning in the report.
+  `--judge=jev-latest` is quicker for long runs such as sweeps: Jev (TypeSafe, the key in `TYPESAFE_API_KEY` or a
+  `.env` file named by `TYPESAFE_ENV_FILE`) screens every shot in about 0.35 s and Luna looks again at those it
+  flags (`--review=none` for Jev alone). `tools\cvtest\bakeoff.py` builds the labelled set (shots from test runs,
+  rendering defects planted in some) that Jev, GPT-6 Luna and Haiku 5.5 were compared on.
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.
