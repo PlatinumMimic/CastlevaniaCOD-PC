@@ -2,7 +2,7 @@
 touched), plays a scenario turn by turn through CV_PAD_LIVE (src/common/keyboard.cpp) and checks every step.
 
 usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/release] [--keep] [--judge[=<model>]]
-                                        [--review=<model>|none]
+                                        [--review=<model>|none] [--set <setting>=<value> ...]
        python -I tools/cvtest/cvtest.py --record <route> [--save <name>]    play, and keep it as routes/<route>.json
        python -I tools/cvtest/cvtest.py --make-route <telemetry.jsonl> <route>
 
@@ -44,12 +44,15 @@ and may have
   "expect": ["<expression>", ...]         each must hold after the step
   "shot": "<name>"                        keeps the screenshot as <name>.png
   "save_as": "<name>"                     keeps the game's saves (hdd) for a later scenario's "save"
+  "ask": {"question": "...",              asks a Codex model (judge.py, gpt-6-luna) about the screenshot:
+          "choices": {"<name>": "...", ...}}   screen.ask.answer is the choice's name, screen.ask.why its reason
   "note": "..."                           shown in the report
 Expressions are Python over the game state (src/common/telemetry.cpp) after the step: frame, map, room,
 player.active, player.pos (x, y, z), player.yaw, player.hp, camera.heading, menu, modal, ...; prev is the state
 before the step, screen has mean, std and flat (one colour) and, with a judge, judge.scene, judge.defect,
 judge.hector and judge.by (the model; judge.first has Jev's answers a review replaced), step has fps, seconds and
-saved (the game wrote a save during it). A field the game did not report is None.
+saved (the game wrote a save during it), settings the run's settings (--set changes them). A field the game did
+not report is None.
 
 Each step also fails when the game exits, a command does not finish in time, or the log has a new error or guest
 trap. The report (report.md, results.json, a screenshot per step) goes to out/test/<scenario>-<time>/.
@@ -180,10 +183,10 @@ def view(v):
     return v
 
 
-def holds(expr, state, prev, screen, step):
+def holds(expr, state, prev, screen, step, settings=None):
     names = {k: view(v) for k, v in (state or {}).items()}
-    names.update(prev=View(prev), screen=View(screen), step=View(step), abs=abs, min=min, max=max, round=round,
-                 len=len, any=any, all=all)
+    names.update(prev=View(prev), screen=View(screen), step=View(step), settings=View(settings), abs=abs, min=min,
+                 max=max, round=round, len=len, any=any, all=all)
     try:
         return bool(eval(expr, {"__builtins__": {}}, names)), None
     except Exception as e:  # a field the game did not report, usually
@@ -714,8 +717,10 @@ def load(path):
     return scenario
 
 
-def run(scenario_path, build, keep, judge_model=None, review=None):
+def run(scenario_path, build, keep, judge_model=None, review=None, overrides=None):
     scenario = load(scenario_path)
+    scenario["settings"] = dict(scenario.get("settings", {}), **(overrides or {}))
+    settings = dict(DEFAULT_SETTINGS, **scenario["settings"])
     if judge_model:
         scenario["judge"] = judge_model
     if review:
@@ -728,9 +733,10 @@ def run(scenario_path, build, keep, judge_model=None, review=None):
     results, prev, failed = [], None, False
     places = {}  # sweep: where each room put Hector and the camera
     judge_model, review = scenario.get("judge"), None
-    if judge_model:
+    if judge_model or any("ask" in st for st in scenario["steps"]):
         sys.path.insert(0, str(Path(__file__).resolve().parent))  # judge.py beside this (python -I leaves it off)
         import judge
+    if judge_model:
         judge_model = judge.LUNA if judge_model is True else judge_model
         judge_key = judge.key() if judge_model.startswith("jev") else None
         # Jev screens every shot, a Codex model looks again at what it flags
@@ -784,6 +790,11 @@ def run(scenario_path, build, keep, judge_model=None, review=None):
                             screen["judge"], _ = judge.judged(shot, judge_model, judge_key)
                         except Exception as e:  # the judge is advice: the step goes on without it
                             r["warnings"].append(f"judge: {e}")
+                    if step.get("ask"):
+                        try:
+                            screen["ask"], _ = judge.ask(shot, step["ask"]["question"], step["ask"]["choices"])
+                        except Exception as e:  # an expect on the answer fails then, and says why
+                            r["warnings"].append(f"ask: {e}")
             if state:
                 frames = state.get("frame", 0) - (frame0 if frame0 is not None else state.get("frame", 0))
                 hdd = game.folder / "hdd"
@@ -802,7 +813,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None):
                         r["warnings"].append(f"review: {e}")
                         seen = judge_warnings(screen["judge"], state, screen)
                 for expr in step.get("expect", []):
-                    ok, why = holds(expr, state, prev, screen, info)
+                    ok, why = holds(expr, state, prev, screen, info, settings)
                     if not ok:
                         r["errors"].append(f"expect {expr!r} failed" + (f" ({why})" if why else ""))
                 r.update(state=state, screen=screen, **info)
@@ -823,7 +834,9 @@ def run(scenario_path, build, keep, judge_model=None, review=None):
                 r["saved"] = step["save_as"]
             r["ok"] = not r["errors"]
             results.append(r)
+            asked = (r.get("screen") or {}).get("ask")
             print(f"  {i:3d} {'ok  ' if r['ok'] else 'FAIL'} {label}"
+                  + (f"\n        asked: {asked['answer']} ({asked['why']})" if asked else "")
                   + "".join(f"\n        {e}" for e in r["errors"] + r["warnings"]))
             if state:
                 prev = state
@@ -860,6 +873,9 @@ def report(out, name, results, failed):
         seen = f"{j['scene']}, defect {j['defect']:.2f}" if j else ""
         if j and j.get("first"):
             seen += f" ({j['by']}; {j['first']['by']} saw {j['first']['scene']}, defect {j['first']['defect']:.2f})"
+        if (r.get("screen") or {}).get("ask"):
+            a = r["screen"]["ask"]
+            seen += ("; " if seen else "") + f"asked: **{a['answer']}**, {a['why']}"
         lines.append(f"| {r['step']} {r.get('label', '')} | {'ok' if r['ok'] else '**FAIL**'} | {s.get('frame', '')} | "
                      f"{s.get('map', '')}/{s.get('room', '')} | {pos} | {p.get('hp', '')} | {r.get('fps') or ''} | "
                      f"{seen} | {notes.replace('|', '/')} |")
@@ -895,7 +911,15 @@ def main():
     flag = next((a for a in args if a.startswith("--judge")), None)  # --judge=jev-*: the TypeSafe key from the env
     judge_model = (flag.split("=", 1)[1] if "=" in flag else True) if flag else None
     review = next((a.split("=", 1)[1] for a in args if a.startswith("--review=")), None)
-    return 0 if run(args[0], build, "--keep" in args, judge_model, review) else 1
+    overrides = {}  # --set button_layout=1: a setting for this run, JSON (a number, true) or else a string
+    for i, a in enumerate(args[:-1]):
+        if a == "--set":
+            k, v = args[i + 1].split("=", 1)
+            try:
+                overrides[k] = json.loads(v)
+            except ValueError:
+                overrides[k] = v
+    return 0 if run(args[0], build, "--keep" in args, judge_model, review, overrides) else 1
 
 
 if __name__ == "__main__":

@@ -28,12 +28,14 @@
 #include <algorithm>
 #include <cctype>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -49,6 +51,7 @@
 
 bool g_texture_pack = true;         // settings file: texture_pack
 uint32_t g_texture_pack_size = 2048;  // texture_pack_size: the largest side a picture is loaded at, 0 as it is
+uint32_t g_button_layout = 0;         // button_layout: 0 Xbox, 1 PS2 (its icons here, its shoulders in keyboard.cpp)
 
 namespace {
 
@@ -106,7 +109,17 @@ uint64_t PaletteHash(const uint32_t* palette, uint32_t n) {
 struct Key {
     uint64_t texture, palette;
     bool operator<(const Key& o) const { return texture != o.texture ? texture < o.texture : palette < o.palette; }
+    bool operator==(const Key& o) const { return texture == o.texture && palette == o.palette; }
 };
+
+// The button icons are cells of a sheet of item icons, drawn with a palette of their own. The Xbox repainted those
+// cells (A B X Y, L R, white and black: 8 bit, for their shading) in the PS2's places, so the PS2's 4 bit sheet,
+// in the palette its icons were drawn with, is the Xbox sheet with the PS2's icons: O, triangle, square, X where B
+// Y X A are, L1 L2 R1 R2 where L, white, R and black are (the PS2's shoulders, keyboard.cpp). A pack made from the
+// PS2 game has that sheet; the PS2 layout draws it for the Xbox one. (The Xbox sheet's name came from
+// CV_TEXPACK_MISSES on the controller settings screen.)
+constexpr Key kXboxButtons = {0xf381b771eed6d1a7ull, 0x485f27ac31c8011full};
+constexpr Key kPs2Buttons = {0x27818fa40a1117afull, 0x66279948575c23d7ull};
 
 class Pack {
 public:
@@ -141,10 +154,17 @@ public:
         if (files_.empty() || !palette) return 0;
         std::vector<uint8_t> idx;
         if (!gpu::PaletteIndices(d, guest, idx)) return 0;
-        auto it = index_.find(Key{TextureHash(idx, d.width, d.height, false), PaletteHash(palette, 256)});
-        if (it == index_.end() && *std::max_element(idx.begin(), idx.end()) < 16)
-            it = index_.find(Key{TextureHash(idx, d.width, d.height, true), PaletteHash(palette, 16)});
-        if (it == index_.end()) return 0;
+        Key key{TextureHash(idx, d.width, d.height, false), PaletteHash(palette, 256)};
+        auto it = index_.find(key == kXboxButtons && g_button_layout == 1 ? kPs2Buttons : key);
+        bool four = *std::max_element(idx.begin(), idx.end()) < 16;
+        if (it == index_.end() && four) {
+            key = Key{TextureHash(idx, d.width, d.height, true), PaletteHash(palette, 16)};
+            it = index_.find(key);
+        }
+        if (it == index_.end()) {
+            Missed(key, d, four ? palette : nullptr);
+            return 0;
+        }
         uint32_t i = it->second;
         std::lock_guard lock(m_);
         if (state_[i].stage == Stage::Idle) {
@@ -166,6 +186,19 @@ public:
     }
 
 private:
+    // CV_TEXPACK_MISSES set: each texture the pack has no picture for, once, as the pack would name it, with a 4 bit
+    // one's colours (RRGGBB), to find a texture's name for a pack
+    void Missed(const Key& key, const gpu::TextureDesc& d, const uint32_t* palette) {
+        static const bool on = std::getenv("CV_TEXPACK_MISSES") != nullptr;
+        if (!on) return;
+        std::lock_guard lock(m_);
+        if (!missed_.insert(key).second) return;
+        char colours[16 * 7 + 1] = {};
+        for (uint32_t i = 0; palette && i < 16; i++) std::snprintf(colours + i * 7, 8, " %06X", palette[i] & 0xFFFFFF);
+        LOGR("texpack: no picture for %016llx-%016llx, %ux%u%s%s", (unsigned long long)key.texture,
+             (unsigned long long)key.palette, d.width, d.height, palette ? ", 4 bit:" : "", colours);
+    }
+
     enum class Stage { Idle, Queued, Ready, Failed };
     struct Entry {
         Stage stage = Stage::Idle;
@@ -263,6 +296,7 @@ private:
     std::condition_variable cv_;
     std::deque<uint32_t> queue_;
     std::vector<Entry> state_;
+    std::set<Key> missed_;
 };
 
 Pack g_pack;

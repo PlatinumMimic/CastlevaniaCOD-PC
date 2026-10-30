@@ -87,6 +87,10 @@ pictures are not used yet.
 
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
+- **Button Layout** - Xbox, or PS2: the PS2's button icons (□ △ ○ ×, L1 L2 R1 R2) and its shoulders, L1 resetting
+  the camera and R1 guarding, L2 and R2 locking on (menu, Controls; `button_layout = 1`; from the next start). The
+  PS2 icons come from an HD texture pack made from the PS2 game (HD Texture Packs, above); without one the Xbox
+  icons stay.
 
 ### Keyboard
 The keyboard plays as player 1 while the window is in front:
@@ -213,6 +217,10 @@ Changes this game needed beyond the generated config:
   the frame rate, the renderer's milliseconds a frame, the game thread's in D3D calls and waiting on the renderer,
   the draws. A scenario's `"perf": true` times any run; `"shader_cache": "<name>"` keeps its compiled shaders for
   the next run with that name (a test starts cold otherwise).
+- A step's `"ask"` puts a question about its screenshot to GPT-6 Luna, with named answers an `expect` can check.
+  `buttons.json` asks which controller's icons show at the courtyard door and on the controller settings page;
+  `--set button_layout=1` runs it with the PS2 layout (`--set` changes any setting for a run).
+- `CV_TEXPACK_MISSES=1` logs each texture the HD pack has no picture for, once, as a pack would name it.
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.

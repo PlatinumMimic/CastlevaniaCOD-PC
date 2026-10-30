@@ -87,14 +87,48 @@ def jev(png, api_key, model="jev-latest", state=None, tries=4):
                      "model": res.get("model")}
 
 
-def codex(pngs, model=LUNA, effort="medium", timeout=600):
-    """screenshots judged by a Codex model in one codex exec call, the pictures attached: the answers of each, in
-    order, and {"seconds", "tokens", "model"}. The user's Codex config is left out (its plugins and hooks), its
-    sign-in is not; the model runs in a read-only sandbox in an empty folder and is told to run nothing."""
+def codex_exec(pngs, prompt, schema, model=LUNA, effort="medium", timeout=600):
+    """one codex exec call with the pictures attached and an answer in the shape of schema: the answer, and
+    {"seconds", "tokens", "model"}. The user's Codex config is left out (its plugins and hooks), its sign-in is not;
+    the model runs in a read-only sandbox in an empty folder and is told to run nothing."""
     exe = shutil.which("codex")
     if not exe:
         raise RuntimeError("no codex on PATH (the Codex CLI)")
-    pngs = [Path(p).resolve() for p in pngs]
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "schema.json").write_text(json.dumps(schema))
+        last = Path(tmp) / "last.json"
+        cmd = [exe, "exec", "-m", model, "-c", f'model_reasoning_effort="{effort}"', "--ignore-user-config",
+               "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", tmp,
+               "--output-schema", str(Path(tmp) / "schema.json"), "-o", str(last), "--color", "never"]
+        for p in pngs:
+            cmd += ["-i", str(Path(p).resolve())]
+        start = time.time()
+        r = subprocess.run(cmd + ["-"], input=prompt, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout)
+        if r.returncode or not last.exists():
+            raise RuntimeError(f"codex: exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]!r}")
+        answer = json.loads(last.read_text(encoding="utf-8"))
+    used = re.search(r"tokens used\s+([\d.,]+)", r.stdout + r.stderr)  # "16.090" or "16,090", by the locale
+    return answer, {"seconds": round(time.time() - start, 2), "model": model,
+                    "tokens": int(re.sub(r"\D", "", used.group(1))) if used else None}
+
+
+def ask(png, question, choices, model=LUNA):
+    """one screenshot and a question about it, with choices {name: what it means}: {"answer": <name>, "why": ...}
+    from a Codex model, and the call's info"""
+    listed = "; ".join(f"{k}: {v}" for k, v in choices.items())
+    prompt = (f"A screenshot of the game Castlevania: Curse of Darkness is attached. {question} Answer with one of "
+              f"these: {listed}. Say in a sentence what in the picture decides it. Look only at the attached picture: "
+              f"run no commands and open no files.")
+    schema = {"type": "object", "additionalProperties": False, "required": ["answer", "why"],
+              "properties": {"answer": {"type": "string", "enum": list(choices)}, "why": {"type": "string"}}}
+    answer, info = codex_exec([png], prompt, schema, model)
+    return dict(answer, by=model), info
+
+
+def codex(pngs, model=LUNA, effort="medium", timeout=600):
+    """screenshots judged by a Codex model in one codex exec call (codex_exec): the answers of each, in order, and
+    the call's info"""
     scenes = "; ".join(f"{k}: {v}" for k, v in SCENES.items())
     prompt = (f"{len(pngs)} screenshot(s) of the game Castlevania: Curse of Darkness are attached, numbered from 1 in "
               f"the order attached. For each one answer: shot, its number; scene, what the game is showing, one of "
@@ -111,23 +145,10 @@ def codex(pngs, model=LUNA, effort="medium", timeout=600):
                            "what": {"type": "string"}, "hector": {"type": "number"}}}
     schema = {"type": "object", "additionalProperties": False, "required": ["shots"],
               "properties": {"shots": {"type": "array", "items": shot}}}
-    with tempfile.TemporaryDirectory() as tmp:
-        (Path(tmp) / "schema.json").write_text(json.dumps(schema))
-        last = Path(tmp) / "last.json"
-        cmd = [exe, "exec", "-m", model, "-c", f'model_reasoning_effort="{effort}"', "--ignore-user-config",
-               "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", tmp,
-               "--output-schema", str(Path(tmp) / "schema.json"), "-o", str(last), "--color", "never"]
-        for p in pngs:
-            cmd += ["-i", str(p)]
-        start = time.time()
-        r = subprocess.run(cmd + ["-"], input=prompt, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout)
-        if r.returncode or not last.exists():
-            raise RuntimeError(f"codex: exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]!r}")
-        got = {a.pop("shot"): a for a in json.loads(last.read_text(encoding="utf-8"))["shots"]}
+    answer, info = codex_exec(pngs, prompt, schema, model, effort, timeout)
+    got = {a.pop("shot"): a for a in answer["shots"]}
     if sorted(got) != list(range(1, len(pngs) + 1)):
         raise RuntimeError(f"codex: answers for shots {sorted(got)} of {len(pngs)}")
-    used = re.search(r"tokens used\s+([\d.,]+)", r.stdout + r.stderr)  # "16.090" or "16,090", by the locale
     answers = []
     for _, a in sorted(got.items()):
         j = {"scene": a["scene"], "defect": round(a["defect"], 3), "what": a["what"], "hector": round(a["hector"], 3),
@@ -138,8 +159,7 @@ def codex(pngs, model=LUNA, effort="medium", timeout=600):
             j["defect"] = max(j["defect"], 0.95)
             j["what"] = j["what"] or "red and blue swapped (a blue HP icon and bar)"
         answers.append(j)
-    return answers, {"seconds": round(time.time() - start, 2), "model": model,
-                     "tokens": int(re.sub(r"\D", "", used.group(1))) if used else None}
+    return answers, info
 
 
 def judged(png, model, api_key=None):

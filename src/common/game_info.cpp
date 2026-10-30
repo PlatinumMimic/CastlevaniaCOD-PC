@@ -11,6 +11,7 @@ extern uint32_t g_menu_key;                   // menu.cpp
 extern bool g_launcher_keep_open;             // menu.cpp
 extern bool g_texture_pack;                   // texpack.cpp
 extern uint32_t g_texture_pack_size;          // texpack.cpp
+extern uint32_t g_button_layout;              // texpack.cpp
 void GameInit();                              // setup.cpp
 
 // what the runtime asks of the game; strings must be set, hooks may stay null
@@ -28,7 +29,8 @@ const app::GameInfo app::kGame = {
                 {"menu_key", nullptr, &g_menu_key},
                 {"launcher_keep_open", &g_launcher_keep_open, nullptr},
                 {"texture_pack", &g_texture_pack, nullptr},
-                {"texture_pack_size", nullptr, &g_texture_pack_size}},
+                {"texture_pack_size", nullptr, &g_texture_pack_size},
+                {"button_layout", nullptr, &g_button_layout}},
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
     .init = GameInit,                     // after the settings load, before the window and boot: game files, game code, renderer extension

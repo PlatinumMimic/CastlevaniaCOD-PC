@@ -339,6 +339,7 @@ bool MenuOpen();                     // menu.cpp
 void MenuToggle();                   // menu.cpp
 void MenuWindow();                   // menu.cpp
 extern bool g_pause_on_focus_loss;   // menu.cpp
+extern uint32_t g_button_layout;     // texpack.cpp
 std::atomic<bool> g_closing{false};  // the window is closing: a paused game lets go
 
 void KeyboardWindow(void* hwnd) {
@@ -365,6 +366,13 @@ void KeyboardPad(int port, input::Pad& p) {
         p.connected = true;
         TelemetryFrame(p);
         return;
+    }
+    // the PS2 layout: a controller's shoulders do what the Xbox's triggers do and its triggers what white and black
+    // do, as on the PS2 (L1 resets the camera, R1 guards) and as its icons say (texpack.cpp); the keyboard keeps its
+    // own keys
+    if (g_button_layout == 1) {
+        std::swap(p.analog[kWhite], p.analog[kLT]);
+        std::swap(p.analog[kBlack], p.analog[kRT]);
     }
     Keyboard(p);
     Scripted(p);

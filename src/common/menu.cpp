@@ -25,6 +25,7 @@ bool g_fps_counter = false;
 bool g_pause_on_focus_loss = true;
 uint32_t g_menu_key = VK_F10;  // virtual key that opens the menu
 bool g_launcher_keep_open = false;  // the launcher's, kept when the game writes the file
+extern uint32_t g_button_layout;    // texpack.cpp
 
 namespace {
 
@@ -155,7 +156,14 @@ void GameTab(bool& save) {
     ImGui::EndTable();
 }
 
-void ControlsTab() {
+void ControlsTab(bool& save) {
+    if (BeginRows("layout")) {
+        Row("Button layout", "PS2: the PS2's button icons (from an HD texture pack made from the PS2 game) and its "
+                             "shoulders: L1 resets the camera, R1 guards, L2 and R2 lock on. From the next start.");
+        save |= Choice<uint32_t>("##layout", g_button_layout, {0, 1}, {"Xbox", "PS2"});
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
     ImGui::TextWrapped("Xbox, PlayStation and Switch controllers work as player 1. The keyboard plays alongside:");
     ImGui::Spacing();
     static const char* kKeys[][2] = {
@@ -189,6 +197,7 @@ void Defaults() {
     s = d;
     g_fps_counter = false;
     g_pause_on_focus_loss = true;
+    g_button_layout = 0;
     app::ApplyDisplay();
 }
 
@@ -330,7 +339,7 @@ void MenuUi(double fps) {
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("Controls")) {
-                    ControlsTab();
+                    ControlsTab(save);
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();
