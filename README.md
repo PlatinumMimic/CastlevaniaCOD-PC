@@ -62,8 +62,9 @@ key or L3 + R3 closes it.
 - **Any Resolution** - Renders at your display's resolution instead of 640x480.
 - **Display Modes** - Fullscreen, borderless or windowed, with vsync.
 - **Widescreen** - On a 16:9 or wider display the game is shown 16:9 with more of the world at the sides (Hor+),
-  without stretching. The HUD, menus and movies stay 4:3 in the middle. Turn it off in the menu (Graphics) for the
-  original 4:3 picture.
+  without stretching. The HUD, text and movies stay 4:3 in the middle; the backdrops of the menus, the map and the
+  save screens reach the sides, as does the dimmed panel behind a message. Turn it off in the menu (Graphics) for
+  the original 4:3 picture.
 - **No Overscan Streaks** - The rows a TV's overscan used to hide at the top and bottom of the picture no longer
   smear; the frame fills the screen.
 
@@ -193,7 +194,12 @@ Changes this game needed beyond the generated config:
   - Widescreen. The game projects with a PS2 style view screen matrix (`c68`, or `c85` with the world matrix) and
     maps PS2 screen space to console pixels with `c94`/`c95`. Each draw into the back buffer is squeezed to 3/4 of its
     width around the centre: for draws that use the camera that is a wider field of view, for 2D draws a 4:3 shape.
-    Draws over the whole width stay whole when they are untextured (fades) or read a render target (the frame pass).
+    Draws over the whole width stay whole when they are untextured (fades), take a few texels across it (a message's
+    dimmed panel) or read a render target (the frame pass). Menus, the map and the save screens draw their backdrop
+    in pieces; the pieces at the frame's edges have those edges pulled out to the screen's (a vertex on the edge is
+    not squeezed), unless the 3D world (1000 vertices of it) or a 4:3 picture over the whole frame came first: the
+    title's logo is in pieces at the edges, over its castle. `CV_WIDE_TRACE=<n>` logs every draw into the back buffer
+    of one frame in n, where it lands and what was made of it.
   - Overscan. The last pass of each frame draws a copy of the frame back with its rows -16 to 496 over rows 0 to 480
     (PS2 448 lines plus border shrunk into the NTSC frame); the 16 rows past each edge clamped into streaks. The pass
     is drawn that much taller, so the copy fills the frame row for row.
@@ -225,6 +231,9 @@ Changes this game needed beyond the generated config:
   `buttons.json` asks which controller's icons show at the courtyard door and on the controller settings page;
   `--set button_layout=1` runs it with the PS2 layout (`--set` changes any setting for a run).
 - `CV_TEXPACK_MISSES=1` logs each texture the HD pack has no picture for, once, as a pack would name it.
+- `widescreen.json` keeps the screens widescreen reaches the sides of: the pause menu, the map, and with a route
+  step's `"box_shots": true` each box on the first-save recording (the save point's, and the Memorial Ticket's
+  dimmed panel when the first enemy drops it).
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.

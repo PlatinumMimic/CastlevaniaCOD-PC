@@ -39,7 +39,8 @@ A step plays one of
                                           through each room's points, pressing where the recording pressed and
                                           playing its menus where it played them, out by the way the recording
                                           left; enemies within "guard" (default 600, 0 for none) are fought on the
-                                          way and story scenes skipped
+                                          way and story scenes skipped; "box_shots": true keeps a screenshot of
+                                          each box that came up on the way (<step>_box-<n>.png)
 and may have
   "expect": ["<expression>", ...]         each must hold after the step
   "shot": "<name>"                        keeps the screenshot as <name>.png
@@ -528,12 +529,13 @@ def stick_way(lines, last):
     return 0.0, 0.0
 
 
-def play_route(game, route, step, prev):
+def play_route(game, route, step, prev, box_shots=None):
     """walks a route leg by leg: each point a command of its own (the game waits between commands, so Hector walks
     on), a jump where the recording jumped, its menus and boxes answered as it answered them, story scenes skipped,
     enemies within "guard" fought on the way"""
     guard = step.get("guard", 600)
     state, seconds, notes = prev, 0.0, []
+    boxes = 0
 
     def play(entries):
         nonlocal state, seconds
@@ -545,6 +547,17 @@ def play_route(game, route, step, prev):
                 return "Hector died"
         return err
 
+    def keep_box(where):
+        """box_shots: the box once it is drawn (it opens over some frames)"""
+        nonlocal boxes
+        if not box_shots or play("45f:wait") or not game.alive():
+            return
+        img = capture(game.hwnd)
+        if img:
+            boxes += 1
+            write_png(Path(f"{box_shots}-{boxes}.png"), *img)
+            notes.append(f"{where}: box shot {boxes}")
+
     def answer(p, where):
         """a menu or box point: the box waited for (up to 2 s), then the presses as recorded"""
         kind, entries = p[2], p[3]
@@ -555,6 +568,8 @@ def play_route(game, route, step, prev):
             else:
                 notes.append(f"{where}: the box did not come up (an item that did not drop?)")
                 return None
+        if kind == "box":
+            keep_box(where)
         err = play(f"{entries},{command_ms(entries) // FRAME_MS + 30}f:wait")
         if not err and in_menu(state):
             notes.append(f"{where}: still in a menu after {entries!r}")
@@ -563,6 +578,8 @@ def play_route(game, route, step, prev):
     def close_box(where):
         """a box the recording did not have: a level up's goes by itself in ~2 s, an item's closes with A"""
         notes.append(f"{where}: a box the recording did not have")
+        if state.get("modal"):
+            keep_box(where)
         for t in range(6):
             if not state.get("modal") or play(("60f:wait", "0:a,30f:wait", "0:b,30f:wait")[t % 3]):
                 return
@@ -764,7 +781,8 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                                                  step.get("poll_by", []), prev)
             elif "route" in step:
                 route = json.loads((ROUTES / f"{step['route']}.json").read_text())
-                state, seconds, err, notes = play_route(game, route, step, prev)
+                state, seconds, err, notes = play_route(game, route, step, prev,
+                                                        shots / f"{i:03d}_box" if step.get("box_shots") else None)
                 r["warnings"] += notes
             else:
                 state, seconds, err = game.play(step["press"])
