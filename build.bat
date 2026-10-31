@@ -76,6 +76,9 @@ rem helpers
 :setuptools
 set TOOLS_OK=
 set MISSING=
+rem VsDevCmd.bat runs vswhere.exe from its folder by name, which cmd does not find where a policy keeps it from
+rem running programs out of the current folder (NoDefaultCurrentDirectoryInExePath)
+set "PATH=%VSINST%;%PATH%"
 call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul
 set "VSCMAKE=%VSDIR%\Common7\IDE\CommonExtensions\Microsoft\CMake"
 set "PATH=%VSCMAKE%\CMake\bin;%VSCMAKE%\Ninja;%VSDIR%\VC\Tools\Llvm\x64\bin;%PATH%"
@@ -101,6 +104,7 @@ echo         git                      -  https://git-scm.com/download/win
 goto :fail
 
 :nogame
+if not exist assets mkdir assets
 echo   Put your game in the assets folder first: its disc image (.iso), or the
 echo   extracted disc, %GAME_XBE% with the game's folders beside it.
 echo     %CD%\assets

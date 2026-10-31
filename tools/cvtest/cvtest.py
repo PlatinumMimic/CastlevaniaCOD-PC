@@ -95,7 +95,8 @@ user32.SetProcessDPIAware()
 
 # --- the game window -------------------------------------------------------------------------------------------
 
-def find_window(pid):
+def windows(pid):
+    """the process's visible top level windows"""
     found = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -107,7 +108,35 @@ def find_window(pid):
         return True
 
     user32.EnumWindows(each, 0)
+    return found
+
+
+def find_window(pid):
+    found = windows(pid)
     return found[0] if found else None
+
+
+def window_class(hwnd):
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buf, 256)
+    return buf.value
+
+
+def dialog_text(hwnd):
+    """a message box's text, from its static controls"""
+    texts = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(child, _):
+        if window_class(child) == "Static":
+            buf = ctypes.create_unicode_buffer(2048)
+            user32.GetWindowTextW(child, buf, 2048)
+            if buf.value:
+                texts.append(buf.value)
+        return True
+
+    user32.EnumChildWindows(hwnd, each, 0)
+    return " ".join(" ".join(texts).split())
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -210,11 +239,15 @@ def command_ms(entries):
 
 
 class Game:
-    def __init__(self, build, folder, scenario):
+    def __init__(self, build, folder, scenario, installed=False, env=None):
+        """installed: folder is a player's install (install.py), played where it is with env as the whole
+        environment; its first start builds the game code behind a window of its own (the SDK's
+        runtime/app/game_code.cpp), whose Start is pressed once it is ready"""
         self.folder = folder
-        folder.mkdir(parents=True)
-        for f in ("Castlevania.exe", "Castlevania.dll"):
-            shutil.copy2(build / f, folder / f)  # dates kept: the exe takes a DLL that is not older than it
+        if not installed:
+            folder.mkdir(parents=True)
+            for f in ("Castlevania.exe", "Castlevania.dll"):
+                shutil.copy2(build / f, folder / f)  # dates kept: the exe takes a DLL that is not older than it
         settings = dict(DEFAULT_SETTINGS, **scenario.get("settings", {}))
         lines = [f"{k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}" for k, v in settings.items()]
         (folder / "castlevania.toml").write_text("\n".join(lines) + "\n")
@@ -226,7 +259,7 @@ class Game:
             (self.live / "dump.txt").write_text(scenario["dump"] + "\n")
         self.log = folder / "logs" / "castlevania.log"
         self.log_pos = 0
-        env = dict(os.environ, CV_PAD_LIVE=str(self.live))
+        env = dict(os.environ if env is None else env, CV_PAD_LIVE=str(self.live))
         env.pop("CV_PAD_SCRIPT", None)
         if scenario.get("perf"):
             env["XBE_PERF"] = "1"
@@ -234,14 +267,24 @@ class Game:
             env["XBE_SHADER_CACHE"] = str(REPO / "out" / "test" / "shader-cache" / scenario["shader_cache"])
         if scenario.get("telemetry"):  # the state every n frames, as a recording would have it
             env.update(CV_TELEMETRY=str(folder / "telemetry.jsonl"), CV_TELEMETRY_EVERY=str(scenario["telemetry"]))
+        started = time.time()
         self.proc = subprocess.Popen([str(folder / "Castlevania.exe")], cwd=folder, env=env)
         self.n = 0
         self.hwnd = None
-        for _ in range(300):
-            self.hwnd = find_window(self.proc.pid)
-            if self.hwnd or self.proc.poll() is not None:
-                break
-            time.sleep(0.1)
+        self.dialog = None  # a message box's text, shown instead of the game
+        self.first_start = None  # seconds the game code took to build, when it was built
+        deadline = started + (1800 if installed else 30)
+        while not self.hwnd and not self.dialog and self.proc.poll() is None and time.time() < deadline:
+            for h in windows(self.proc.pid):
+                kind = window_class(h)
+                if kind.endswith("GameCode"):  # building: Enter is Start once it is ready, nothing before
+                    self.first_start = time.time() - started
+                    user32.PostMessageW(h, 0x0100, 0x0D, 0)  # WM_KEYDOWN VK_RETURN
+                elif kind == "#32770":
+                    self.dialog = dialog_text(h) or "a message box"
+                else:
+                    self.hwnd = h
+            time.sleep(0.5 if self.first_start is not None else 0.1)
 
     def alive(self):
         return self.proc.poll() is None
@@ -734,7 +777,8 @@ def load(path):
     return scenario
 
 
-def run(scenario_path, build, keep, judge_model=None, review=None, overrides=None):
+def run(scenario_path, build, keep, judge_model=None, review=None, overrides=None, install=None, env=None, checks=()):
+    """install: a player's install to play in (install.py), env its environment, checks its results to report first"""
     scenario = load(scenario_path)
     scenario["settings"] = dict(scenario.get("settings", {}), **(overrides or {}))
     settings = dict(DEFAULT_SETTINGS, **scenario["settings"])
@@ -743,11 +787,20 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
     if review:
         scenario["review"] = False if review == "none" else review
     name = scenario.get("name", Path(scenario_path).stem)
-    out = REPO / "out" / "test" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
-    game = Game(build, out / "game", scenario)
+    out = REPO / "out" / "test" / f"{'install-' if install else ''}{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+    game = Game(build, install or out / "game", scenario, installed=bool(install), env=env)
     shots = out / "shots"
-    shots.mkdir()
-    results, prev, failed = [], None, False
+    shots.mkdir(parents=True)
+    results = list(checks)
+    prev, failed = None, not all(c["ok"] for c in results)
+    if install:  # the first start: the game code built, Start pressed, the game window up
+        r = {"step": "start", "label": "first start", "ok": bool(game.hwnd), "errors": [], "warnings": []}
+        if game.first_start is not None:
+            r["warnings"].append(f"the game code was built in {game.first_start:.0f} s")
+        if not game.hwnd:
+            r["errors"].append(f"message box: {game.dialog}" if game.dialog else "no game window")
+        results.append(r)
+        failed |= not r["ok"]
     places = {}  # sweep: where each room put Hector and the camera
     judge_model, review = scenario.get("judge"), None
     if judge_model or any("ask" in st for st in scenario["steps"]):
@@ -761,7 +814,9 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
     print(f"{name}: {out}")
     try:
         if not game.hwnd:
-            raise RuntimeError("no game window")
+            if install:
+                return False  # the report, from finally, says why
+            raise RuntimeError("no game window" + (f": {game.dialog}" if game.dialog else ""))
         steps = scenario["steps"]
         for i, step in enumerate(steps, 1):
             if "sweep" in step:
@@ -870,7 +925,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
             failed = True
             results.append({"step": "end", "ok": False, "errors": ["crash dumps: " + ", ".join(dumps)]})
         report(out, name, results, failed)
-        if not keep:
+        if not keep and not install:
             for f in ("Castlevania.exe", "Castlevania.dll"):
                 (game.folder / f).unlink(missing_ok=True)
     print(f"{name}: {'FAILED' if failed else 'passed'} ({sum(r['ok'] for r in results)}/{len(results)} steps)")

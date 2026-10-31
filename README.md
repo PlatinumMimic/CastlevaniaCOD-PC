@@ -250,6 +250,13 @@ Changes this game needed beyond the generated config:
   dimmed panel when the first enemy drops it).
 - `moai.json` walks a recording (`routes/moai.json`) to the far end of 5.0 and asks whether the Moai floats there and
   what the pickup's notice says: the Moai with `--set lament_save=true`, nothing without it.
+- `python -I tools\cvtest\install.py out\release\CastlevaniaCOD-PC-1.0.0.zip <your .iso, or an extracted disc>`
+  installs a release as a player would and plays it: the zip extracted into a new folder in TEMP (outside the
+  repository, where the game could find this PC's `assets` or `textures`), the game linked into its `assets`, every
+  program and DLL in it checked to load from the package or Windows alone (the Visual C++ runtime does not count, a
+  fresh Windows has none), then `Castlevania.exe` started in an environment of Windows' own variables only, its
+  first start building the game code, and `newgame.json` (or the scenario given) played there. The report is
+  `out\test\install-<scenario>-<time>`, the checks and the first start before the steps.
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.
