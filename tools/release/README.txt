@@ -4,6 +4,12 @@ https://github.com/Pazzi7054/CastlevaniaCOD-PC
 This download contains no game: no game files and no game code. You need your own copy of
 Castlevania: Curse of Darkness for the original Xbox, USA (NTSC-U) release.
 
+WHAT YOU NEED
+  Windows 10 (version 1703 or later) or 11, 64-bit; a graphics card with Direct3D 12 and its
+  driver; a processor with SSE4.2 (Intel from 2008, AMD from 2011 on); about 0.5 GB of disk
+  besides your game. Nothing else to install: the Visual C++ runtime and the compiler the
+  first start uses are in this folder. No internet connection is needed.
+
 GETTING STARTED
   1. Extract this folder anywhere.
   2. Run Castlevania.exe. The assets folder opens.
