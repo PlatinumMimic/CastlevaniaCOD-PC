@@ -15,6 +15,8 @@
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <cmath>
@@ -166,11 +168,13 @@ struct Files {
     fs::path textures;
     size_t pictures = 0;      // .png and .dds in textures and the folders inside it
     bool ps2_buttons = false;  // the PS2's button icons among them (texpack.cpp, the PS2 button layout)
+    fs::path logo;             // the title logo among them, for the home page
 
     void Scan() {
         textures = FindTextures();
         pictures = 0;
         ps2_buttons = false;
+        logo.clear();
         if (!textures.empty()) {
             std::error_code ec;
             for (auto it = fs::recursive_directory_iterator(textures, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
@@ -178,7 +182,12 @@ struct Files {
                 std::transform(ext.begin(), ext.end(), ext.begin(), towlower);
                 if (ext != L".png" && ext != L".dds") continue;
                 pictures++;
-                ps2_buttons |= it->path().filename().wstring().rfind(L"27818fa40a1117af-66279948575c23d7-", 0) == 0;
+                std::wstring name = it->path().filename().wstring();
+                ps2_buttons |= name.rfind(L"27818fa40a1117af-66279948575c23d7-", 0) == 0;
+                // the SLUS-21168 pack has it twice, the same picture
+                if (logo.empty() && (name.rfind(L"b0f0108366aad095-5623c99b0b0ecf41-", 0) == 0 ||
+                                     name.rfind(L"fe15d42446e1b4e5-5623c99b0b0ecf41-", 0) == 0))
+                    logo = it->path();
             }
         }
         assets = FindAssets();
@@ -342,41 +351,46 @@ std::string KeyName(uint32_t vk) {
     return Utf8(name);
 }
 
-// the look: dark and flat, one crimson accent, Segoe UI with the Segoe Fluent icons, a sidebar of pages. Settings
-// save as they change.
+// the look: the game's own. Its menus are deep navy, a teal band along the top and steel-blue fog at the right; a
+// page's name is on an orange banner, the choice on a slanted glossy green bar, a box framed in thin light blue; its
+// title screen is the gold logo over a purple highlight, the menus' cursor a silver arrowhead. Palatino Linotype
+// stands in for its serif. The logo and the crest are the player's own when there (Art). Settings save as they change.
 
 float g_scale = 1;
-ImFont* g_body = nullptr;   // Segoe UI 16, icons merged
-ImFont* g_small = nullptr;  // Segoe UI 13.5, descriptions
-ImFont* g_semi = nullptr;   // Segoe UI Semibold 16, icons merged
-ImFont* g_head = nullptr;   // Segoe UI Semibold 22, page titles
-ImFont* g_hero = nullptr;   // Segoe UI Bold 46, the title on the home page
-ImFont* g_heroSub = nullptr;
-ImFont* g_button = nullptr;  // Segoe UI Semibold 20, Play
+ImFont* g_body = nullptr;     // Palatino 16.5, icons merged
+ImFont* g_small = nullptr;    // Palatino 14.5, descriptions
+ImFont* g_semi = nullptr;     // Palatino Bold 16.5, icons merged
+ImFont* g_italic = nullptr;   // Palatino Bold Italic 18: the sidebar, buttons, chosen options
+ImFont* g_head = nullptr;     // Palatino Bold Italic 30, a page's name on its banner
+ImFont* g_hero = nullptr;     // Palatino Bold Italic 58, the title on the home page without the pack's logo
+ImFont* g_heroSub = nullptr;  // Palatino Bold Italic 28
+ImFont* g_button = nullptr;   // Palatino Bold Italic 26, Play
 
 float S(float v) { return v * g_scale; }
 
 ImU32 Rgb(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
-const ImU32 kBg = Rgb(13, 14, 18), kSide = Rgb(18, 19, 24), kCard = Rgb(24, 25, 31), kCardHi = Rgb(31, 33, 40);
-const ImU32 kLine = Rgb(42, 44, 53), kText = Rgb(236, 236, 241), kMuted = Rgb(140, 142, 154);
-const ImU32 kAccent = Rgb(224, 41, 74), kAccentHi = Rgb(255, 66, 98), kAccentLo = Rgb(176, 26, 54);
-const ImU32 kGreen = Rgb(60, 207, 145), kRed = Rgb(255, 92, 92), kAmber = Rgb(255, 184, 76);
+// the menus' navy, their light blue frames, their white text
+const ImU32 kBg = Rgb(0, 3, 18), kCard = Rgb(3, 12, 50, 232), kCardLo = Rgb(1, 6, 30, 232), kCardHi = Rgb(10, 26, 78);
+const ImU32 kLine = Rgb(56, 130, 190), kLineHi = Rgb(132, 196, 236), kLineLo = Rgb(24, 52, 100);
+const ImU32 kText = Rgb(242, 240, 232), kMuted = Rgb(142, 158, 186);
+const ImU32 kTealHi = Rgb(92, 178, 172);
+// the logo's gold and red, the banners' orange, the title screen's purple
+const ImU32 kGoldHi = Rgb(255, 238, 176), kGoldLo = Rgb(150, 100, 34), kBlood = Rgb(184, 24, 28);
+const ImU32 kOrange = Rgb(255, 166, 50), kOrangeLo = Rgb(238, 122, 20), kEmber = Rgb(230, 82, 74), kEmberLo = Rgb(204, 48, 72);
+const ImU32 kPurple = Rgb(150, 50, 150);
+// the menus' green, for what is chosen and the main action
+const ImU32 kAccent = Rgb(34, 220, 64), kAccentHi = Rgb(120, 255, 140), kAccentLo = Rgb(8, 116, 30);
+const ImU32 kGreen = Rgb(86, 234, 124), kRed = Rgb(242, 84, 72), kAmber = Rgb(252, 166, 66);
 ImVec4 V(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
 ImVec2 operator+(ImVec2 a, ImVec2 b) { return {a.x + b.x, a.y + b.y}; }
 ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
 
-// Segoe Fluent / MDL2 icons
+// Segoe Fluent / MDL2 icons, for status lines
 enum : uint32_t {
-    kIconHome = 0xE80F, kIconDisplay = 0xE7F4, kIconGraphics = 0xE790, kIconGame = 0xE713, kIconKeys = 0xE765,
-    kIconFolder = 0xE8B7, kIconPlay = 0xE768, kIconCheck = 0xE73E, kIconWarn = 0xE7BA, kIconAdd = 0xE710,
-    kIconRefresh = 0xE72C, kIconSave = 0xE74E, kIconLog = 0xE9F9, kIconReset = 0xE777, kIconChevron = 0xE76C,
-    kIconDisc = 0xE958,
+    kIconCheck = 0xE73E, kIconWarn = 0xE7BA, kIconDisc = 0xE958,
 };
-const ImWchar kIconRanges[] = {0xE710, 0xE710, 0xE713, 0xE713, 0xE72C, 0xE72C, 0xE73E, 0xE73E, 0xE74E, 0xE74E,
-                               0xE765, 0xE765, 0xE768, 0xE768, 0xE76C, 0xE76C, 0xE777, 0xE777, 0xE790, 0xE790,
-                               0xE7BA, 0xE7BA, 0xE7F4, 0xE7F4, 0xE80F, 0xE80F, 0xE8B7, 0xE8B7, 0xE958, 0xE958,
-                               0xE9F9, 0xE9F9, 0};
+const ImWchar kIconRanges[] = {0xE73E, 0xE73E, 0xE7BA, 0xE7BA, 0xE958, 0xE958, 0};
 
 std::string Icon(uint32_t cp) {
     char s[5] = {};
@@ -415,9 +429,123 @@ ImU32 Mix(ImU32 a, ImU32 b, float t) {
     return ImGui::ColorConvertFloat4ToU32({x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t, x.z + (y.z - x.z) * t, x.w + (y.w - x.w) * t});
 }
 
+// c with its alpha times a
+ImU32 Fade(ImU32 c, float a) {
+    float alpha = float((c >> IM_COL32_A_SHIFT) & 0xFF) * std::clamp(a, 0.0f, 1.0f);
+    return (c & ~IM_COL32_A_MASK) | (ImU32(alpha + 0.5f) << IM_COL32_A_SHIFT);
+}
+
+// 0..1, the same for the same i: where a streak or a torn strip ends
+float Hash01(int i) {
+    float v = std::sin(float(i) * 12.9898f + 4.1414f) * 43758.5453f;
+    return v - std::floor(v);
+}
+
+// text with a dark edge around it, as the game letters its menus
+void Outlined(ImDrawList* dl, ImFont* f, ImVec2 p, ImU32 col, ImU32 edge, const char* s, float px = 1.5f) {
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++)
+            if (dx || dy) dl->AddText(f, f->FontSize, p + ImVec2(S(px) * dx, S(px) * dy), edge, s);
+    dl->AddText(f, f->FontSize, p, col, s);
+}
+
+// text in the logo's gold, lit from above, its edge dark
+void Gold(ImDrawList* dl, ImFont* f, ImVec2 p, const char* s) {
+    Outlined(dl, f, p, Rgb(0, 0, 0, 0), Rgb(36, 18, 2, 230), s, 2);
+    int v0 = dl->VtxBuffer.Size;
+    dl->AddText(f, f->FontSize, p, IM_COL32_WHITE, s);
+    ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, p + ImVec2(0, f->FontSize * 0.25f),
+                                                  p + ImVec2(0, f->FontSize * 0.95f), kGoldHi, kGoldLo);
+}
+
+// a quad shaded from its top edge to its bottom one: top left, top right, bottom right, bottom left
+void Quad(ImDrawList* dl, ImVec2 tl, ImVec2 tr, ImVec2 br, ImVec2 bl, ImU32 top, ImU32 bottom) {
+    ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    dl->PrimReserve(6, 4);
+    ImDrawIdx i = ImDrawIdx(dl->_VtxCurrentIdx);
+    for (int k : {0, 1, 2, 0, 2, 3}) dl->PrimWriteIdx(ImDrawIdx(i + k));
+    dl->PrimWriteVtx(tl, uv, top);
+    dl->PrimWriteVtx(tr, uv, top);
+    dl->PrimWriteVtx(br, uv, bottom);
+    dl->PrimWriteVtx(bl, uv, bottom);
+}
+
+// the menus' bar: its top edge leaning skew to the right, glossy, an edge drawn smooth
+void Bar(ImDrawList* dl, ImVec2 a, ImVec2 b, float skew, ImU32 top, ImU32 bottom, ImU32 edge) {
+    Quad(dl, {a.x + skew, a.y}, {b.x, a.y}, {b.x - skew, b.y}, {a.x, b.y}, top, bottom);
+    float mid = a.y + (b.y - a.y) * 0.45f;
+    Quad(dl, {a.x + skew, a.y}, {b.x, a.y}, {b.x - skew * 0.45f, mid}, {a.x + skew * 0.55f, mid}, Rgb(255, 255, 255, 64),
+         Rgb(255, 255, 255, 8));
+    dl->AddQuad({a.x + skew, a.y}, {b.x, a.y}, {b.x - skew, b.y}, {a.x, b.y}, edge, S(1));
+}
+
+// a soft light: col at c, nothing at r
+void Glow(ImDrawList* dl, ImVec2 c, ImVec2 r, ImU32 col, int segments = 48) {
+    ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    ImU32 edge = Fade(col, 0);
+    dl->PrimReserve(segments * 3, segments + 1);
+    ImDrawIdx base = ImDrawIdx(dl->_VtxCurrentIdx);
+    dl->PrimWriteVtx(c, uv, col);
+    for (int i = 0; i < segments; i++) {
+        float t = 2 * IM_PI * float(i) / float(segments);
+        dl->PrimWriteVtx({c.x + std::cos(t) * r.x, c.y + std::sin(t) * r.y}, uv, edge);
+    }
+    for (int i = 0; i < segments; i++) {
+        dl->PrimWriteIdx(base);
+        dl->PrimWriteIdx(ImDrawIdx(base + 1 + i));
+        dl->PrimWriteIdx(ImDrawIdx(base + 1 + (i + 1) % segments));
+    }
+}
+
+// a box as the game frames its messages: navy, a light blue line and a fainter one inside it, a point at each corner
+void Box(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 top = kCard, ImU32 bottom = kCardLo, ImU32 line = kLine) {
+    dl->AddRectFilledMultiColor(a, b, top, top, bottom, bottom);
+    dl->AddRect(a, b, line);
+    dl->AddRect(a + ImVec2(S(3), S(3)), b - ImVec2(S(3), S(3)), kLineLo);
+    float d = S(3.5f);
+    for (ImVec2 c : {a, ImVec2{b.x, a.y}, b, ImVec2{a.x, b.y}})
+        dl->AddQuadFilled({c.x, c.y - d}, {c.x + d, c.y}, {c.x, c.y + d}, {c.x - d, c.y}, kLineHi);
+}
+
+// the menus' cursor: a silver arrowhead pointing right, its back at at
+void Cursor(ImDrawList* dl, ImVec2 at, float len, float alpha = 1) {
+    float hh = len * 0.3f;
+    ImVec2 tip{at.x + len, at.y}, top{at.x, at.y - hh}, bottom{at.x, at.y + hh}, notch{at.x + len * 0.32f, at.y};
+    dl->AddTriangleFilled(top, tip, notch, Fade(Rgb(238, 248, 248), alpha));
+    dl->AddTriangleFilled(notch, tip, bottom, Fade(Rgb(112, 170, 178), alpha));
+    dl->AddQuad(top, tip, bottom, notch, Fade(Rgb(10, 40, 52), alpha), S(1));
+}
+
+// a line fading out at both ends
+void Rule(ImDrawList* dl, ImVec2 a, float w, ImU32 col) {
+    float h = std::max(1.0f, S(1));
+    dl->AddRectFilledMultiColor(a, {a.x + w * 0.5f, a.y + h}, Fade(col, 0), col, col, Fade(col, 0));
+    dl->AddRectFilledMultiColor({a.x + w * 0.5f, a.y}, {a.x + w, a.y + h}, col, Fade(col, 0), Fade(col, 0), col);
+}
+
+// a page's banner, as the menus have theirs: orange burning out to ember red, drawn in strips that start and end
+// unevenly as if torn, a white rule under it
+void Banner(ImDrawList* dl, ImVec2 a, float w, float h) {
+    float solid = w * 0.56f, warm = w * 0.78f;
+    const int strips = 14;
+    for (int i = 0; i < strips; i++) {
+        float t0 = float(i) / strips, t1 = float(i + 1) / strips;
+        float y0 = a.y + h * t0, y1 = a.y + h * t1;
+        ImU32 o0 = Mix(kOrange, kOrangeLo, t0), o1 = Mix(kOrange, kOrangeLo, t1);
+        ImU32 e0 = Mix(kEmber, kEmberLo, t0), e1 = Mix(kEmber, kEmberLo, t1);
+        float x0 = a.x + S(5) * Hash01(i + 40), end = a.x + warm + (w - warm) * (0.3f + 0.7f * Hash01(i));
+        dl->AddRectFilledMultiColor({x0, y0}, {a.x + solid, y1}, o0, o0, o1, o1);
+        dl->AddRectFilledMultiColor({a.x + solid, y0}, {a.x + warm, y1}, o0, e0, e1, o1);
+        dl->AddRectFilledMultiColor({a.x + warm, y0}, {end, y1}, e0, Fade(e0, 0), Fade(e1, 0), e1);
+    }
+    ImU32 white = Rgb(244, 244, 240, 230);
+    float ry = a.y + h + S(3);
+    dl->AddRectFilledMultiColor({a.x, ry}, {a.x + w * 0.92f, ry + S(2)}, white, Fade(white, 0), Fade(white, 0), white);
+}
+
 // an on/off switch; true when flipped
 bool Toggle(const char* id, bool& v) {
-    ImVec2 size{S(42), S(22)};
+    ImVec2 size{S(46), S(22)};
     ImVec2 a = ImGui::GetCursorScreenPos();
     bool pressed = ImGui::InvisibleButton(id, size);
     if (pressed) v = !v;
@@ -425,22 +553,28 @@ bool Toggle(const char* id, bool& v) {
     bool hover = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r = size.y * 0.5f;
-    dl->AddRectFilled(a, a + size, Mix(hover ? Rgb(58, 60, 70) : Rgb(46, 48, 57), hover ? kAccentHi : kAccent, t), r);
-    dl->AddCircleFilled({a.x + r + t * (size.x - 2 * r), a.y + r}, r - S(3.5f), kText, 24);
+    dl->AddRectFilled(a, a + size, Rgb(2, 8, 32), r);
+    if (t > 0.01f) {
+        dl->AddRectFilled(a, a + size, Fade(Mix(kAccentLo, hover ? kAccentHi : kAccent, 0.55f), t), r);
+        dl->AddRectFilled(a + ImVec2(S(4), S(2)), {a.x + size.x - S(4), a.y + size.y * 0.45f}, Rgb(255, 255, 255, int(60 * t)), r);
+    }
+    dl->AddRect(a, a + size, hover ? kLineHi : kLine, r);
+    ImVec2 c{a.x + r + t * (size.x - 2 * r), a.y + r};
+    dl->AddCircleFilled(c, r - S(4), Rgb(230, 236, 240), 24);
+    dl->AddCircle(c, r - S(4), Rgb(16, 40, 60), 24);
     return pressed;
 }
 
-// joined buttons, one chosen
+// joined choices, the one taken on the menus' green bar
 template <typename T>
 bool Segmented(const char* id, T& value, const std::vector<T>& values, const std::vector<std::string>& names) {
     ImGui::PushID(id);
-    ImGui::PushFont(g_semi);
     float avail = ImGui::GetContentRegionAvail().x;
     float h = S(32), w = avail / float(values.size());
     ImVec2 a = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(a, a + ImVec2(avail, h), Rgb(16, 17, 22), S(7));
-    dl->AddRect(a, a + ImVec2(avail, h), kLine, S(7));
+    dl->AddRectFilled(a, a + ImVec2(avail, h), Rgb(1, 5, 24));
+    dl->AddRect(a, a + ImVec2(avail, h), kLineLo);
     bool changed = false;
     for (size_t i = 0; i < values.size(); i++) {
         ImVec2 p{a.x + w * float(i), a.y};
@@ -453,15 +587,20 @@ bool Segmented(const char* id, T& value, const std::vector<T>& values, const std
         bool on = values[i] == value, hover = ImGui::IsItemHovered();
         float t = Ease(ImGui::GetItemID(), on, 16);
         ImVec2 in{S(3), S(3)};
-        if (t > 0.01f) dl->AddRectFilled(p + in, p + ImVec2(w, h) - in, Mix(kCard, kAccent, t), S(5));
-        else if (hover) dl->AddRectFilled(p + in, p + ImVec2(w, h) - in, kCardHi, S(5));
-        ImVec2 ts = ImGui::CalcTextSize(names[i].c_str());
-        dl->AddText(p + ImVec2((w - ts.x) * 0.5f, (h - ts.y) * 0.5f), on ? kText : (hover ? kText : kMuted), names[i].c_str());
+        if (t > 0.01f)
+            Bar(dl, p + in, p + ImVec2(w, h) - in, S(7), Fade(hover ? kAccentHi : kAccent, t), Fade(kAccentLo, t),
+                Fade(Rgb(0, 60, 14), t));
+        else if (hover)
+            dl->AddRectFilled(p + in, p + ImVec2(w, h) - in, Rgb(255, 255, 255, 14));
+        ImFont* f = on ? g_italic : g_semi;
+        ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0, names[i].c_str());
+        ImVec2 tp = p + ImVec2((w - ts.x) * 0.5f, (h - ts.y) * 0.5f);
+        if (on) Outlined(dl, f, tp, kText, Rgb(0, 50, 12, 220), names[i].c_str(), 1);
+        else dl->AddText(f, f->FontSize, tp, hover ? kText : kMuted, names[i].c_str());
         ImGui::PopID();
     }
     ImGui::SetCursorScreenPos(a);
     ImGui::Dummy({avail, h});
-    ImGui::PopFont();
     ImGui::PopID();
     return changed;
 }
@@ -481,66 +620,78 @@ void Combo(const char* id, T& value, const std::vector<T>& values, const std::ve
     }
 }
 
+// Primary: the menus' green bar; Secondary: their grey one; Ghost: words, lit purple under the pointer
 enum class Kind { Primary, Secondary, Ghost };
 
-bool Button(const char* label, ImVec2 size, Kind kind = Kind::Secondary, uint32_t icon = 0, ImFont* font = nullptr) {
-    font = font ? font : g_semi;
-    std::string text = icon ? Icon(icon) + "   " + label : label;
-    ImVec2 ts = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, text.c_str());
-    if (size.x == 0) size.x = ts.x + S(32);
-    if (size.x < 0) size.x = ImGui::GetContentRegionAvail().x;
+bool Button(const char* label, ImVec2 size, Kind kind = Kind::Secondary, ImFont* font = nullptr) {
+    font = font ? font : g_italic;
+    ImVec2 ts = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, label);
     if (size.y == 0) size.y = S(38);
+    if (size.x == 0) size.x = ts.x + S(40) + size.y * 0.6f;
+    if (size.x < 0) size.x = ImGui::GetContentRegionAvail().x;
     ImVec2 a = ImGui::GetCursorScreenPos();
     bool pressed = ImGui::InvisibleButton(label, size);
     bool disabled = ImGui::GetItemFlags() & ImGuiItemFlags_Disabled;
     float hv = Ease(ImGui::GetItemID(), ImGui::IsItemHovered() && !disabled, 14);
     bool held = ImGui::IsItemActive();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    float r = S(8);
-    ImU32 fill, text_col = kText;
+    float skew = size.y * 0.3f;
+    ImU32 top = 0, bottom = 0, edge = Rgb(0, 0, 0, 170), text_col = kText;
     switch (kind) {
-        case Kind::Primary: fill = Mix(kAccent, kAccentHi, hv); break;
-        case Kind::Secondary: fill = Mix(kCardHi, Rgb(44, 46, 56), hv); break;
-        default: fill = Mix(Rgb(0, 0, 0, 0), kCardHi, hv); text_col = Mix(kMuted, kText, hv); break;
+        case Kind::Primary:
+            top = Mix(kAccent, kAccentHi, hv * 0.5f);
+            bottom = Mix(kAccentLo, kAccent, hv * 0.35f);
+            edge = Rgb(0, 54, 12, 230);
+            break;
+        case Kind::Secondary:
+            top = Mix(Rgb(84, 92, 96), Rgb(110, 120, 126), hv);
+            bottom = Mix(Rgb(38, 42, 48), Rgb(52, 58, 66), hv);
+            break;
+        default: text_col = Mix(kMuted, kText, hv); break;
     }
-    if (held) fill = kind == Kind::Primary ? kAccentLo : kCard;
+    if (held && kind != Kind::Ghost) {
+        top = Mix(top, bottom, 0.5f);
+        bottom = Mix(bottom, Rgb(0, 0, 0), 0.3f);
+    }
     if (disabled) {
-        fill = kind == Kind::Ghost ? 0 : Rgb(36, 37, 44);
-        text_col = Rgb(90, 92, 102);
+        top = Rgb(48, 52, 58);
+        bottom = Rgb(30, 32, 38);
+        text_col = Rgb(118, 122, 132);
     }
-    if (kind == Kind::Primary && !disabled) {
-        // a soft glow under the main action
-        for (int i = 1; i <= 4; i++)
-            dl->AddRectFilled(a + ImVec2(-S(i * 1.5f), S(i * 1.2f)), a + size + ImVec2(S(i * 1.5f), S(i * 2.5f)),
-                              Rgb(224, 41, 74, int((10 + 14 * hv) / i)), r + S(i * 2.0f));
+    if (kind == Kind::Primary && !disabled)  // a green light under the main action
+        Glow(dl, a + ImVec2(size.x * 0.5f, size.y * 0.5f), {size.x * 0.62f, size.y * 1.1f}, Rgb(34, 220, 64, int(26 + 40 * hv)));
+    if (kind != Kind::Ghost) {
+        Bar(dl, a, a + size, skew, top, bottom, disabled ? Rgb(0, 0, 0, 120) : edge);
+    } else if (hv > 0.01f) {
+        ImU32 p = Fade(kPurple, 0.55f * hv);
+        dl->AddRectFilledMultiColor(a, a + size, Fade(p, 0), p, p, Fade(p, 0));
     }
-    dl->AddRectFilled(a, a + size, fill, r);
-    if (kind == Kind::Secondary) dl->AddRect(a, a + size, Mix(kLine, Rgb(70, 72, 84), hv), r);
-    dl->AddText(font, font->FontSize, a + ImVec2((size.x - ts.x) * 0.5f, (size.y - ts.y) * 0.5f), text_col, text.c_str());
+    ImVec2 tp = a + ImVec2((size.x - ts.x) * 0.5f, (size.y - ts.y) * 0.5f);
+    if (kind == Kind::Ghost) dl->AddText(font, font->FontSize, tp, text_col, label);
+    else Outlined(dl, font, tp, text_col, disabled ? Rgb(0, 0, 0, 90) : edge, label);
     return pressed && !disabled;
 }
 
-// a rounded card; its contents laid out inside
+// a box framed as the game frames its messages; its contents laid out inside
 void BeginCard(const char* id) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, V(kCard));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(10));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {S(20), S(16)});
-    ImGui::BeginChild(id, {0, 0}, ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Border);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {S(22), S(18)});
+    ImGui::BeginChild(id, {0, 0}, ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
 }
 void EndCard() {
     ImGui::EndChild();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar();
     ImGui::PopStyleColor();
-    ImGui::Dummy({0, S(4)});
+    // the frame on the page's draw list, which ImGui draws before the card's own
+    Box(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::Dummy({0, S(6)});
 }
 
 // a setting: title and description at the left, its control in the column at the right
 bool BeginSetting(const char* title, const char* desc, bool first = false) {
     if (!first) {
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        float w = ImGui::GetContentRegionAvail().x;
-        ImGui::GetWindowDrawList()->AddLine({p.x, p.y}, {p.x + w, p.y}, kLine);
-        ImGui::Dummy({0, S(6)});
+        Rule(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x, kLine);
+        ImGui::Dummy({0, S(7)});
     }
     float control = S(300);
     float w = ImGui::GetContentRegionAvail().x - control - S(24);
@@ -563,39 +714,50 @@ void EndSetting() {
 
 // a switch at the right end of the control column
 void ToggleRight(const char* id, bool& v) {
-    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - S(42));
+    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - S(46));
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(5));
     Toggle(id, v);
 }
 
+// a page's name on its banner, what it is for under it
 void PageTitle(const char* title, const char* desc) {
-    Text(g_head, kText, title);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 a = ImGui::GetCursorScreenPos();
+    float w = std::min(ImGui::GetContentRegionAvail().x, S(620)), h = S(42);
+    Banner(dl, a, w, h);
+    Outlined(dl, g_head, {a.x + S(18), a.y + (h - g_head->FontSize) * 0.5f}, kText, Rgb(80, 26, 4, 235), title);
+    ImGui::Dummy({w, h + S(12)});
     if (desc) Wrapped(g_body, kMuted, desc);
     ImGui::Dummy({0, S(10)});
 }
 
-// a sidebar entry: icon and label, the chosen one with an accent bar
-bool NavItem(uint32_t icon, const char* label, bool selected) {
-    ImVec2 size{ImGui::GetContentRegionAvail().x, S(40)};
+// a small heading in the band's teal
+void Label(const char* s) {
+    Text(g_small, kTealHi, s);
+}
+
+// a sidebar entry: the chosen one on the title screen's purple highlight, the menus' cursor at it
+bool NavItem(const char* label, bool selected) {
+    ImVec2 size{ImGui::GetContentRegionAvail().x, S(38)};
     ImVec2 a = ImGui::GetCursorScreenPos();
     bool pressed = ImGui::InvisibleButton(label, size);
     float hv = Ease(ImGui::GetItemID(), ImGui::IsItemHovered(), 14);
     float on = Ease(ImGui::GetItemID() + 1, selected, 14);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (on > 0.01f || hv > 0.01f) dl->AddRectFilled(a, a + size, Rgb(255, 255, 255, int(8 * hv + 10 * on)), S(7));
-    if (on > 0.01f) {
-        float bar = S(16) * on;
-        dl->AddRectFilled({a.x, a.y + (size.y - bar) * 0.5f}, {a.x + S(3), a.y + (size.y + bar) * 0.5f}, kAccent, S(2));
+    float y0 = a.y + S(5), y1 = a.y + size.y - S(5);
+    float lit = std::max(0.85f * on, 0.35f * hv);
+    if (lit > 0.01f) {
+        ImU32 p = Fade(kPurple, lit);
+        dl->AddRectFilledMultiColor({a.x + S(20), y0}, {a.x + size.x, y1}, p, Fade(p, 0), Fade(p, 0), p);
     }
-    ImU32 col = selected ? kText : Mix(kMuted, kText, hv);
-    std::string ic = Icon(icon);
-    float y = a.y + (size.y - g_semi->FontSize) * 0.5f;
-    dl->AddText(g_semi, g_semi->FontSize, {a.x + S(16), y + S(1)}, selected ? kAccentHi : col, ic.c_str());
-    dl->AddText(g_semi, g_semi->FontSize, {a.x + S(46), y}, col, label);
+    if (on > 0.01f) Cursor(dl, {a.x + S(2) - S(8) * (1 - on), (y0 + y1) * 0.5f}, S(20), on);
+    ImVec2 p{a.x + S(30), a.y + (size.y - g_italic->FontSize) * 0.5f};
+    if (selected) Outlined(dl, g_italic, p, kText, Rgb(40, 0, 40, 200), label, 1);
+    else dl->AddText(g_italic, g_italic->FontSize, p, Mix(kMuted, kText, hv), label);
     return pressed;
 }
 
-// a status line: coloured dot or icon and text
+// a status line: coloured icon and text
 void Status(uint32_t icon, ImU32 col, const std::string& text) {
     ImGui::PushFont(g_semi);
     ImGui::PushStyleColor(ImGuiCol_Text, col);
@@ -611,25 +773,51 @@ void Keycap(const char* key) {
     ImGui::PushFont(g_semi);
     ImVec2 ts = ImGui::CalcTextSize(key);
     ImVec2 a = ImGui::GetCursorScreenPos();
-    ImVec2 size{ts.x + S(16), ts.y + S(6)};
+    ImVec2 size{ts.x + S(18), ts.y + S(6)};
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(a + ImVec2(0, S(2)), a + size + ImVec2(0, S(2)), Rgb(10, 10, 14), S(5));
-    dl->AddRectFilled(a, a + size, kCardHi, S(5));
-    dl->AddRect(a, a + size, kLine, S(5));
-    dl->AddText(a + ImVec2(S(8), S(3)), kText, key);
+    dl->AddRectFilled(a + ImVec2(0, S(2)), a + size + ImVec2(0, S(2)), Rgb(0, 2, 12));
+    dl->AddRectFilledMultiColor(a, a + size, kCardHi, kCardHi, Rgb(4, 14, 50), Rgb(4, 14, 50));
+    dl->AddRect(a, a + size, kLine);
+    dl->AddText(a + ImVec2(S(9), S(3)), kText, key);
     ImGui::Dummy(size + ImVec2(0, S(2)));
     ImGui::PopFont();
+}
+
+// the menus' backdrop under everything: navy darkening upward, steel-blue fog and its streaks at the right, a teal
+// band along the top of the pages from left on
+void Backdrop(ImDrawList* dl, ImVec2 size, float left) {
+    dl->AddRectFilledMultiColor({0, 0}, size, Rgb(0, 1, 10), Rgb(0, 1, 10), Rgb(0, 8, 38), Rgb(0, 8, 38));
+    Glow(dl, {size.x * 1.02f, size.y * 0.58f}, {size.x * 0.46f, size.y * 0.52f}, Rgb(72, 88, 112, 84));
+    Glow(dl, {size.x * 0.9f, size.y * 0.22f}, {size.x * 0.3f, size.y * 0.2f}, Rgb(90, 104, 126, 40));
+    for (int i = 0; i < 30; i++) {
+        float y = size.y * (0.1f + 0.85f * Hash01(i * 3 + 1));
+        float x0 = size.x * (0.42f + 0.4f * Hash01(i * 3 + 2));
+        float th = S(1 + 3 * Hash01(i * 3 + 3));
+        ImU32 c = Rgb(124, 140, 162, int(8 + 30 * Hash01(i * 7 + 5)));
+        dl->AddRectFilledMultiColor({x0, y}, {size.x, y + th}, Fade(c, 0), c, c, Fade(c, 0));
+    }
+    float bh = S(16);
+    dl->AddRectFilledMultiColor({left, 0}, {size.x, bh}, Rgb(14, 54, 56), Rgb(32, 98, 96), Rgb(18, 64, 64), Rgb(8, 34, 36));
+    // its ornament: a point every so often, scrolls either side of it
+    ImU32 orn = Rgb(84, 164, 158, 120);
+    for (float x = left + S(24); x < size.x; x += S(48)) {
+        float c = bh * 0.5f, d = S(3.5f);
+        dl->AddQuadFilled({x, c - d}, {x + d, c}, {x, c + d}, {x - d, c}, orn);
+        dl->AddBezierCubic({x + S(6), c}, {x + S(12), c - S(6)}, {x + S(18), c + S(6)}, {x + S(24), c}, orn, S(1));
+        dl->AddBezierCubic({x - S(6), c}, {x - S(12), c - S(6)}, {x - S(18), c + S(6)}, {x - S(24), c}, orn, S(1));
+    }
+    dl->AddRectFilled({left, bh}, {size.x, bh + S(1)}, Rgb(104, 192, 186, 150));
 }
 
 void Style() {
     ImGuiStyle& st = ImGui::GetStyle();
     ImGui::StyleColorsDark(&st);
     st.WindowRounding = 0;
-    st.ChildRounding = 10;
-    st.FrameRounding = 7;
-    st.PopupRounding = 8;
-    st.GrabRounding = 7;
-    st.ScrollbarRounding = 8;
+    st.ChildRounding = 0;
+    st.FrameRounding = 2;
+    st.PopupRounding = 2;
+    st.GrabRounding = 2;
+    st.ScrollbarRounding = 2;
     st.WindowBorderSize = 0;
     st.ChildBorderSize = 1;
     st.FrameBorderSize = 1;
@@ -642,23 +830,23 @@ void Style() {
     c[ImGuiCol_WindowBg] = {0, 0, 0, 0};
     c[ImGuiCol_Text] = V(kText);
     c[ImGuiCol_TextDisabled] = V(kMuted);
-    c[ImGuiCol_PopupBg] = V(Rgb(30, 31, 38, 252));
+    c[ImGuiCol_PopupBg] = V(Rgb(2, 10, 42, 250));
     c[ImGuiCol_Border] = V(kLine);
-    c[ImGuiCol_FrameBg] = V(Rgb(16, 17, 22));
+    c[ImGuiCol_FrameBg] = V(Rgb(1, 5, 24));
     c[ImGuiCol_FrameBgHovered] = V(kCardHi);
     c[ImGuiCol_FrameBgActive] = V(kCardHi);
     c[ImGuiCol_Button] = V(kCardHi);
-    c[ImGuiCol_ButtonHovered] = V(Rgb(44, 46, 56));
+    c[ImGuiCol_ButtonHovered] = V(Rgb(20, 44, 110));
     c[ImGuiCol_ButtonActive] = V(kCard);
-    c[ImGuiCol_Header] = V(Rgb(224, 41, 74, 70));
-    c[ImGuiCol_HeaderHovered] = V(Rgb(255, 255, 255, 18));
-    c[ImGuiCol_HeaderActive] = V(Rgb(224, 41, 74, 110));
+    c[ImGuiCol_Header] = V(Fade(kPurple, 0.6f));
+    c[ImGuiCol_HeaderHovered] = V(Fade(kPurple, 0.35f));
+    c[ImGuiCol_HeaderActive] = V(Fade(kPurple, 0.8f));
     c[ImGuiCol_CheckMark] = V(kAccent);
     c[ImGuiCol_PlotHistogram] = V(kAccent);
-    c[ImGuiCol_NavHighlight] = V(kAccentHi);
+    c[ImGuiCol_NavHighlight] = V(kLineHi);
     c[ImGuiCol_ScrollbarBg] = {0, 0, 0, 0};
-    c[ImGuiCol_ScrollbarGrab] = V(Rgb(60, 62, 72));
-    c[ImGuiCol_ScrollbarGrabHovered] = V(Rgb(80, 82, 94));
+    c[ImGuiCol_ScrollbarGrab] = V(Rgb(30, 62, 110));
+    c[ImGuiCol_ScrollbarGrabHovered] = V(kLine);
     c[ImGuiCol_TableRowBg] = {0, 0, 0, 0};
     c[ImGuiCol_TableRowBgAlt] = {0, 0, 0, 0};
     st.ScaleAllSizes(g_scale);
@@ -674,8 +862,11 @@ void Fonts() {
         }
         return {};
     };
-    std::string regular = path({"segoeui.ttf"}), semi = path({"seguisb.ttf", "segoeui.ttf"});
-    std::string bold = path({"segoeuib.ttf", "seguisb.ttf"}), icons = path({"SegoeIcons.ttf", "segmdl2.ttf"});
+    // Palatino Linotype, else Georgia: Windows has both
+    std::string regular = path({"pala.ttf", "georgia.ttf", "segoeui.ttf"});
+    std::string bold = path({"palab.ttf", "georgiab.ttf", "seguisb.ttf"});
+    std::string italic = path({"palabi.ttf", "georgiaz.ttf", "seguisb.ttf"});
+    std::string icons = path({"SegoeIcons.ttf", "segmdl2.ttf"});
     auto load = [&](const std::string& file, float size, bool with_icons) -> ImFont* {
         if (file.empty()) return io.Fonts->AddFontDefault();
         ImFont* f = io.Fonts->AddFontFromFileTTF(file.c_str(), size * g_scale);
@@ -687,13 +878,120 @@ void Fonts() {
         }
         return f;
     };
-    g_body = load(regular, 16, true);
-    g_small = load(regular, 13.5f, false);
-    g_semi = load(semi, 16, true);
-    g_head = load(semi, 24, false);
-    g_hero = load(bold, 48, false);
-    g_heroSub = load(semi, 24, false);
-    g_button = load(semi, 20, true);
+    g_body = load(regular, 16.5f, true);
+    g_small = load(regular, 14.5f, false);
+    g_semi = load(bold, 16.5f, true);
+    g_italic = load(italic, 18, false);
+    g_head = load(italic, 30, false);
+    g_hero = load(italic, 58, false);
+    g_heroSub = load(italic, 28, false);
+    g_button = load(italic, 26, false);
+}
+
+// a picture the launcher shows: a texture of its own
+struct Picture {
+    ID3D11ShaderResourceView* view = nullptr;
+    float w = 0, h = 0;
+    void Release() {
+        if (view) view->Release();
+        *this = {};
+    }
+};
+
+// px: BGRA with straight alpha, as ImGui blends, the top row first
+Picture Upload(const std::vector<uint8_t>& px, uint32_t w, uint32_t h) {
+    Picture p;
+    D3D11_TEXTURE2D_DESC d{};
+    d.Width = w;
+    d.Height = h;
+    d.MipLevels = 1;
+    d.ArraySize = 1;
+    d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    d.SampleDesc.Count = 1;
+    d.Usage = D3D11_USAGE_IMMUTABLE;
+    d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{px.data(), w * 4, 0};
+    ID3D11Texture2D* tex = nullptr;
+    if (FAILED(g_dev->CreateTexture2D(&d, &init, &tex))) return p;
+    if (SUCCEEDED(g_dev->CreateShaderResourceView(tex, nullptr, &p.view))) {
+        p.w = float(w);
+        p.h = float(h);
+    }
+    tex->Release();
+    return p;
+}
+
+// the HD texture pack's title logo: cut to its letters (its alpha the PS2's, 128 opaque) and shrunk to at most max_w
+// wide, premultiplied while it is scaled so that its edges keep their colour
+Picture LoadLogo(const fs::path& file, uint32_t max_w) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> wic;
+    ComPtr<IWICBitmapDecoder> dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> conv;
+    UINT w = 0, h = 0;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) ||
+        FAILED(wic->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) ||
+        FAILED(dec->GetFrame(0, &frame)) || FAILED(wic->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                WICBitmapPaletteTypeCustom)) ||
+        FAILED(conv->GetSize(&w, &h)))
+        return {};
+    std::vector<uint8_t> px(size_t(w) * h * 4);
+    if (FAILED(conv->CopyPixels(nullptr, w * 4, UINT(px.size()), px.data()))) return {};
+    UINT x0 = w, y0 = h, x1 = 0, y1 = 0;
+    for (UINT y = 0; y < h; y++)
+        for (UINT x = 0; x < w; x++) {
+            uint8_t* p = &px[(size_t(y) * w + x) * 4];
+            unsigned a = std::min(255u, p[3] * 2u);
+            for (int k = 0; k < 3; k++) p[k] = uint8_t(p[k] * a / 255);
+            p[3] = uint8_t(a);
+            if (a > 24) {
+                x0 = std::min(x0, x);
+                y0 = std::min(y0, y);
+                x1 = std::max(x1, x);
+                y1 = std::max(y1, y);
+            }
+        }
+    if (x1 <= x0 || y1 <= y0) return {};
+    UINT cw = x1 - x0 + 1, ch = y1 - y0 + 1, tw = std::min(cw, max_w), th = UINT(uint64_t(ch) * tw / cw);
+    size_t at = (size_t(y0) * w + x0) * 4;
+    ComPtr<IWICBitmap> cut;
+    ComPtr<IWICBitmapScaler> sc;
+    std::vector<uint8_t> out(size_t(tw) * th * 4);
+    if (FAILED(wic->CreateBitmapFromMemory(cw, ch, GUID_WICPixelFormat32bppPBGRA, w * 4, UINT(px.size() - at), &px[at], &cut)) ||
+        FAILED(wic->CreateBitmapScaler(&sc)) || FAILED(sc->Initialize(cut.Get(), tw, th, WICBitmapInterpolationModeFant)) ||
+        FAILED(sc->CopyPixels(nullptr, tw * 4, UINT(out.size()), out.data())))
+        return {};
+    for (size_t i = 0; i < out.size(); i += 4)
+        if (out[i + 3])
+            for (int k = 0; k < 3; k++) out[i + k] = uint8_t(std::min(255u, out[i + k] * 255u / out[i + 3]));
+    return Upload(out, tw, th);
+}
+
+// the crest the build put in the launcher's icon (resource 1), at its largest; none in a release
+Picture LoadCrest() {
+    HICON icon = HICON(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 256, 256, 0));
+    if (!icon) return {};
+    Picture p;
+    ICONINFO ii{};
+    if (GetIconInfo(icon, &ii)) {
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = 256;
+        bi.bmiHeader.biHeight = -256;  // the top row first
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        std::vector<uint8_t> px(256 * 256 * 4);
+        HDC dc = GetDC(nullptr);
+        if (ii.hbmColor && GetDIBits(dc, ii.hbmColor, 0, 256, px.data(), &bi, DIB_RGB_COLORS) == 256) p = Upload(px, 256, 256);
+        ReleaseDC(nullptr, dc);
+        if (ii.hbmColor) DeleteObject(ii.hbmColor);
+        if (ii.hbmMask) DeleteObject(ii.hbmMask);
+    }
+    DestroyIcon(icon);
+    return p;
 }
 
 // the launcher's state and its one screen
@@ -704,6 +1002,7 @@ public:
         saved_ = Snapshot();
         files_.Scan();
         modes_ = Resolutions();
+        LoadArt();
     }
 
     // the page shown, by the sidebar's order: --page on the command line, for screenshots of a page
@@ -714,11 +1013,12 @@ public:
         if (rescan_ && !import_.running) {
             rescan_ = false;
             files_.Scan();
+            LoadArt();
             if (!import_.result.empty()) Note(import_.result);
         }
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* bg = ImGui::GetBackgroundDrawList();
-        bg->AddRectFilled({0, 0}, io.DisplaySize, kBg);
+        Backdrop(bg, io.DisplaySize, S(232));
         ImGui::SetNextWindowPos({0, 0});
         ImGui::SetNextWindowSize(io.DisplaySize);
         ImGui::Begin("launcher", nullptr,
@@ -773,37 +1073,34 @@ private:
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 a = ImGui::GetCursorScreenPos();
         float w = S(232), h = ImGui::GetIO().DisplaySize.y;
-        dl->AddRectFilled(a, a + ImVec2(w, h), kSide);
-        dl->AddLine(a + ImVec2(w - 1, 0), a + ImVec2(w - 1, h), kLine);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {S(14), S(22)});
+        dl->AddRectFilledMultiColor(a, a + ImVec2(w, h), Rgb(1, 6, 28, 244), Rgb(1, 6, 28, 244), Rgb(0, 2, 14, 248),
+                                    Rgb(0, 2, 14, 248));
+        // its edge framed as the game frames a box
+        dl->AddRectFilled(a + ImVec2(w - S(1), 0), a + ImVec2(w, h), kLine);
+        dl->AddRectFilled(a + ImVec2(w - S(4), 0), a + ImVec2(w - S(3), h), kLineLo);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {S(14), S(20)});
         ImGui::BeginChild("side", {w, h}, ImGuiChildFlags_AlwaysUseWindowPadding);
-        // the wordmark
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(8));
-        ImGui::BeginGroup();
-        ImGui::PushFont(g_semi);
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddRectFilled(p + ImVec2(0, S(3)), p + ImVec2(S(4), S(37)), kAccent, S(2));
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(14));
-        ImGui::TextUnformatted("CASTLEVANIA");
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(14));
-        ImGui::PopFont();
-        Text(g_small, kMuted, "Curse of Darkness  |  PC");
-        ImGui::EndGroup();
-        ImGui::Dummy({0, S(22)});
+        // the crest of the icon and the name in the logo's gold
+        dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos() + ImVec2(S(2), 0);
+        float cs = S(44), tx = p.x;
+        if (crest_.view) {
+            dl->AddImage(crest_.view, p, p + ImVec2(cs, cs));
+            tx += cs + S(9);
+        }
+        Gold(dl, g_heroSub, {tx, p.y - S(3)}, "Castlevania");
+        dl->AddText(g_small, g_small->FontSize, {tx + S(2), p.y + S(27)}, Rgb(226, 78, 70), "Curse of Darkness");
+        ImGui::Dummy({0, cs + S(22)});
 
-        static const struct {
-            uint32_t icon;
-            const char* label;
-        } kPages[] = {{kIconHome, "Home"},     {kIconDisplay, "Display"},  {kIconGraphics, "Graphics"},
-                      {kIconGame, "Game"},     {kIconKeys, "Controls"},    {kIconFolder, "Game files"}};
+        static const char* kPages[] = {"Home", "Display", "Graphics", "Game", "Controls", "Game files"};
         for (int i = 0; i < 6; i++) {
             if (i == 1) {
-                ImGui::Dummy({0, S(6)});
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(16));
-                Text(g_small, Rgb(100, 102, 114), "SETTINGS");
+                ImGui::Dummy({0, S(4)});
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(30));
+                Label("SETTINGS");
             }
             if (i == 5) ImGui::Dummy({0, S(6)});
-            if (NavItem(kPages[i].icon, kPages[i].label, page_ == i)) page_ = i;
+            if (NavItem(kPages[i], page_ == i)) page_ = i;
         }
 
         // at the bottom: the save note and a reset
@@ -813,11 +1110,11 @@ private:
         if (!status_.empty() && age < 4) {
             float alpha = std::clamp(4 - age, 0.0f, 1.0f);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(16));
-            Text(g_small, Rgb(140, 142, 154, int(255 * alpha)), status_.c_str());
+            Text(g_small, Fade(kMuted, alpha), status_.c_str());
         } else {
             ImGui::Dummy({0, g_small->FontSize});
         }
-        if (Button("Reset to defaults", {-1, S(36)}, Kind::Ghost, kIconReset)) {
+        if (Button("Reset to defaults", {-1, S(36)}, Kind::Ghost)) {
             settings_.Defaults();
             Note("Defaults restored");
         }
@@ -826,42 +1123,56 @@ private:
     }
 
     bool HomePage() {
-        // the hero: a dark panel lit crimson from the top right corner
-        float w = ImGui::GetContentRegionAvail().x, h = S(270);
+        // the title screen: night and fog, the crest faint behind, the logo
+        float w = ImGui::GetContentRegionAvail().x, h = S(322);
         ImVec2 a = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        int v0 = dl->VtxBuffer.Size;
-        dl->AddRectFilled(a, a + ImVec2(w, h), IM_COL32_WHITE, S(14));
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, a + ImVec2(w, 0), a + ImVec2(w * 0.35f, h),
-                                                      Rgb(104, 20, 42), Rgb(18, 17, 23));
-        dl->AddRect(a, a + ImVec2(w, h), Rgb(255, 255, 255, 14), S(14));
+        Box(dl, a, a + ImVec2(w, h), Rgb(1, 4, 22, 238), Rgb(0, 1, 8, 242));
+        dl->PushClipRect(a + ImVec2(S(4), S(4)), a + ImVec2(w - S(4), h - S(4)), true);
+        Glow(dl, a + ImVec2(w * 0.82f, h * 0.55f), {w * 0.5f, h * 0.95f}, Rgb(72, 88, 116, 84));
+        Glow(dl, a + ImVec2(w * 0.32f, h * 0.36f), {w * 0.42f, h * 0.5f}, Rgb(130, 76, 22, 34));
+        if (crest_.view) {
+            float cs = h * 1.2f, cx = a.x + w - cs * 0.34f, cy = a.y + h * 0.5f;
+            dl->AddImage(crest_.view, {cx - cs * 0.5f, cy - cs * 0.5f}, {cx + cs * 0.5f, cy + cs * 0.5f}, {0, 0}, {1, 1},
+                         Rgb(206, 220, 240, 44));
+        }
+        dl->PopClipRect();
+        ImVec2 at = a + ImVec2(S(30), S(24));
+        float below;
+        if (logo_.view) {
+            float lw = std::min(w * 0.6f, S(470)), lh = lw * logo_.h / logo_.w;
+            dl->AddImage(logo_.view, at, at + ImVec2(lw, lh));
+            below = at.y + lh;
+        } else {  // its words, without the pack
+            Gold(dl, g_hero, at, "Castlevania");
+            float tw = g_hero->CalcTextSizeA(g_hero->FontSize, FLT_MAX, 0, "Castlevania").x;
+            float sw = g_heroSub->CalcTextSizeA(g_heroSub->FontSize, FLT_MAX, 0, "Curse of Darkness").x;
+            ImVec2 sp{at.x + std::max(0.0f, tw - sw), at.y + g_hero->FontSize * 0.95f};
+            Outlined(dl, g_heroSub, sp, kBlood, Rgb(24, 0, 0, 235), "Curse of Darkness");
+            below = sp.y + g_heroSub->FontSize;
+        }
+        ImGui::SetCursorScreenPos({at.x + S(2), below + S(10)});
+        Label("ORIGINAL XBOX  |  NATIVE PC PORT");
 
-        ImGui::SetCursorScreenPos(a + ImVec2(S(34), S(30)));
-        ImGui::BeginGroup();
-        Text(g_small, kAccentHi, "ORIGINAL XBOX  |  NATIVE PC PORT");
-        Text(g_hero, kText, "Castlevania");
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - S(10));
-        Text(g_heroSub, Rgb(200, 200, 210), "Curse of Darkness");
-        ImGui::Dummy({0, S(8)});
-        bool ready = files_.Playable();
+        ImGui::SetCursorScreenPos(a + ImVec2(S(30), h - S(26) - S(54)));
+        bool keep = true, ready = files_.Playable();
+        ImGui::BeginDisabled(!ready || import_.running);
+        if (Button("Play", {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
+        ImGui::EndDisabled();
+        if (!ready) {
+            ImGui::SameLine(0, S(22));
+            if (Button("Set up game files", {0, S(54)}, Kind::Secondary)) page_ = 5;
+        }
+        // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
+        ImVec2 end = ImGui::GetItemRectMax();
+        ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
         if (ready) Status(kIconCheck, kGreen, "Ready to play");
         else if (!files_.exe) Status(kIconWarn, kRed, "Castlevania.exe is missing");
         else Status(kIconWarn, kAmber, "Game files needed");
-        ImGui::EndGroup();
-
-        ImGui::SetCursorScreenPos(a + ImVec2(S(34), h - S(30) - S(54)));
-        bool keep = true;
-        ImGui::BeginDisabled(!ready || import_.running);
-        if (Button("PLAY", {S(220), S(54)}, Kind::Primary, kIconPlay, g_button)) keep = Play();
-        ImGui::EndDisabled();
-        if (!ready) {
-            ImGui::SameLine(0, S(14));
-            if (Button("Set up game files", {0, S(54)}, Kind::Secondary, kIconFolder)) page_ = 5;
-        }
         ImGui::SetCursorScreenPos(a + ImVec2(0, h + S(20)));
 
         // what is set, at a glance; each opens its page
-        Text(g_semi, kMuted, "Current setup");
+        Label("CURRENT SETUP");
         ImGui::Dummy({0, S(2)});
         Res r{settings_.width, settings_.height};
         std::string res = r.w ? std::to_string(r.w) + " x " + std::to_string(r.h) : "Desktop";
@@ -882,12 +1193,10 @@ private:
             if (ImGui::InvisibleButton("tile", {tw, th})) page_ = tiles[i].page;
             float hv = Ease(ImGui::GetItemID(), ImGui::IsItemHovered(), 14);
             ImGui::PopID();
-            dl->AddRectFilled(p, p + ImVec2(tw, th), Mix(kCard, kCardHi, hv), S(10));
-            dl->AddRect(p, p + ImVec2(tw, th), kLine, S(10));
-            dl->AddText(g_small, g_small->FontSize, p + ImVec2(S(18), S(14)), kMuted, tiles[i].label);
+            Box(dl, p, p + ImVec2(tw, th), Mix(kCard, kCardHi, hv), kCardLo, Mix(kLine, kLineHi, hv));
+            dl->AddText(g_small, g_small->FontSize, p + ImVec2(S(18), S(13)), kMuted, tiles[i].label);
             dl->AddText(g_semi, g_semi->FontSize, p + ImVec2(S(18), S(34)), kText, tiles[i].value.c_str());
-            std::string chev = Icon(kIconChevron);
-            dl->AddText(g_semi, g_semi->FontSize, p + ImVec2(tw - S(30), th * 0.5f - S(8)), Mix(kMuted, kText, hv), chev.c_str());
+            Cursor(dl, {p.x + tw - S(38) + S(6) * hv, p.y + th * 0.5f}, S(18), 0.3f + 0.7f * hv);
         }
         ImGui::Dummy({0, S(8)});
         std::string tip = "In game, press " + KeyName(settings_.menu_key) + " or click both sticks (L3 + R3) for these settings.";
@@ -966,7 +1275,7 @@ private:
         if (files_.pictures) Status(kIconCheck, kGreen, std::to_string(files_.pictures) + " pictures in the textures folder");
         else Status(kIconWarn, kMuted, "No pack in the textures folder");
         ImGui::Dummy({0, S(4)});
-        if (Button("Open textures folder", {0, 0}, Kind::Secondary, kIconFolder)) {
+        if (Button("Open textures folder", {0, 0}, Kind::Secondary)) {
             fs::path t = files_.textures.empty() ? ExeDir() / "textures" : files_.textures;
             std::error_code ec;
             fs::create_directories(t, ec);
@@ -974,7 +1283,7 @@ private:
             rescan_ = true;
         }
         ImGui::SameLine();
-        if (Button("Check again", {0, 0}, Kind::Secondary, kIconRefresh)) rescan_ = true;
+        if (Button("Check again", {0, 0}, Kind::Secondary)) rescan_ = true;
         EndCard();
     }
 
@@ -1065,9 +1374,9 @@ private:
         if (import_.running) {
             ImGui::ProgressBar(import_.progress, {-FLT_MIN, S(36)}, "Copying disc image...");
         } else {
-            if (Button("Add disc image", {0, 0}, Kind::Primary, kIconAdd)) AddImage();
+            if (Button("Add disc image", {0, 0}, Kind::Primary)) AddImage();
             ImGui::SameLine();
-            if (Button("Open folder", {0, 0}, Kind::Secondary, kIconFolder)) {
+            if (Button("Open folder", {0, 0}, Kind::Secondary)) {
                 fs::path a = files_.assets.empty() ? ExeDir() / "assets" : files_.assets;
                 std::error_code ec;
                 fs::create_directories(a, ec);
@@ -1075,20 +1384,20 @@ private:
                 rescan_ = true;
             }
             ImGui::SameLine();
-            if (Button("Check again", {0, 0}, Kind::Secondary, kIconRefresh)) rescan_ = true;
+            if (Button("Check again", {0, 0}, Kind::Secondary)) rescan_ = true;
         }
         EndCard();
         BeginCard("folders");
         Text(g_semi, kText, "Saves and logs");
         Wrapped(g_small, kMuted, "Saves are kept beside the game in hdd\\E\\UDATA\\4b4e002d.");
         ImGui::Dummy({0, S(4)});
-        if (Button("Open saves", {0, 0}, Kind::Secondary, kIconSave)) {
+        if (Button("Open saves", {0, 0}, Kind::Secondary)) {
             fs::path s = ExeDir() / kSaves;
             std::error_code ec;
             Open(fs::exists(s, ec) ? s : ExeDir());
         }
         ImGui::SameLine();
-        if (Button("Open logs", {0, 0}, Kind::Secondary, kIconLog)) {
+        if (Button("Open logs", {0, 0}, Kind::Secondary)) {
             std::error_code ec;
             Open(fs::exists(ExeDir() / "logs", ec) ? ExeDir() / "logs" : ExeDir());
         }
@@ -1140,8 +1449,19 @@ private:
         rescan_ = true;
     }
 
+    // the player's own pictures: the pack's logo, the crest of the icon
+    void LoadArt() {
+        if (!crest_.view) crest_ = LoadCrest();
+        if (files_.logo == logo_file_) return;
+        logo_.Release();
+        logo_file_ = files_.logo;
+        if (!logo_file_.empty()) logo_ = LoadLogo(logo_file_, uint32_t(S(1100)));
+    }
+
     Settings settings_;
     Files files_;
+    Picture logo_, crest_;
+    fs::path logo_file_;
     Import import_;
     std::vector<Res> modes_;
     std::string status_, saved_;
@@ -1154,6 +1474,7 @@ private:
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC, for the pack's logo
     float scale = float(GetDpiForSystem()) / 96.0f;
 
     WNDCLASSEXW wc{sizeof(wc)};
@@ -1173,6 +1494,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                              nullptr, nullptr, inst, nullptr);
     BOOL dark = TRUE;
     DwmSetWindowAttribute(g_hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+    // Windows 11: the title bar in the menus' navy, its words in the logo's gold, its edge light blue
+    COLORREF caption = RGB(1, 6, 28), words = RGB(236, 206, 140), edge = RGB(56, 130, 190);
+    DwmSetWindowAttribute(g_hwnd, 35 /* DWMWA_CAPTION_COLOR */, &caption, sizeof(caption));
+    DwmSetWindowAttribute(g_hwnd, 36 /* DWMWA_TEXT_COLOR */, &words, sizeof(words));
+    DwmSetWindowAttribute(g_hwnd, 34 /* DWMWA_BORDER_COLOR */, &edge, sizeof(edge));
     if (!CreateDevice(g_hwnd)) {
         MessageBoxW(nullptr, L"Direct3D 11 is not available.", L"Castlevania Launcher", MB_ICONERROR);
         return 1;
@@ -1214,7 +1540,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         ImGui::NewFrame();
         if (!launcher.Frame()) running = false;
         ImGui::Render();
-        const float clear[4] = {13 / 255.0f, 14 / 255.0f, 18 / 255.0f, 1};
+        ImVec4 bg = V(kBg);
+        const float clear[4] = {bg.x, bg.y, bg.z, 1};
         g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_ctx->ClearRenderTargetView(g_rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

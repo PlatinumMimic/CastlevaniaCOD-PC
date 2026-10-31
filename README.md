@@ -50,7 +50,9 @@ image to `assets` for you (a hard link on the same drive, otherwise a copy), and
 resolution, v-sync, widescreen, render scale, anisotropic filtering with quick presets, the HD texture pack, FPS
 counter, pause on focus loss, the settings menu key and the button layout. Changes are saved as you make them;
 **Play** starts the game. Saves and logs are a click away. `--page controls` (or home, display, graphics, game,
-files) opens it on that page.
+files) opens it on that page. It looks like the game's menus: navy with fog and a teal band, page names on orange
+banners, the chosen option on a green bar, boxes framed in light blue, Palatino for the game's serif. Its home page
+has the title logo from your HD texture pack (else the name in gold) and the crest of its icon.
 
 ### Settings Menu
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be
