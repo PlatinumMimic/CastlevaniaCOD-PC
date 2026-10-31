@@ -50,7 +50,8 @@ echo Put your game here: its disc image (.iso), or the extracted disc (default.x
 echo Optional: an HD texture pack made for PCSX2. Put its replacement pictures here (.png or .dds files, folders inside are fine).> "%PKG%\textures\PUT A TEXTURE PACK HERE.txt"
 
 rem nothing of the game goes out: no game code or its sources, no xbe or disc image, no icon made from its pictures
-for /r "%PKG%" %%f in (*.xbe *.iso *.cpp *.obj *.ico x86_recomp* image_symbols.h Castlevania.dll) do (echo       game file in the package: %%f & goto :fail)
+rem (for /r names a file without a wildcard in every folder, there or not)
+for /r "%PKG%" %%f in (*.xbe *.iso *.cpp *.obj *.ico x86_recomp* image_symbols.h Castlevania.dll) do if exist "%%f" (echo       game file in the package: %%f & goto :fail)
 if exist "%PKG%\compiler\work" (echo       the compiler's work folder is in the package & goto :fail)
 
 echo [4/4] Zip
