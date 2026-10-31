@@ -133,9 +133,15 @@ The keyboard plays as player 1 while the window is in front:
 A release needs nothing installed on a fresh Windows but the graphics driver:
 
 - **Windows** 10 (version 1703 or later) or 11, 64-bit.
-- **GPU** with Direct3D 12 (feature level 11_0), and its driver.
+- **GPU** with Direct3D 12 (feature level 11_0), and its driver. Direct3D 12 is part of every Windows 10 and 11, but
+  works only where the graphics chip has a driver for it: NVIDIA GeForce 600 series (2012) or newer (the 400 and 500
+  series got it only in their last drivers), AMD GCN cards, Radeon HD 7700 to 7900 (2012) and later, or Intel's 4th
+  generation Core graphics (Haswell, HD 4200 to 4600 and Iris, 2013) or newer. A PC with only older graphics, such as
+  the Intel HD 3000 or 4000 of a 2011 or 2012 laptop, runs Windows 10 but not the game, which says "Direct3D 12 could
+  not be started". To check: `dxdiag`, the Display tab's **Driver Model** must be WDDM 2.0 or higher (its System tab
+  says DirectX 12 on every Windows 10, whatever the graphics).
 - **CPU** with SSE4.2 and POPCNT, as the game code is compiled for x86-64-v2: Intel since the first Core i (2008),
-  AMD since Bulldozer (2011).
+  AMD since Bulldozer (2011). The graphics are the stricter limit on old PCs.
 - **Disk**: about 0.2 GB for the release, and 0.2 GB more once the first start has built the game code (it wants
   1 GB free to start; its ready page can delete the compiler folder afterwards), besides your game: 3.1 GB as a disc
   image, 2.9 GB extracted.

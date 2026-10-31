@@ -5,9 +5,11 @@ This download contains no game: no game files and no game code. You need your ow
 Castlevania: Curse of Darkness for the original Xbox, USA (NTSC-U) release.
 
 WHAT YOU NEED
-  Windows 10 (version 1703 or later) or 11, 64-bit; a graphics card with Direct3D 12 and its
-  driver; a processor with SSE4.2 (Intel from 2008, AMD from 2011 on); about 0.5 GB of disk
-  besides your game. Nothing else to install: the Visual C++ runtime and the compiler the
+  Windows 10 (version 1703 or later) or 11, 64-bit; graphics with Direct3D 12 and its driver
+  (NVIDIA GeForce 600 series, AMD Radeon HD 7700, Intel HD 4200, from 2012-2013 on, or newer:
+  older graphics run Windows 10 but not the game; dxdiag's Display tab shows Driver Model
+  WDDM 2.0 or higher where it works); a processor with SSE4.2 (Intel from 2008, AMD from 2011
+  on); about 0.5 GB of disk besides your game. Nothing else to install: the Visual C++ runtime and the compiler the
   first start uses are in this folder. No internet connection is needed.
 
 GETTING STARTED
