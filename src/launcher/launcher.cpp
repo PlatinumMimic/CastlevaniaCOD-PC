@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <cwchar>
 #include <string>
 #include <thread>
 #include <vector>
@@ -163,15 +164,22 @@ struct Files {
     std::vector<fs::path> isos;
     bool exe = false;
     fs::path textures;
-    size_t pictures = 0;  // .png in textures and the folders inside it
+    size_t pictures = 0;      // .png and .dds in textures and the folders inside it
+    bool ps2_buttons = false;  // the PS2's button icons among them (texpack.cpp, the PS2 button layout)
 
     void Scan() {
         textures = FindTextures();
         pictures = 0;
+        ps2_buttons = false;
         if (!textures.empty()) {
             std::error_code ec;
-            for (auto it = fs::recursive_directory_iterator(textures, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-                pictures += it->path().extension() == ".png";
+            for (auto it = fs::recursive_directory_iterator(textures, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                std::wstring ext = it->path().extension().wstring();
+                std::transform(ext.begin(), ext.end(), ext.begin(), towlower);
+                if (ext != L".png" && ext != L".dds") continue;
+                pictures++;
+                ps2_buttons |= it->path().filename().wstring().rfind(L"27818fa40a1117af-66279948575c23d7-", 0) == 0;
+            }
         }
         assets = FindAssets();
         xbe = Xbe::Missing;
@@ -241,6 +249,7 @@ struct Settings {
     bool keep_open = false;  // the launcher's own
     bool texture_pack = true;
     uint32_t texture_pack_size = 2048;  // 0 full size
+    uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
     toml::table rest;
 
     fs::path File() const { return ExeDir() / kSettings; }
@@ -264,6 +273,7 @@ struct Settings {
         keep_open = rest["launcher_keep_open"].value_or(keep_open);
         texture_pack = rest["texture_pack"].value_or(texture_pack);
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
+        button_layout = rest["button_layout"].value_or(button_layout);
     }
 
     bool Save() {
@@ -280,6 +290,7 @@ struct Settings {
         rest.insert_or_assign("launcher_keep_open", keep_open);
         rest.insert_or_assign("texture_pack", texture_pack);
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
+        rest.insert_or_assign("button_layout", int64_t(button_layout));
         std::ofstream f(File());
         f << rest << "\n";
         return bool(f);
@@ -695,6 +706,9 @@ public:
         modes_ = Resolutions();
     }
 
+    // the page shown, by the sidebar's order: --page on the command line, for screenshots of a page
+    void ShowPage(int page) { page_ = page; }
+
     // false: the launcher closes
     bool Frame() {
         if (rescan_ && !import_.running) {
@@ -740,7 +754,7 @@ private:
                std::to_string(s.render_percent) + "|" + std::to_string(s.aniso) + "|" + std::to_string(s.vsync) +
                std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
-               std::to_string(s.texture_pack_size);
+               std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout);
     }
 
     void AutoSave() {
@@ -996,6 +1010,19 @@ private:
     void ControlsPage() {
         PageTitle("Controls", "Xbox, PlayStation and Switch controllers play as player 1, with rumble. The keyboard "
                               "plays alongside.");
+        BeginCard("layout");
+        BeginSetting("Button layout", "PS2 shows the PS2's button icons and gives a controller the PS2's shoulders: L1 "
+                                      "resets the camera, R1 guards, L2 and R2 lock on. The keyboard keeps its keys.", true);
+        Segmented<uint32_t>("layout", settings_.button_layout, {0, 1}, {"Xbox", "PS2"});
+        EndSetting();
+        if (settings_.button_layout == 1) {
+            ImGui::Dummy({0, S(2)});
+            // the icons are the PS2 sheet of an HD pack made from the PS2 game (texpack.cpp)
+            if (!settings_.texture_pack) Status(kIconWarn, kMuted, "The PS2 icons need the HD texture pack on (Graphics)");
+            else if (files_.ps2_buttons) Status(kIconCheck, kGreen, "PS2 icons found in the texture pack");
+            else Status(kIconWarn, kMuted, "No PS2 icons in the textures folder: the Xbox ones stay, the shoulders change");
+        }
+        EndCard();
         BeginCard("keys");
         std::string menu = KeyName(settings_.menu_key);
         const char* kKeys[][2] = {
@@ -1165,6 +1192,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     Launcher launcher;
+    // --page home|display|graphics|game|controls|files opens on that page
+    static const wchar_t* kPageNames[] = {L"home", L"display", L"graphics", L"game", L"controls", L"files"};
+    for (int i = 0; i < 6; i++)
+        if (std::wcsstr(GetCommandLineW(), (std::wstring(L"--page ") + kPageNames[i]).c_str())) launcher.ShowPage(i);
     bool running = true;
     while (running) {
         MSG msg;

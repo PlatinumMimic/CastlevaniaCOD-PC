@@ -47,9 +47,10 @@ from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.or
 ### Launcher
 `CastlevaniaLauncher.exe` checks your game files (the USA `default.xbe` by its hash, or a disc image), adds a disc
 image to `assets` for you (a hard link on the same drive, otherwise a copy), and has every setting: display mode,
-resolution, v-sync, widescreen, render scale, anisotropic filtering with quick presets, FPS counter, pause on focus
-loss and the settings menu key. Changes are saved as you make them; **Play** starts the game. Saves and logs are a
-click away.
+resolution, v-sync, widescreen, render scale, anisotropic filtering with quick presets, the HD texture pack, FPS
+counter, pause on focus loss, the settings menu key and the button layout. Changes are saved as you make them;
+**Play** starts the game. Saves and logs are a click away. `--page controls` (or home, display, graphics, game,
+files) opens it on that page.
 
 ### Settings Menu
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be
@@ -88,9 +89,9 @@ pictures are not used yet.
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
 - **Button Layout** - Xbox, or PS2: the PS2's button icons (□ △ ○ ×, L1 L2 R1 R2) and its shoulders, L1 resetting
-  the camera and R1 guarding, L2 and R2 locking on (menu, Controls; `button_layout = 1`; from the next start). The
-  PS2 icons come from an HD texture pack made from the PS2 game (HD Texture Packs, above); without one the Xbox
-  icons stay.
+  the camera and R1 guarding, L2 and R2 locking on (the launcher's or the in-game menu's Controls page;
+  `button_layout = 1`; in game, from the next start). The PS2 icons come from an HD texture pack made from the PS2
+  game (HD Texture Packs, above), and the launcher says whether yours has them; without one the Xbox icons stay.
 
 ### Keyboard
 The keyboard plays as player 1 while the window is in front:
