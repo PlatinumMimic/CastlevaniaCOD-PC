@@ -12,11 +12,14 @@ echo.
 
 set "PF86=%ProgramFiles(x86)%"
 set "VSINST=%PF86%\Microsoft Visual Studio\Installer"
-rem this machine has Visual Studio and its installer on D:
-if not exist "%VSINST%\vswhere.exe" if exist "D:\Microsoft Visual Studio\Installer\vswhere.exe" set "VSINST=D:\Microsoft Visual Studio\Installer"
 set "VSWHERE=%VSINST%\vswhere.exe"
 set "OUT=%CD%\out\build\release"
 
+rem only a disc image in assets: its files out of it, once, for the build to read %GAME_XBE% and the game to play
+if not exist assets\%GAME_XBE% for %%i in (assets\*.iso) do if not exist assets\%GAME_XBE% (
+    echo   Extracting %%~nxi into assets, once ...
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\extract_iso.ps1 "%%~fi" assets || goto :fail
+)
 if not exist assets\%GAME_XBE% goto :nogame
 
 rem toolchain
@@ -98,9 +101,9 @@ echo         git                      -  https://git-scm.com/download/win
 goto :fail
 
 :nogame
-echo   Put the full game files in the assets folder first:
+echo   Put your game in the assets folder first: its disc image (.iso), or the
+echo   extracted disc, %GAME_XBE% with the game's folders beside it.
 echo     %CD%\assets
-echo   It needs %GAME_XBE% with the game's folders beside it.
 goto :fail
 
 :fail

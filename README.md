@@ -12,7 +12,9 @@ This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/Xbox
 ## Required Game Version
 
 Only the USA release is supported. The config is tied to the exact code addresses in its `default.xbe`, and the
-built exe refuses any other `default.xbe`.
+built exe refuses any other `default.xbe`. Many copies have the xbe's certificate patched (its title, allowed media
+and region, for a hard disk loader or any region's console); the code is the same, and the game puts those fields
+back as the release has them and plays that.
 
 | | |
 |---|---|
@@ -22,21 +24,22 @@ built exe refuses any other `default.xbe`.
 | `default.xbe` SHA-1 | `423BC19B7CED263570DCE5E7CD5D81954DFBE13C` |
 | `default.xbe` MD5 | `92176FDDF071667F596680DF64DED7FE` |
 
-Other regions (PAL, Japan) will not work. To check your copy, run `Get-FileHash assets\default.xbe -Algorithm SHA1`
-in PowerShell.
+Other regions (PAL, Japan) will not work. The launcher's Game files page tells which of your copies will play, and
+reads the xbe inside a disc image too.
 
 ## Installation
 
 1. Download the latest release from [Releases](https://github.com/Pazzi7054/CastlevaniaCOD-PC/releases) and extract it
    anywhere.
 2. Run `Castlevania.exe`. The `assets` folder opens.
-3. Put your game in it: the disc image (`.iso`), or the extracted disc (`default.xbe` with its `data`, `movie` and
-   `sound` folders).
-4. Run `Castlevania.exe` again. The first start builds the game code from your copy, which takes a minute or two and
-   shows its progress. After that the game starts straight away.
+3. Put your game in it: the disc image (`.iso`, a whole disc dump or an xiso), or the extracted disc (`default.xbe`
+   with its `data`, `movie` and `sound` folders).
+4. Run `Castlevania.exe` again. The first start builds the game code from your copy, which takes a few minutes and
+   shows its progress; press **Start** when it is done. After that the game starts straight away.
 
-A release contains no game code. `Castlevania.exe` holds the runtime, and the first start makes `CastlevaniaGame.dll`
-from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder.
+A release contains no game code. `Castlevania.exe` holds the runtime, and the first start makes `Castlevania.dll`
+from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder. The
+Visual C++ runtime comes with it, so a fresh Windows needs nothing else.
 
 - `CastlevaniaLauncher.exe` has every setting and checks your game files; `Castlevania.exe` skips it.
 - The game can run from the extracted files in `assets`, or from an ISO of the disc placed in `assets`.
@@ -140,8 +143,9 @@ git -C XboxXBE-Recomp apply ..\CastlevaniaCOD-PC\sdk-patches\xboxxbe-recomp.patc
 ```
 
 ### 2. Add the Required Game Files
-Extract your own disc and place its files in the `assets` folder: `default.xbe` with the `data`, `movie` and `sound`
-folders beside it.
+Put your disc image (`.iso`) in the `assets` folder, or the extracted disc: `default.xbe` with the `data`, `movie` and
+`sound` folders beside it. With only a disc image there, `build.bat` first extracts its files into `assets`
+(`tools\extract_iso.ps1`, a minute or less), as the build reads `default.xbe`.
 
 ### 3. Install Dependencies
 Install Visual Studio 2022 or newer with **Desktop development with C++** and **C++ CMake tools for Windows**, and
@@ -155,9 +159,11 @@ picture of it (the PS2 menu's, with its ring of runes at the larger sizes), or e
 dashboard, 128x128 in your `default.xbe`. A release has no icon, as it packs nothing of the game.
 
 ### 5. Make a Release
-`release.bat 1.0.0` writes `out\release\CastlevaniaCOD-PC-1.0.0.zip`: `Castlevania.exe` without the game code, the
-launcher, and the `compiler` folder its first start builds the game code with on the player's PC. It needs Python,
-and checks that nothing of the game went into the package.
+`release.bat 1.0.0` writes `out\release\CastlevaniaCOD-PC-1.0.0.zip`: `Castlevania.exe` and the launcher, built in
+`out\build\package` (the `package` preset: no icon, and no `Castlevania.dll`, the game code), the `compiler` folder
+the exe's first start builds the game code with on the player's PC (without its `work` folder), and the Visual C++
+runtime. It checks that nothing of the game went into the package. `tools\cvtest\install.py` then tests the zip as
+a player would install it (see Testing).
 
 ## Port Notes
 
@@ -174,18 +180,19 @@ Changes this game needed beyond the generated config:
   texture pack image; multisampled draws (2X, 4X) on the hardware's smaller grid, which puts Hector's 4X stencil
   shadow volume back in place (found by Neguchads). The SDK's mixer plays every channel of a voice by itself now
   (cutscene audio is a 5.1 stream with the voices in the centre channel).
-- Releases (`release.bat`, `split\`, `src\common\setup.cpp`): the game code lives in `CastlevaniaGame.dll`, built on the
-  player's PC on the first start. `split\glue.py` reads a whole build's objects and writes both sides of the split:
-  the DLL forwards the runtime's functions and the 240 game functions the host replaces to `Castlevania.exe` through
-  a table it is handed, and the exe reaches the 7 recompiled originals it calls and fills the function table from
-  the DLL. The recompiled code compiles against small freestanding headers (`split\include`) and links against
-  import libraries made from `split\crt` for `vcruntime140.dll` and `ucrtbase.dll`, so no Visual Studio is needed on
-  the player's PC. A DLL whose stamp does not match the exe is built again.
+- Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll`, which the exe builds on the
+  player's PC on its first start (the SDK's `runtime\app\game_code.cpp`, behind a progress window) from their own
+  `default.xbe`. A DLL whose stamp does not match the exe and xbe is built again.
+- The game's copy: the SDK patch has the exe take a copy whose certificate was patched (title name, allowed media,
+  region, ratings) once those are put back as in the build's own xbe, which CMake reads them from
+  (`kImageCertificate`, beside `kImageSha1`); the game then plays the restored xbe. A disc image may also be a whole
+  disc dump of either layout (the game partition at `0x18300000` on XGD1 discs, `0xFD90000` on XGD2). The launcher
+  checks the same way, the xbe inside each disc image included, with the SDK's disc reader.
 - `src\common\menu.cpp`: the menu key's state is read every frame instead of waiting for its key messages, which an
   overlay or another program's hotkey can take first; the messages are still swallowed so F10 never puts the window
   in menu mode.
-- `src\launcher`: the launcher, Direct3D 11 and Dear ImGui, no game code; it checks `default.xbe` against the SHA-1
-  the build wrote for `Castlevania.exe`.
+- `src\launcher`: the launcher, Direct3D 11 and Dear ImGui, no game code; it checks `default.xbe`, and the one on
+  each disc image, against the SHA-1 the build wrote for `Castlevania.exe`.
 - `src\common\texpack.cpp`: PCSX2 texture packs. A P8 texture's indices are put back into GS memory order, 16x16
   (8 bit) or 32x16 (4 bit, indices under 16) blocks in the GS's column layout, and hashed with XXH3-64 block by
   block as PCSX2 does; its palette is hashed as the GS holds it (R G B A, alpha halved). The pair names the picture.
@@ -252,8 +259,6 @@ Changes this game needed beyond the generated config:
 
 ## Known Issues
 - Only the first areas have been tested so far.
-- Releases: since 91146ff the SDK builds the game code into `Castlevania.dll` and compiles it on the player's PC
-  itself; `release.bat` and `split\` still make the earlier `CastlevaniaGame.dll` split and are to move over to it.
 
 ## Legal
 
@@ -265,7 +270,7 @@ or sponsored by Konami or Microsoft.
   images, BIOS, keys or Xbox SDK libraries, and none may be added. `assets`, `generated` and all build output are
   excluded by `.gitignore`; `release.bat` refuses a package with game files or objects in it.
 - `config\game.toml` lists addresses and names of functions in the game's executable. It contains no code from it.
-- The recompiled code is generated on your own PC from your own copy of the game. `CastlevaniaGame.dll`, and an
+- The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an
   executable from `build.bat`, are for your personal use only. Do not distribute them, generated code or game files.
 - Castlevania and Curse of Darkness are trademarks of Konami Digital Entertainment. Xbox is a trademark of
   Microsoft Corporation. All other trademarks belong to their respective owners and are used only to identify the

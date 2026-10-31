@@ -1,3 +1,44 @@
+diff --git a/cmake/XbeRecomp.cmake b/cmake/XbeRecomp.cmake
+index 22e033f..1213937 100644
+--- a/cmake/XbeRecomp.cmake
++++ b/cmake/XbeRecomp.cmake
+@@ -82,6 +82,14 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
+ # release leaves it out and the executable builds it from the player's xbe (runtime/app/game_code.cpp, which compiles
+ # with the same flags). Expects assets/<xbe> and the config's out = "generated/<game_dir>". At run time the game may be
+ # a disc image instead.
++# a little endian 32 bit field of a file
++function(xbe_u32 file offset out)
++    file(READ ${file} hex OFFSET ${offset} LIMIT 4 HEX)
++    string(REGEX REPLACE "(..)(..)(..)(..)" "\\4\\3\\2\\1" hex "${hex}")
++    math(EXPR value "0x${hex}")
++    set(${out} ${value} PARENT_SCOPE)
++endfunction()
++
+ function(add_xbe_image target xbe config partitions game_dir)
+     set(GEN ${CMAKE_CURRENT_SOURCE_DIR}/generated/${game_dir})
+     set(GEN_SOURCES ${GEN}/x86_func_mapping.cpp)
+@@ -107,8 +115,20 @@ function(add_xbe_image target xbe config partitions game_dir)
+     set(xbe_file ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe})
+     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${xbe_file})
+     file(SHA1 ${xbe_file} xbe_sha1)
++    # and its certificate's title name, allowed media, region and ratings, which copies of the release often have
++    # patched: the executable puts these back to tell such a copy is this release (runtime/app/game_files.cpp)
++    xbe_u32(${xbe_file} 260 xbe_base)  # 0x104 image base
++    xbe_u32(${xbe_file} 280 xbe_cert)  # 0x118 certificate
++    math(EXPR xbe_cert "${xbe_cert} - ${xbe_base}")
++    math(EXPR xbe_title "${xbe_cert} + 12")    # +0x0C title name, 80 bytes
++    math(EXPR xbe_media "${xbe_cert} + 156")   # +0x9C allowed media, region, ratings
++    file(READ ${xbe_file} xbe_title OFFSET ${xbe_title} LIMIT 80 HEX)
++    file(READ ${xbe_file} xbe_media OFFSET ${xbe_media} LIMIT 12 HEX)
++    string(REGEX REPLACE "(..)" "0x\\1," xbe_cert_bytes "${xbe_title}${xbe_media}")
+     set(XBE_HASH ${CMAKE_CURRENT_BINARY_DIR}/${target}_xbe.cpp)
+-    file(CONFIGURE OUTPUT ${XBE_HASH} CONTENT "extern const char kImageSha1[] = \"${xbe_sha1}\";\n")
++    file(CONFIGURE OUTPUT ${XBE_HASH} CONTENT "extern const char kImageSha1[] = \"${xbe_sha1}\";
++extern const unsigned char kImageCertificate[92] = {${xbe_cert_bytes}};
++")
+     add_executable(${target} WIN32 ${XBE_RUNTIME_SOURCES} ${XBE_HOST_SOURCES} ${GAME_SOURCES} ${XBE_IMGUI_SOURCES} ${XBE_HASH})
+     add_dependencies(${target} recompile_${target} compiler_files)
+     # the import library of what the executable exports to its DLL goes to the compiler folder
 diff --git a/runtime/app/app.h b/runtime/app/app.h
 index e1c1254..aa45026 100644
 --- a/runtime/app/app.h
@@ -20,6 +61,64 @@ index e1c1254..aa45026 100644
  bool Widescreen();
  
  std::filesystem::path ExeDir();
+diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
+index 4570d3b..cd1e6f9 100644
+--- a/runtime/app/game_files.cpp
++++ b/runtime/app/game_files.cpp
+@@ -9,6 +9,7 @@
+ #include <windows.h>
+ 
+ #include <algorithm>
++#include <cstring>
+ #include <cwctype>
+ #include <fstream>
+ 
+@@ -19,6 +20,8 @@
+ #include "kernel/disc.h"
+ 
+ extern const char kImageSha1[];  // the xbe recompiled into this executable, written by CMake
++// its certificate's title name (80 bytes), then allowed media, region and ratings (12)
++extern const unsigned char kImageCertificate[92];
+ 
+ namespace app {
+ 
+@@ -26,6 +29,23 @@ namespace {
+ 
+ namespace fs = std::filesystem;
+ 
++// Copies of a release often have their certificate's title name, allowed media and region patched (for a hard disk
++// loader, or for any region's console), the signed sections left alone. Put back as this release has them, such a
++// copy is this release, and the game runs that: true with the xbe restored.
++bool RestoreCertificate(std::vector<uint8_t>& xbe) {
++    if (xbe.size() < 0x11C) return false;
++    uint32_t base, cert;
++    memcpy(&base, &xbe[0x104], 4);
++    memcpy(&cert, &xbe[0x118], 4);
++    if (cert < base || uint64_t(cert - base) + 0xA8 > xbe.size()) return false;
++    std::vector<uint8_t> copy = xbe;
++    memcpy(&copy[cert - base + 0x0C], kImageCertificate, 80);
++    memcpy(&copy[cert - base + 0x9C], kImageCertificate + 80, 12);
++    if (Sha1(copy) != kImageSha1) return false;
++    xbe = std::move(copy);
++    return true;
++}
++
+ // assets beside the exe or in any folder above it (the build output)
+ fs::path FindAssets() {
+     auto dir = ExeDir();
+@@ -80,8 +100,10 @@ bool FindGame(GameFiles& game) {
+     auto consider = [&](const fs::path& name, std::vector<uint8_t> xbe, std::unique_ptr<kernel::Disc> disc) {
+         std::string sha = Sha1(xbe);
+         bool match = sha == kImageSha1;
+-        LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), match ? "" : ", another release");
+-        if (match) {
++        bool restored = !match && RestoreCertificate(xbe);
++        LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(),
++             match ? "" : restored ? ", this release with its certificate patched, put back" : ", another release");
++        if (match || restored) {
+             game = {assets, std::move(xbe)};
+             kernel::MountDisc(std::move(disc));
+             return true;
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
 index 075b3b7..a5bf770 100644
 --- a/runtime/app/settings.cpp
@@ -672,6 +771,22 @@ index 6adb65a..d1dcd43 100644
  uint32_t LinearColorFormat(uint32_t fmt);
  uint32_t LinearDepthFormat(uint32_t fmt);
  void SurfaceSize(const Surface& s, uint32_t& w, uint32_t& h);
+diff --git a/runtime/kernel/disc.cpp b/runtime/kernel/disc.cpp
+index 6ee0fa3..e128ff1 100644
+--- a/runtime/kernel/disc.cpp
++++ b/runtime/kernel/disc.cpp
+@@ -22,8 +22,9 @@ namespace kernel {
+ namespace {
+ 
+ constexpr uint32_t kSector = 2048;
+-// the game partition: at the start of an xiso, past the video partition of a whole original Xbox disc dump
+-constexpr uint64_t kPartitions[] = {0, 0x18300000};
++// the game partition: at the start of an xiso, else past the video partition of a whole disc dump, which ends by
++// the disc's kind: XGD1 (the early titles) or XGD2 (the later ones, with a smaller video partition)
++constexpr uint64_t kPartitions[] = {0, 0x18300000, 0xFD90000};
+ // volume descriptor, sector 32 of the partition: magic, root table sector and size, FILETIME, magic again at +0x7EC
+ constexpr uint32_t kVolume = 32 * kSector;
+ constexpr char kMagic[] = "MICROSOFT*XBOX*MEDIA";
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
 index 975e977..71805c3 100644
 --- a/runtime/xdk/d3d8.cpp

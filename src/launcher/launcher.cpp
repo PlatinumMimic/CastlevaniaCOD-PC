@@ -1,8 +1,9 @@
 // The launcher: checks the game files, edits the settings file the game reads, and starts the game.
 //
 // It sits beside Castlevania.exe and writes the same castlevania.toml, keeping any keys it does not know. The game
-// files are checked as the game checks them: assets beside the exe or in a folder above it, default.xbe there must
-// have the SHA-1 the exe was recompiled from; a disc image (.iso) is checked by the game when it starts.
+// files are checked as the game checks them: assets beside the exe or in a folder above it, and default.xbe there or
+// on a disc image (.iso) in it must have the SHA-1 the exe was recompiled from, once a patched certificate is put back
+// (the SDK's runtime/app/game_files.cpp).
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <cwchar>
@@ -35,8 +37,11 @@
 #include <backends/imgui_impl_win32.h>
 #include <toml++/toml.hpp>
 
+#include "kernel/disc.h"
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 extern const char kImageSha1[];  // the xbe the game exe was recompiled from, written by CMake
+extern const unsigned char kImageCertificate[92];  // its certificate's title name, then media, region and ratings
 
 namespace {
 
@@ -124,12 +129,10 @@ fs::path FindAssets() {
     return {};
 }
 
-std::string Sha1(const fs::path& file) {
-    std::ifstream f(file, std::ios::binary);
-    if (!f) return {};
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), {});
+std::string Sha1(const std::vector<uint8_t>& data) {
     uint8_t digest[20];
-    if (BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, data.data(), ULONG(data.size()), digest, 20) != 0) return {};
+    if (BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, const_cast<PUCHAR>(data.data()), ULONG(data.size()), digest, 20) != 0)
+        return {};
     std::string hex;
     for (uint8_t b : digest) {
         hex += "0123456789abcdef"[b >> 4];
@@ -147,6 +150,23 @@ std::string Utf8(const std::wstring& w) {
 
 void Open(const fs::path& p) { ShellExecuteW(nullptr, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
 
+// the game's check: the xbe the exe was made from, or that with the certificate's title, media and region patched
+enum class Release { Missing, Match, Patched, Other };
+
+Release Check(const std::vector<uint8_t>& xbe) {
+    if (Sha1(xbe) == kImageSha1) return Release::Match;
+    uint32_t base = 0, cert = 0;
+    if (xbe.size() >= 0x11C) {
+        memcpy(&base, &xbe[0x104], 4);
+        memcpy(&cert, &xbe[0x118], 4);
+    }
+    if (cert < base || uint64_t(cert - base) + 0xA8 > xbe.size()) return Release::Other;
+    std::vector<uint8_t> copy = xbe;
+    memcpy(&copy[cert - base + 0x0C], kImageCertificate, 80);
+    memcpy(&copy[cert - base + 0x9C], kImageCertificate + 80, 12);
+    return Sha1(copy) == kImageSha1 ? Release::Patched : Release::Other;
+}
+
 // what the game will find
 // the textures folder the game looks for, found the same way as assets
 fs::path FindTextures() {
@@ -162,8 +182,12 @@ fs::path FindTextures() {
 
 struct Files {
     fs::path assets;
-    enum class Xbe { Missing, Match, Other } xbe = Xbe::Missing;
-    std::vector<fs::path> isos;
+    Release xbe = Release::Missing;
+    struct Image {
+        fs::path path;
+        Release release = Release::Missing;  // Missing: no Xbox disc, or no default.xbe on it
+    };
+    std::vector<Image> isos;
     bool exe = false;
     fs::path textures;
     size_t pictures = 0;      // .png and .dds in textures and the folders inside it
@@ -191,19 +215,29 @@ struct Files {
             }
         }
         assets = FindAssets();
-        xbe = Xbe::Missing;
+        xbe = Release::Missing;
         isos.clear();
         exe = fs::exists(ExeDir() / kGameExe);
         if (assets.empty()) return;
         std::error_code ec;
-        if (fs::exists(assets / kXbe, ec)) xbe = Sha1(assets / kXbe) == kImageSha1 ? Xbe::Match : Xbe::Other;
+        if (std::ifstream f{assets / kXbe, std::ios::binary}) xbe = Check({std::istreambuf_iterator<char>(f), {}});
         for (auto& e : fs::directory_iterator(assets, ec)) {
             std::wstring ext = e.path().extension().wstring();
             std::transform(ext.begin(), ext.end(), ext.begin(), towlower);
-            if (ext == L".iso" && e.is_regular_file(ec)) isos.push_back(e.path());
+            if (ext != L".iso" || !e.is_regular_file(ec)) continue;
+            Image image{e.path()};
+            kernel::Disc disc;
+            std::string error;
+            std::vector<uint8_t> data;
+            if (disc.Open(e.path(), error) && disc.Load(kXbe, data)) image.release = Check(data);
+            isos.push_back(image);
         }
+        std::sort(isos.begin(), isos.end(), [](const Image& a, const Image& b) { return a.path < b.path; });
     }
-    bool Playable() const { return exe && (xbe == Xbe::Match || !isos.empty()); }
+    static bool Good(Release r) { return r == Release::Match || r == Release::Patched; }
+    bool Playable() const {
+        return exe && (Good(xbe) || std::any_of(isos.begin(), isos.end(), [](const Image& i) { return Good(i.release); }));
+    }
 };
 
 // a disc image into assets: a hard link on the same drive, a copy with progress otherwise
@@ -1368,14 +1402,25 @@ private:
             Status(kIconWarn, kRed, "No assets folder found");
         } else {
             switch (files_.xbe) {
-                case Files::Xbe::Match: Status(kIconCheck, kGreen, "default.xbe  -  USA release, ready"); break;
-                case Files::Xbe::Other: Status(kIconWarn, kRed, "default.xbe  -  another release, only the USA one works"); break;
-                case Files::Xbe::Missing: Status(kIconWarn, kMuted, "default.xbe  -  not extracted"); break;
+                case Release::Match: Status(kIconCheck, kGreen, "default.xbe  -  USA release, ready"); break;
+                case Release::Patched: Status(kIconCheck, kGreen, "default.xbe  -  USA release (patched header), ready"); break;
+                case Release::Other: Status(kIconWarn, kRed, "default.xbe  -  another release, only the USA one works"); break;
+                case Release::Missing:  // no matter beside a disc image
+                    if (files_.isos.empty()) Status(kIconWarn, kMuted, "default.xbe  -  not extracted");
+                    break;
             }
-            for (const fs::path& iso : files_.isos) Status(kIconDisc, kGreen, "Disc image  -  " + Utf8(iso.filename().wstring()));
+            for (const Files::Image& iso : files_.isos) {
+                std::string name = Utf8(iso.path.filename().wstring());
+                switch (iso.release) {
+                    case Release::Match: Status(kIconDisc, kGreen, name + "  -  USA release, ready"); break;
+                    case Release::Patched: Status(kIconDisc, kGreen, name + "  -  USA release (patched header), ready"); break;
+                    case Release::Other: Status(kIconWarn, kRed, name + "  -  another release, only the USA one works"); break;
+                    case Release::Missing: Status(kIconWarn, kRed, name + "  -  not an Xbox disc image"); break;
+                }
+            }
         }
         if (!files_.exe) Status(kIconWarn, kRed, "Castlevania.exe is not beside the launcher");
-        if (!files_.assets.empty() && files_.xbe == Files::Xbe::Missing && files_.isos.empty())
+        if (!files_.assets.empty() && files_.xbe == Release::Missing && files_.isos.empty())
             Wrapped(g_small, kMuted, "Add your disc image (.iso), or extract the disc into the assets folder: default.xbe "
                                      "with its data, movie and sound folders.");
         if (!files_.assets.empty()) Wrapped(g_small, kMuted, Utf8(files_.assets.wstring()).c_str());
