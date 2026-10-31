@@ -47,3 +47,6 @@ release_build_log.txt
 
 # HD texture packs (PCSX2 replacements), the player's own
 /textures/
+
+# Python
+__pycache__/
