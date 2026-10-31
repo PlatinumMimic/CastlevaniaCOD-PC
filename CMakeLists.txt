@@ -85,3 +85,22 @@ target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall)  # D
 target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32)
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 add_dependencies(Castlevania CastlevaniaLauncher)
+
+# both exes' icon, resource 1 as their windows load it: the Xbox dashboard's picture of the game, made from the xbe.
+# Not in a release, which packs nothing of the game.
+if(NOT CV_SPLIT)
+    add_executable(xbe_icon tools/xbe_icon.cpp)
+    target_link_options(xbe_icon PRIVATE -fuse-ld=lld)
+    set(GAME_ICON ${CMAKE_CURRENT_BINARY_DIR}/castlevania.ico)
+    add_custom_command(OUTPUT ${GAME_ICON}
+        COMMAND xbe_icon ${CMAKE_CURRENT_SOURCE_DIR}/assets/default.xbe ${GAME_ICON}
+        DEPENDS xbe_icon ${CMAKE_CURRENT_SOURCE_DIR}/assets/default.xbe)
+    add_custom_target(castlevania_icon DEPENDS ${GAME_ICON})
+    file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icon.rc CONTENT "1 ICON \"${GAME_ICON}\"
+")
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/icon.rc PROPERTIES OBJECT_DEPENDS ${GAME_ICON})
+    foreach(exe Castlevania CastlevaniaLauncher)
+        target_sources(${exe} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/icon.rc)
+        add_dependencies(${exe} castlevania_icon)
+    endforeach()
+endif()

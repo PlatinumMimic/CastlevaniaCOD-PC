@@ -143,7 +143,9 @@ Clang (**C++ Clang tools for Windows**, or `winget install LLVM.LLVM`).
 
 ### 4. Build the Project
 Run `build.bat`. The first build recompiles the game and takes a while. `Castlevania.exe` and
-`CastlevaniaLauncher.exe` are written to `out\build\release`, with the game code built in.
+`CastlevaniaLauncher.exe` are written to `out\build\release`, with the game code built in. Their icon is the game's
+picture on the Xbox dashboard, which `tools\xbe_icon.cpp` takes from your `default.xbe` (a release has no icon, as
+it packs nothing of the game).
 
 ### 5. Make a Release
 `release.bat 1.0.0` writes `out\release\CastlevaniaCOD-PC-1.0.0.zip`: `Castlevania.exe` without the game code, the
