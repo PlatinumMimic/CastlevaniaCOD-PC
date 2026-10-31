@@ -797,6 +797,8 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
         r = {"step": "start", "label": "first start", "ok": bool(game.hwnd), "errors": [], "warnings": []}
         if game.first_start is not None:
             r["warnings"].append(f"the game code was built in {game.first_start:.0f} s")
+        found = [l.split("] ", 1)[-1] for l in game.new_log_lines() if "] Game: " in l]
+        r["warnings"] += found[:1]  # the copy the game found, and how it matched
         if not game.hwnd:
             r["errors"].append(f"message box: {game.dialog}" if game.dialog else "no game window")
         results.append(r)

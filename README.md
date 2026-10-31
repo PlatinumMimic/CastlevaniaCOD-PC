@@ -41,6 +41,9 @@ A release contains no game code. `Castlevania.exe` holds the runtime, and the fi
 from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder. The
 Visual C++ runtime comes with it, so a fresh Windows needs nothing else.
 
+The port's programs are not code-signed, so the first start of a download may bring up "Windows protected your PC":
+**More info**, then **Run anyway**.
+
 - `CastlevaniaLauncher.exe` has every setting and checks your game files; `Castlevania.exe` skips it.
 - The game can run from the extracted files in `assets`, or from an ISO of the disc placed in `assets`.
 - Recomp settings can be adjusted in `castlevania.toml` beside the exe. Saves go to `hdd\E\UDATA\4b4e002d`.
@@ -266,6 +269,8 @@ Changes this game needed beyond the generated config:
 
 ## Known Issues
 - Only the first areas have been tested so far.
+- Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
+  Smart App Control, where it is on, may block such programs; that is untested.
 
 ## Legal
 
