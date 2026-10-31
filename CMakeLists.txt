@@ -86,15 +86,29 @@ target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 add_dependencies(Castlevania CastlevaniaLauncher)
 
-# both exes' icon, resource 1 as their windows load it: the Xbox dashboard's picture of the game, made from the xbe.
+# both exes' icon, resource 1 as their windows load it: the game's crest, from the HD texture pack's picture of it (the
+# PS2 menu texture in its blue palette, and in its green one the ring of runes), else from the xbe's title image.
 # Not in a release, which packs nothing of the game.
 if(NOT CV_SPLIT)
     add_executable(xbe_icon tools/xbe_icon.cpp)
+    target_link_libraries(xbe_icon PRIVATE ole32 windowscodecs)
     target_link_options(xbe_icon PRIVATE -fuse-ld=lld)
     set(GAME_ICON ${CMAKE_CURRENT_BINARY_DIR}/castlevania.ico)
+    set(icon_xbe ${CMAKE_CURRENT_SOURCE_DIR}/assets/default.xbe)
+    set(icon_pack)
+    file(GLOB_RECURSE crest ${CMAKE_CURRENT_SOURCE_DIR}/textures/491259d6fb7d9dfb-76ee38f652e03516-*)
+    file(GLOB_RECURSE runes ${CMAKE_CURRENT_SOURCE_DIR}/textures/491259d6fb7d9dfb-53eede86787ea4c9-*)
+    if(crest)
+        list(GET crest 0 crest)
+        list(APPEND icon_pack ${crest})
+        if(runes)
+            list(GET runes 0 runes)
+            list(APPEND icon_pack ${runes})
+        endif()
+    endif()
     add_custom_command(OUTPUT ${GAME_ICON}
-        COMMAND xbe_icon ${CMAKE_CURRENT_SOURCE_DIR}/assets/default.xbe ${GAME_ICON}
-        DEPENDS xbe_icon ${CMAKE_CURRENT_SOURCE_DIR}/assets/default.xbe)
+        COMMAND xbe_icon ${icon_xbe} ${GAME_ICON} ${icon_pack}
+        DEPENDS xbe_icon ${icon_xbe} ${icon_pack})
     add_custom_target(castlevania_icon DEPENDS ${GAME_ICON})
     file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icon.rc CONTENT "1 ICON \"${GAME_ICON}\"
 ")

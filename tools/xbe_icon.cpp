@@ -1,11 +1,24 @@
-// xbe_icon <xbe> <ico>: the exes' icon, made at build time from the player's own xbe. The Xbox dashboard shows a
-// game by its title image, the $$XTIMAGE section: an XPR0 file holding one 128x128 DXT1 texture. Its black
-// background is cut away (the black reaching the edges), and it is written at the sizes Windows asks for.
+// xbe_icon <xbe> <ico> [<crest> [<runes>]]: the exes' icon, made at build time from the player's own files: the
+// game's crest, white on a black disc, at the sizes Windows asks for. An HD texture pack has it at 512x512, the PS2
+// menu texture drawn with three palettes: the crest in blue, which gives the white, and its ring of runes in green,
+// put around it at the larger sizes. Without a pack, the xbe's title image, the crest on the Xbox dashboard: its
+// $$XTIMAGE section, an XPR0 file holding one 128x128 DXT1 texture, gold on black.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -13,11 +26,20 @@
 
 namespace {
 
+using Microsoft::WRL::ComPtr;
+
 struct Image {
     int w = 0, h = 0;
-    std::vector<float> px;  // RGBA, alpha premultiplied, 0..1
+    std::vector<float> px;  // RGBA, 0..1; premultiplied in the icon's own images
     float* at(int x, int y) { return &px[(size_t(y) * w + x) * 4]; }
 };
+
+Image Blank(int size) {
+    Image img;
+    img.w = img.h = size;
+    img.px.assign(size_t(size) * size * 4, 0);
+    return img;
+}
 
 uint32_t U32(const std::vector<uint8_t>& d, size_t at) {
     if (at + 4 > d.size()) throw std::string("the xbe is cut short");
@@ -82,22 +104,79 @@ Image Decode(const std::vector<uint8_t>& xpr) {
     return img;
 }
 
-// the near-black reaching the edges, filled away
-void CutBackground(Image& img) {
-    auto dark = [&](int x, int y) {
-        float* p = img.at(x, y);
-        return p[3] > 0 && std::max({p[0], p[1], p[2]}) < 0.16f;
-    };
-    std::vector<std::pair<int, int>> todo;
-    for (int i = 0; i < img.w; i++) todo.insert(todo.end(), {{i, 0}, {i, img.h - 1}});
-    for (int i = 0; i < img.h; i++) todo.insert(todo.end(), {{0, i}, {img.w - 1, i}});
-    while (!todo.empty()) {
-        auto [x, y] = todo.back();
-        todo.pop_back();
-        if (x < 0 || y < 0 || x >= img.w || y >= img.h || !dark(x, y)) continue;
-        std::fill_n(img.at(x, y), 4, 0.0f);
-        todo.insert(todo.end(), {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}});
-    }
+// a texture pack's picture, through WIC (PNG, or DDS BC1 to BC3), its PS2 alpha (128 opaque) doubled
+Image Load(IWICImagingFactory* wic, const std::filesystem::path& file) {
+    ComPtr<IWICBitmapDecoder> dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> conv;
+    UINT w = 0, h = 0;
+    if (FAILED(wic->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) ||
+        FAILED(dec->GetFrame(0, &frame)) || FAILED(wic->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0,
+                                WICBitmapPaletteTypeCustom)) ||
+        FAILED(conv->GetSize(&w, &h)))
+        throw "cannot read " + file.string();
+    if (w != h || w < 16) throw file.string() + " is not square";
+    std::vector<uint8_t> raw(size_t(w) * h * 4);
+    if (FAILED(conv->CopyPixels(nullptr, w * 4, UINT(raw.size()), raw.data()))) throw "cannot read " + file.string();
+    Image img = Blank(int(w));
+    for (size_t i = 0; i < raw.size(); i++) img.px[i] = float(raw[i]) / 255;
+    for (size_t i = 3; i < raw.size(); i += 4) img.px[i] = std::min(img.px[i] * 2, 1.0f);
+    return img;
+}
+
+// from the middle, in half widths
+float Radius(const Image& img, int x, int y) {
+    float half = img.w / 2.0f;
+    return std::hypot(x + 0.5f - half, y + 0.5f - half) / half;
+}
+
+// how much of the pixel a disc of that radius covers, its edge a pixel and a half soft
+float Disc(const Image& img, int x, int y, float radius) {
+    return std::clamp((radius - Radius(img, x, y)) * img.w / 3, 0.0f, 1.0f);
+}
+
+void Grey(Image& img, int x, int y, float v, float a) {
+    float* p = img.at(x, y);
+    p[0] = p[1] = p[2] = v * a;
+    p[3] = a;
+}
+
+// the pack's crest: its blue palette runs from (0, 0, 128) for the lines to (0, 128, 240) for the fills, so green is
+// the light, over black where it is see-through; around it, the runes: the green palette's ring, its light
+Image FromPack(Image& crest, Image* runes) {
+    Image out = Blank(crest.w);
+    for (int y = 0; y < out.h; y++)
+        for (int x = 0; x < out.w; x++) {
+            float* c = crest.at(x, y);
+            float v = std::min(c[1] * 2, 1.0f) * c[3];
+            if (!runes) {
+                Grey(out, x, y, v, Disc(out, x, y, 0.98f));
+                continue;
+            }
+            float* g = runes->at(x, y);
+            float ring = Radius(out, x, y) > 0.84f ? std::max({g[0], g[1], g[2]}) * g[3] : 0.0f;
+            Grey(out, x, y, std::max(v * Disc(out, x, y, 0.86f), ring), Disc(out, x, y, 0.985f));
+        }
+    return out;
+}
+
+// the Xbox emblem's brightness, its gold made white, on its own black
+Image FromTitle(Image& title) {
+    std::vector<float> light;
+    for (int y = 0; y < title.h; y++)
+        for (int x = 0; x < title.w; x++) {
+            float* p = title.at(x, y);
+            light.push_back(0.3f * p[0] + 0.59f * p[1] + 0.11f * p[2]);
+        }
+    std::vector<float> sorted = light;
+    auto top = sorted.begin() + sorted.size() * 99 / 100;
+    std::nth_element(sorted.begin(), top, sorted.end());
+    Image out = Blank(title.w);
+    for (int y = 0; y < out.h; y++)
+        for (int x = 0; x < out.w; x++)
+            Grey(out, x, y, std::min(light[size_t(y) * out.w + x] / std::max(*top, 0.01f), 1.0f), Disc(out, x, y, 0.99f));
+    return out;
 }
 
 // smaller: the average over each new pixel's area; larger: bilinear
@@ -154,21 +233,37 @@ std::vector<uint8_t> Dib(Image& img) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
-        std::fprintf(stderr, "xbe_icon <xbe> <ico>\n");
+    if (argc < 3 || argc > 5) {
+        std::fprintf(stderr, "xbe_icon <xbe> <ico> [<crest> [<runes>]]\n");
         return 2;
     }
     try {
-        std::ifstream in(argv[1], std::ios::binary);
-        if (!in) throw std::string("cannot read ") + argv[1];
-        std::vector<uint8_t> xbe{std::istreambuf_iterator<char>(in), {}};
-        Image title = Decode(TitleImage(xbe));
-        CutBackground(title);
-
         const int sizes[] = {256, 128, 64, 48, 32, 24, 16};
+        std::vector<Image> art;  // the largest first: the runes' ring, then the crest alone
+        if (argc >= 4) {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            ComPtr<IWICImagingFactory> wic;
+            if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))))
+                throw std::string("no WIC");
+            Image crest = Load(wic.Get(), argv[3]);
+            if (argc == 5) {
+                Image runes = Load(wic.Get(), argv[4]);
+                if (runes.w != crest.w) runes = Resize(runes, crest.w);
+                art.push_back(FromPack(crest, &runes));
+            }
+            art.push_back(FromPack(crest, nullptr));
+        } else {
+            std::ifstream in(argv[1], std::ios::binary);
+            if (!in) throw std::string("cannot read ") + argv[1];
+            std::vector<uint8_t> xbe{std::istreambuf_iterator<char>(in), {}};
+            Image title = Decode(TitleImage(xbe));
+            art.push_back(FromTitle(title));
+        }
+
         std::vector<std::vector<uint8_t>> images;
         for (int s : sizes) {
-            Image img = s == title.w ? title : Resize(title, s);
+            Image& from = s >= 128 ? art.front() : art.back();  // the runes are a blur below 128
+            Image img = s == from.w ? from : Resize(from, s);
             images.push_back(Dib(img));
         }
         // ICONDIR, an entry per image (a width or height of 0 is 256), then the images
