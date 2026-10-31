@@ -55,7 +55,8 @@ for /r "%PKG%" %%f in (*.xbe *.iso *.cpp *.obj *.ico x86_recomp* image_symbols.h
 if exist "%PKG%\compiler\work" (echo       the compiler's work folder is in the package & goto :fail)
 
 echo [4/4] Zip
-tar -a -cf "out\release\CastlevaniaCOD-PC-%VERSION%.zip" -C out\release CastlevaniaCOD-PC || goto :fail
+rem Windows' own tar (bsdtar) makes a zip; a GNU tar first on PATH (Git's usr\bin) would make a tar named .zip
+"%SystemRoot%\System32\tar.exe" -a -cf "out\release\CastlevaniaCOD-PC-%VERSION%.zip" -C out\release CastlevaniaCOD-PC || goto :fail
 for %%z in ("out\release\CastlevaniaCOD-PC-%VERSION%.zip") do echo       %%~fz  (%%~zz bytes)
 exit /b 0
 
