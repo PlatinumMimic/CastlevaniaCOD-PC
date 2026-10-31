@@ -152,39 +152,61 @@ std::string Utf8(const std::wstring& w) {
 
 void Open(const fs::path& p) { ShellExecuteW(nullptr, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
 
-// The graphics the game will draw with, as the SDK picks them (runtime/gpu/d3d12.cpp): the high performance GPU, else
-// the default one, with Direct3D 12 at feature level 11_0. Windows 10 and 11 all have Direct3D 12, but only graphics
-// with a driver for it run it. CV_NO_D3D12=1 pretends there is none, to see the launcher's warning.
+// The graphics the game draws with, as the SDK picks them (runtime/gpu/d3d12.cpp): the card the settings name (gpu)
+// if it has Direct3D 12, else the fastest, else the default one, at feature level 11_0. Windows 10 and 11 all have
+// Direct3D 12, but only graphics with a driver for it run it. CV_NO_D3D12=1 pretends none does, to see the warning.
 struct Gpu {
     std::string name;
     bool d3d12 = false;
     bool software = false;  // Windows' own renderer on the CPU, no graphics driver installed
 };
 
-Gpu CheckGpu() {
-    Gpu g;
-    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
-    Microsoft::WRL::ComPtr<IDXGIFactory6> f6;
-    Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return g;
-    if (SUCCEEDED(factory.As(&f6))) f6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter));
-    bool none = GetEnvironmentVariableW(L"CV_NO_D3D12", nullptr, 0) != 0;
-    auto runs = [&](IDXGIAdapter1* a) {  // a null device: only whether one would be made
-        return !none && SUCCEEDED(D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr));
-    };
-    g.d3d12 = runs(adapter.Get());
-    if (!g.d3d12) {  // the game's second try, the default adapter
-        g.d3d12 = runs(nullptr);
-        adapter.Reset();
-        factory->EnumAdapters1(0, &adapter);
-    }
-    if (adapter) {
-        DXGI_ADAPTER_DESC1 d{};
-        adapter->GetDesc1(&d);
+// a null device: only whether one would be made; a null adapter is the default one
+bool RunsD3D12(IDXGIAdapter1* a) {
+    static const bool none = GetEnvironmentVariableW(L"CV_NO_D3D12", nullptr, 0) != 0;
+    return !none && SUCCEEDED(D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr));
+}
+
+Gpu Describe(IDXGIAdapter1* a, bool d3d12) {
+    Gpu g{{}, d3d12};
+    DXGI_ADAPTER_DESC1 d{};
+    if (a && SUCCEEDED(a->GetDesc1(&d))) {
         g.name = Utf8(d.Description);
         g.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
     }
     return g;
+}
+
+// the graphics cards to choose from, the fastest first, without Windows' software renderer
+std::vector<Gpu> Gpus() {
+    std::vector<Gpu> list;
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> f6;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> a;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return list;
+    factory.As(&f6);
+    for (UINT i = 0;; i++) {
+        HRESULT hr = f6 ? f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&a))
+                        : factory->EnumAdapters1(i, &a);
+        if (FAILED(hr)) break;
+        Gpu g = Describe(a.Get(), RunsD3D12(a.Get()));
+        if (!g.software) list.push_back(g);
+    }
+    return list;
+}
+
+// what the game takes with no card named: the fastest, else the default adapter
+Gpu Automatic() {
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> f6;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return {};
+    if (SUCCEEDED(factory.As(&f6))) f6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter));
+    if (RunsD3D12(adapter.Get())) return Describe(adapter.Get(), true);
+    bool d3d12 = RunsD3D12(nullptr);  // the game's second try
+    adapter.Reset();
+    factory->EnumAdapters1(0, &adapter);
+    return Describe(adapter.Get(), d3d12);
 }
 
 // the game's check: the xbe the exe was made from, or that with the certificate's title, media and region patched
@@ -331,6 +353,7 @@ struct Settings {
     uint32_t texture_pack_size = 2048;  // 0 full size
     uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
     bool lament_save = false;           // the Moai of a Lament of Innocence save (hooks.cpp)
+    std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     toml::table rest;
 
     fs::path File() const { return ExeDir() / kSettings; }
@@ -356,6 +379,7 @@ struct Settings {
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
         button_layout = rest["button_layout"].value_or(button_layout);
         lament_save = rest["lament_save"].value_or(lament_save);
+        gpu = rest["gpu"].value_or(gpu);
     }
 
     bool Save() {
@@ -374,6 +398,7 @@ struct Settings {
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
         rest.insert_or_assign("button_layout", int64_t(button_layout));
         rest.insert_or_assign("lament_save", lament_save);
+        rest.insert_or_assign("gpu", gpu);
         std::ofstream f(File());
         f << rest << "\n";
         return bool(f);
@@ -1075,7 +1100,8 @@ public:
         settings_.Load();
         saved_ = Snapshot();
         files_.Scan();
-        gpu_ = CheckGpu();
+        gpus_ = Gpus();
+        auto_gpu_ = Automatic();
         modes_ = Resolutions();
         LoadArt();
     }
@@ -1130,7 +1156,7 @@ private:
                std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
                std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout) +
-               std::to_string(s.lament_save);
+               std::to_string(s.lament_save) + "|" + s.gpu;
     }
 
     void AutoSave() {
@@ -1242,12 +1268,12 @@ private:
         // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
         ImVec2 end = ImGui::GetItemRectMax();
         ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
-        if (!gpu_.d3d12) Status(kIconWarn, kRed, "No Direct3D 12");
+        if (!UsedGpu().d3d12) Status(kIconWarn, kRed, "No Direct3D 12");
         else if (ready) Status(kIconCheck, kGreen, "Ready to play");
         else if (!files_.exe) Status(kIconWarn, kRed, "Castlevania.exe is missing");
         else Status(kIconWarn, kAmber, "Game files needed");
         ImGui::SetCursorScreenPos(a + ImVec2(0, h + S(20)));
-        if (!gpu_.d3d12) {
+        if (!UsedGpu().d3d12) {
             BeginCard("gpu");
             GpuStatus();
             EndCard();
@@ -1286,14 +1312,25 @@ private:
         return keep;
     }
 
+    // the card the game will draw with: the one chosen, when it is here with Direct3D 12, else the automatic one
+    const Gpu& UsedGpu() const {
+        if (!settings_.gpu.empty())
+            for (const Gpu& g : gpus_)
+                if (g.name == settings_.gpu && g.d3d12) return g;
+        return auto_gpu_;
+    }
+
     // the graphics the game will use, and what to do when they cannot run it
     void GpuStatus() {
-        std::string name = gpu_.name.empty() ? "This PC's graphics" : gpu_.name;
-        if (gpu_.d3d12 && gpu_.software) {
+        const Gpu& gpu = UsedGpu();
+        if (!settings_.gpu.empty() && &gpu == &auto_gpu_)
+            Status(kIconWarn, kAmber, settings_.gpu + "  -  not here with Direct3D 12, the game takes the fastest");
+        std::string name = gpu.name.empty() ? "This PC's graphics" : gpu.name;
+        if (gpu.d3d12 && gpu.software) {
             Status(kIconWarn, kAmber, name + "  -  Direct3D 12 on the processor only");
             Wrapped(g_small, kMuted, "No graphics driver is installed, so Windows draws on the processor, far too slowly "
                                      "for the game. Install the driver from NVIDIA, AMD or Intel.");
-        } else if (gpu_.d3d12) {
+        } else if (gpu.d3d12) {
             Status(kIconCheck, kGreen, name + "  -  Direct3D 12, ready");
         } else {
             Status(kIconWarn, kRed, name + "  -  no Direct3D 12");
@@ -1336,6 +1373,23 @@ private:
     void GraphicsPage() {
         PageTitle("Graphics", "Picture quality and shape.");
         BeginCard("gpu");
+        BeginSetting("Graphics card", "The one the game draws with, from its next start. Automatic takes the fastest: on "
+                                      "a laptop the dedicated GPU, not the one in the processor.", true);
+        {
+            std::vector<std::string> values{""};
+            std::vector<std::string> names{"Automatic"};  // which one, the line below says
+            for (const Gpu& g : gpus_)
+                if (g.d3d12 && std::find(values.begin(), values.end(), g.name) == values.end()) {
+                    values.push_back(g.name);
+                    names.push_back(g.name);
+                }
+            if (std::find(values.begin(), values.end(), settings_.gpu) == values.end()) {  // chosen, gone since
+                values.push_back(settings_.gpu);
+                names.push_back(settings_.gpu + "  (not found)");
+            }
+            Combo<std::string>("##gpu", settings_.gpu, values, names);
+        }
+        EndSetting();
         GpuStatus();
         EndCard();
         BeginCard("presets");
@@ -1579,7 +1633,8 @@ private:
 
     Settings settings_;
     Files files_;
-    Gpu gpu_;
+    std::vector<Gpu> gpus_;
+    Gpu auto_gpu_;
     Picture logo_, crest_;
     fs::path logo_file_;
     Import import_;

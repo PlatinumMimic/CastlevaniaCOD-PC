@@ -55,7 +55,8 @@ a graphics driver; see [Requirements](#requirements).
 `CastlevaniaLauncher.exe` checks your graphics (whether they have the Direct3D 12 the game draws with, as the game picks
 them: the high performance GPU first; `CV_NO_D3D12=1` shows the warning anywhere) and your game files (the USA
 `default.xbe` by its hash, or a disc image), adds a disc image to `assets` for you (a hard link on the same drive,
-otherwise a copy), and has every setting: display mode, resolution, v-sync, widescreen, render scale, anisotropic
+otherwise a copy), and has every setting: the graphics card (Automatic, the fastest, or any with Direct3D 12: on a
+laptop the one in the processor saves battery), display mode, resolution, v-sync, widescreen, render scale, anisotropic
 filtering with quick presets, the HD texture pack, FPS counter, pause on focus loss, the settings menu key and the
 button layout. Changes are saved as you make them; **Play** starts the game. Saves and logs are a click away. `--page
 controls` (or home, display, graphics, game, files) opens it on that page. It looks like the game's menus: navy with fog
@@ -237,6 +238,10 @@ Changes this game needed beyond the generated config:
   (`kImageCertificate`, beside `kImageSha1`); the game then plays the restored xbe. A disc image may also be a whole
   disc dump of either layout (the game partition at `0x18300000` on XGD1 discs, `0xFD90000` on XGD2). The launcher
   checks the same way, the xbe inside each disc image included, with the SDK's disc reader.
+- The graphics card: the SDK patch adds a `gpu` setting, a card's name as Windows has it
+  (`gpu = "Intel(R) Iris(R) Xe Graphics"`). The game draws with that one if it has Direct3D 12, else, as with none
+  named, with the fastest (`EnumAdapterByGpuPreference`), and the log says which. The launcher lists the cards that
+  can, the fastest first.
 - `src\common\menu.cpp`: the menu key's state is read every frame instead of waiting for its key messages, which an
   overlay or another program's hotkey can take first; the messages are still swallowed so F10 never puts the window
   in menu mode.
