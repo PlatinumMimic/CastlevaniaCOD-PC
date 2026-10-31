@@ -42,7 +42,8 @@ from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.or
 Visual C++ runtime comes with it, so a fresh Windows needs nothing else.
 
 The port's programs are not code-signed, so the first start of a download may bring up "Windows protected your PC":
-**More info**, then **Run anyway**.
+**More info**, then **Run anyway**. On a freshly installed Windows there is nothing to download besides the release and
+a graphics driver; see [Requirements](#requirements).
 
 - `CastlevaniaLauncher.exe` has every setting and checks your game files; `Castlevania.exe` skips it.
 - The game can run from the extracted files in `assets`, or from an ISO of the disc placed in `assets`.
@@ -126,17 +127,58 @@ The keyboard plays as player 1 while the window is in front:
 - **Boot Splash** - Place a `splash.png` (or `.bmp`) beside the exe to display a splash screen at launch.
 - **Crash Dumps** - Written to a `CrashDumps` folder beside the exe.
 
-## System Requirements
+## Requirements
 
-### Minimum
-- **OS**
-  - Windows 10 64-bit
-- **GPU** with support for Direct3D 12
+### To Play
+A release needs nothing installed on a fresh Windows but the graphics driver:
+
+- **Windows** 10 (version 1703 or later) or 11, 64-bit.
+- **GPU** with Direct3D 12 (feature level 11_0), and its driver.
+- **CPU** with SSE4.2 and POPCNT, as the game code is compiled for x86-64-v2: Intel since the first Core i (2008),
+  AMD since Bulldozer (2011).
+- **Disk**: about 0.2 GB for the release, and 0.2 GB more once the first start has built the game code (it wants
+  1 GB free to start; its ready page can delete the compiler folder afterwards), besides your game: 3.1 GB as a disc
+  image, 2.9 GB extracted.
+- **Your copy of the game**, the USA release (see [Required Game Version](#required-game-version)).
+- Optional: a controller (Xbox, PlayStation or Switch; the keyboard plays too), and an HD texture pack.
+
+Everything else comes in the zip or with Windows. The zip has the Visual C++ runtime (`msvcp140.dll`,
+`vcruntime140.dll`, `vcruntime140_1.dll`) and the recompiler, Clang and LLD the first start builds the game code
+with; Direct3D 12, the shader compiler (`d3dcompiler_47.dll`), XAudio2 and the C runtime (UCRT) are part of
+Windows 10 and 11. Playing needs no internet connection, the first start neither.
+
+### To Build
+On a fresh Windows, install:
+
+1. [Git for Windows](https://git-scm.com/download/win). CMake fetches the libraries below with it too.
+2. [Visual Studio](https://visualstudio.microsoft.com/) 2022 or newer (Community is free) with the workload
+   **Desktop development with C++** (the MSVC tools and the Windows SDK), and from Individual components
+   **C++ Clang tools for Windows** and **C++ CMake tools for Windows** (CMake and Ninja). `build.bat` offers to add
+   these two if they are missing.
+   Visual Studio's Clang is enough (19.1 builds and plays). [LLVM](https://github.com/llvm/llvm-project/releases) from
+   llvm.org (`winget install LLVM.LLVM`) is used instead when it is installed in `Program Files\LLVM` (23.1 tested).
+
+The first build also needs an internet connection: CMake downloads [SDL](https://github.com/libsdl-org/SDL) 3.4.16,
+[toml++](https://github.com/marzer/tomlplusplus) 3.4.0, [Dear ImGui](https://github.com/ocornut/imgui) 1.91.0,
+[Zydis](https://github.com/zyantific/zydis) 4.1.1 and [xxHash](https://github.com/Cyan4973/xxHash) 0.8.2. The build
+takes about 1 GB of disk (`out` and `generated`), besides the game's 2.9 GB in `assets`. Python is not needed to
+build or to make a release; an ISO is extracted with PowerShell, which Windows has.
+
+### To Test
+Only for the tests in `tools\cvtest` (see [Testing](#testing)):
+
+- [Python](https://www.python.org/downloads/) 3.8 or newer (tested with 3.14), with **Add python.exe to PATH**
+  ticked in its installer. The tests use its standard library alone.
+- For `--judge` and a step's `"ask"`: the [Codex CLI](https://github.com/openai/codex), signed in. For
+  `--judge=jev-latest`: a TypeSafe API key.
 
 ## Building
 
-### 1. Clone the Repositories
-Clone this repository and the SDK beside it with [Git](https://git-scm.com/), then apply this port's SDK patch:
+### 1. Install the Tools
+See [To Build](#to-build).
+
+### 2. Clone the Repositories
+Clone this repository and the SDK beside it, then apply this port's SDK patch:
 
 ```
 git clone https://github.com/Pazzi7054/CastlevaniaCOD-PC
@@ -145,14 +187,10 @@ git -C XboxXBE-Recomp checkout 91146ff
 git -C XboxXBE-Recomp apply ..\CastlevaniaCOD-PC\sdk-patches\xboxxbe-recomp.patch
 ```
 
-### 2. Add the Required Game Files
+### 3. Add the Required Game Files
 Put your disc image (`.iso`) in the `assets` folder, or the extracted disc: `default.xbe` with the `data`, `movie` and
 `sound` folders beside it. With only a disc image there, `build.bat` first extracts its files into `assets`
 (`tools\extract_iso.ps1`, a minute or less), as the build reads `default.xbe`.
-
-### 3. Install Dependencies
-Install Visual Studio 2022 or newer with **Desktop development with C++** and **C++ CMake tools for Windows**, and
-Clang (**C++ Clang tools for Windows**, or `winget install LLVM.LLVM`).
 
 ### 4. Build the Project
 Run `build.bat`. The first build recompiles the game and takes a while. `Castlevania.exe` and
