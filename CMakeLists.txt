@@ -63,7 +63,7 @@ target_include_directories(CastlevaniaLauncher PRIVATE ${XBE_SDK_DIR}/runtime)
 target_include_directories(CastlevaniaLauncher SYSTEM PRIVATE ${imgui_SOURCE_DIR})
 target_compile_definitions(CastlevaniaLauncher PRIVATE UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall)  # Dear ImGui's own sources
-target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32
+target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 d3d12 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32
                       ole32 windowscodecs)
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 add_dependencies(Castlevania CastlevaniaLauncher)

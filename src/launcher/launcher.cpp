@@ -14,7 +14,9 @@
 #include <bcrypt.h>
 #include <commdlg.h>
 #include <d3d11.h>
+#include <d3d12.h>
 #include <dwmapi.h>
+#include <dxgi1_6.h>
 #include <shellapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -149,6 +151,41 @@ std::string Utf8(const std::wstring& w) {
 }
 
 void Open(const fs::path& p) { ShellExecuteW(nullptr, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
+
+// The graphics the game will draw with, as the SDK picks them (runtime/gpu/d3d12.cpp): the high performance GPU, else
+// the default one, with Direct3D 12 at feature level 11_0. Windows 10 and 11 all have Direct3D 12, but only graphics
+// with a driver for it run it. CV_NO_D3D12=1 pretends there is none, to see the launcher's warning.
+struct Gpu {
+    std::string name;
+    bool d3d12 = false;
+    bool software = false;  // Windows' own renderer on the CPU, no graphics driver installed
+};
+
+Gpu CheckGpu() {
+    Gpu g;
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> f6;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return g;
+    if (SUCCEEDED(factory.As(&f6))) f6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter));
+    bool none = GetEnvironmentVariableW(L"CV_NO_D3D12", nullptr, 0) != 0;
+    auto runs = [&](IDXGIAdapter1* a) {  // a null device: only whether one would be made
+        return !none && SUCCEEDED(D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr));
+    };
+    g.d3d12 = runs(adapter.Get());
+    if (!g.d3d12) {  // the game's second try, the default adapter
+        g.d3d12 = runs(nullptr);
+        adapter.Reset();
+        factory->EnumAdapters1(0, &adapter);
+    }
+    if (adapter) {
+        DXGI_ADAPTER_DESC1 d{};
+        adapter->GetDesc1(&d);
+        g.name = Utf8(d.Description);
+        g.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+    }
+    return g;
+}
 
 // the game's check: the xbe the exe was made from, or that with the certificate's title, media and region patched
 enum class Release { Missing, Match, Patched, Other };
@@ -1038,6 +1075,7 @@ public:
         settings_.Load();
         saved_ = Snapshot();
         files_.Scan();
+        gpu_ = CheckGpu();
         modes_ = Resolutions();
         LoadArt();
     }
@@ -1204,10 +1242,16 @@ private:
         // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
         ImVec2 end = ImGui::GetItemRectMax();
         ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
-        if (ready) Status(kIconCheck, kGreen, "Ready to play");
+        if (!gpu_.d3d12) Status(kIconWarn, kRed, "No Direct3D 12");
+        else if (ready) Status(kIconCheck, kGreen, "Ready to play");
         else if (!files_.exe) Status(kIconWarn, kRed, "Castlevania.exe is missing");
         else Status(kIconWarn, kAmber, "Game files needed");
         ImGui::SetCursorScreenPos(a + ImVec2(0, h + S(20)));
+        if (!gpu_.d3d12) {
+            BeginCard("gpu");
+            GpuStatus();
+            EndCard();
+        }
 
         // what is set, at a glance; each opens its page
         Label("CURRENT SETUP");
@@ -1242,6 +1286,24 @@ private:
         return keep;
     }
 
+    // the graphics the game will use, and what to do when they cannot run it
+    void GpuStatus() {
+        std::string name = gpu_.name.empty() ? "This PC's graphics" : gpu_.name;
+        if (gpu_.d3d12 && gpu_.software) {
+            Status(kIconWarn, kAmber, name + "  -  Direct3D 12 on the processor only");
+            Wrapped(g_small, kMuted, "No graphics driver is installed, so Windows draws on the processor, far too slowly "
+                                     "for the game. Install the driver from NVIDIA, AMD or Intel.");
+        } else if (gpu_.d3d12) {
+            Status(kIconCheck, kGreen, name + "  -  Direct3D 12, ready");
+        } else {
+            Status(kIconWarn, kRed, name + "  -  no Direct3D 12");
+            Wrapped(g_small, kMuted, "The game draws with Direct3D 12, which every Windows 10 and 11 has, but only "
+                                     "graphics with a driver for it can run. Install the newest driver from NVIDIA, AMD "
+                                     "or Intel. Graphics older than NVIDIA's GeForce 600 series, AMD's Radeon HD 7700 or "
+                                     "Intel's HD 4200 (2012 and 2013) have none, and the game cannot start on them.");
+        }
+    }
+
     void DisplayPage() {
         PageTitle("Display", "How the game window fills your screen.");
         BeginCard("display");
@@ -1273,6 +1335,9 @@ private:
 
     void GraphicsPage() {
         PageTitle("Graphics", "Picture quality and shape.");
+        BeginCard("gpu");
+        GpuStatus();
+        EndCard();
         BeginCard("presets");
         BeginSetting("Quality preset", "Sets render scale and texture filtering together.", true);
         int preset = settings_.render_percent == 75 && settings_.aniso == 0      ? 0
@@ -1514,6 +1579,7 @@ private:
 
     Settings settings_;
     Files files_;
+    Gpu gpu_;
     Picture logo_, crest_;
     fs::path logo_file_;
     Import import_;

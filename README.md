@@ -52,7 +52,7 @@ a graphics driver; see [Requirements](#requirements).
 ## Features
 
 ### Launcher
-`CastlevaniaLauncher.exe` checks your game files (the USA `default.xbe` by its hash, or a disc image), adds a disc
+`CastlevaniaLauncher.exe` checks your graphics (whether they have the Direct3D 12 the game draws with, as the game picks them: the high performance GPU first; `CV_NO_D3D12=1` shows the warning anywhere) and your game files (the USA `default.xbe` by its hash, or a disc image), adds a disc
 image to `assets` for you (a hard link on the same drive, otherwise a copy), and has every setting: display mode,
 resolution, v-sync, widescreen, render scale, anisotropic filtering with quick presets, the HD texture pack, FPS
 counter, pause on focus loss, the settings menu key and the button layout. Changes are saved as you make them;
