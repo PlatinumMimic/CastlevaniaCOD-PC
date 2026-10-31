@@ -204,7 +204,9 @@ Changes this game needed beyond the generated config:
     in pieces; the pieces at the frame's edges have those edges pulled out to the screen's (a vertex on the edge is
     not squeezed), unless the 3D world (1000 vertices of it) or a 4:3 picture over the whole frame came first: the
     title's logo is in pieces at the edges, over its castle. `CV_WIDE_TRACE=<n>` logs every draw into the back buffer
-    of one frame in n, where it lands and what was made of it.
+    of one frame in n, where it lands and what was made of it. Only draws into the device's back buffer are squeezed:
+    the game composes an area's name card in another 640x480 target and copies it out to a texture, and squeezed
+    there the card lost its left end.
   - Overscan. The last pass of each frame draws a copy of the frame back with its rows -16 to 496 over rows 0 to 480
     (PS2 448 lines plus border shrunk into the NTSC frame); the 16 rows past each edge clamped into streaks. The pass
     is drawn that much taller, so the copy fills the frame row for row.

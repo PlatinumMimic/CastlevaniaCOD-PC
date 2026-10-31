@@ -113,10 +113,14 @@ public:
         }
     }
 
-    bool Bound(gpu::Context& c, const gpu::State&, gpu::Target* rt, gpu::Target*, bool) override {
+    bool Bound(gpu::Context& c, const gpu::State& s, gpu::Target* rt, gpu::Target*, bool) override {
         uint32_t w = 0, h = 0;
         c.GuestSize(w, h);
-        back_buffer_ = rt && rt->gw == w && rt->gh == h;
+        // the device's own: the game also composes in a target the size of it and copies pieces out (the name card
+        // of an area: CopyRects from 640x480 to its texture), which a squeeze there would cut at the left
+        back_buffer_ = rt && s.rt_back_buffer && rt->gw == w && rt->gh == h;
+        trace_rt_ = rt ? rt->data : 0;
+        trace_device_ = s.rt_back_buffer;
         if (c.Presents() != frame_) {  // the frame's first draw
             frame_ = c.Presents();
             world_ = 0;
@@ -154,13 +158,15 @@ public:
         ext[0] = squeeze ? kSqueeze : 1.0f;
         ext[1] = back_buffer_ && d_.target ? d_.stretch : 1.0f;
         ext[2] = edges ? 1.0f : 0.0f;
-        // CV_WIDE_TRACE=<n>: every draw into the back buffer, a frame in n
-        if (kTrace && frame_ % kTrace == 0 && back_buffer_ && d_.world)
-            LOGR("wide %llu: 3D, n %u", (unsigned long long)frame_, d_.count);
-        else if (kTrace && frame_ % kTrace == 0 && back_buffer_ && d_.squeeze)
-            LOGR("wide %llu: n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x u %g..%g%s blend %u: %s%s",
-                 (unsigned long long)frame_, d_.count, d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height,
-                 d_.tex.data, d_.u.lo, d_.u.hi, d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
+        // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
+        if (kTrace && frame_ % kTrace == 0 && d_.world)
+            LOGR("wide %llu: into %08x%s 3D, n %u", (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "",
+                 d_.count);
+        else if (kTrace && frame_ % kTrace == 0 && d_.squeeze)
+            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x u %g..%g%s blend %u: %s%s",
+                 (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
+                 d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, d_.u.lo, d_.u.hi,
+                 d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
                  edges ? "edges out" : squeeze ? "squeezed" : "kept");
     }
 
@@ -215,6 +221,8 @@ private:
     // picture over the whole frame
     static constexpr uint32_t kWorld = 1000;
     uint64_t frame_ = ~0ull;
+    uint32_t trace_rt_ = 0;  // the target's address, for the trace
+    bool trace_device_ = false;
     uint32_t world_ = 0;
     bool picture_ = false;
     Hooks hooks_;
