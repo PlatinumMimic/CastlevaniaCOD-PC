@@ -23,6 +23,9 @@
 //   0:walk=<x>/<z>[/<r>]:<hold>       the bot (bot.cpp) walks him there; fight[=<r>] fights the enemies near
 //                                     him. The command ends once its goals are done, or at the hold at most
 //   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
+//   0:set=<setting>=<value>           a setting changed at the command's start, as the in-game menu changes it
+//                                     (render_percent, anisotropic_filtering, widescreen, vsync, or a game option
+//                                     such as texture_pack): the renderer takes it after the frame it presents
 //   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
@@ -41,7 +44,9 @@
 #include <string>
 #include <vector>
 
+#include "app/app.h"
 #include "core/input.h"
+#include "core/log.h"
 #include "kernel/memory.h"
 #include "xdk/d3d8.h"
 
@@ -119,6 +124,7 @@ struct Step {
     bool goal = false, heal = false;    // walk=, fight (bot.cpp) and heal, live commands too
     BotGoal bot{};
     float guard = 0;  // guard=<r>, for the bot's walks
+    std::string set;  // set=<setting>=<value>
 };
 
 // "-0.5/1" as a stick: x and y from -1 to 1
@@ -176,6 +182,7 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b.rfind("rs=", 0) == 0) Stick(b.substr(3), s.rx, s.ry);
             else if (b == "heal") s.heal = true;
             else if (b.rfind("guard=", 0) == 0) s.guard = float(std::atof(b.c_str() + 6));
+            else if (b.rfind("set=", 0) == 0) s.set = b.substr(4);
             else if (b.rfind("walk=", 0) == 0) {
                 s.goal = true;
                 s.bot = {false, 0, 0, 150};
@@ -189,6 +196,31 @@ std::vector<Step> ParseScript(std::string text) {
         steps.push_back(s);
     }
     return steps;
+}
+
+// set=<setting>=<value>: the setting's field changed as menu.cpp changes it, nothing saved
+void ApplySetting(const std::string& entry) {
+    size_t eq = entry.find('=');
+    if (eq == std::string::npos) return;
+    std::string key = entry.substr(0, eq), value = entry.substr(eq + 1);
+    uint32_t n = uint32_t(std::strtoul(value.c_str(), nullptr, 10));
+    bool on = value == "true" || value == "1";
+    app::Settings& st = app::Get();
+    if (key == "render_percent") st.render_percent = n;
+    else if (key == "anisotropic_filtering") st.aniso = n;
+    else if (key == "widescreen") st.widescreen = on;
+    else if (key == "vsync") st.vsync = on;
+    else {
+        auto it = std::find_if(app::kGame.options.begin(), app::kGame.options.end(),
+                               [&](const app::Option& o) { return key == o.key; });
+        if (it == app::kGame.options.end()) {
+            LOGR("live: no setting %s", key.c_str());
+            return;
+        }
+        if (it->flag) *it->flag = on;
+        else *it->value = n;
+    }
+    LOGR("live: %s = %s", key.c_str(), value.c_str());
 }
 
 const std::vector<Step>& Script() {
@@ -318,6 +350,7 @@ void LiveWait() {
             for (const Step& s : l.steps) {
                 if (s.map >= 0) RequestWarp(s.map, s.room, s.entry);
                 if (s.heal) HealPlayer();
+                if (!s.set.empty()) ApplySetting(s.set);
                 if (s.goal) goals.push_back(s.bot);
                 guard = (std::max)(guard, s.guard);
             }

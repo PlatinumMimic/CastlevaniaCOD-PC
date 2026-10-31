@@ -45,6 +45,9 @@ and may have
   "expect": ["<expression>", ...]         each must hold after the step
   "shot": "<name>"                        keeps the screenshot as <name>.png
   "save_as": "<name>"                     keeps the game's saves (hdd) for a later scenario's "save"
+  "measure": {"<name>": [x0, y0, x1, y1]} the edge strength (sharpness) of those parts of the screenshot, as
+                                          fractions of the window: screen.edges.<name>, the mean brightness step
+                                          between neighbouring pixels (render scale and texture filtering move it)
   "ask": {"question": "...",              asks a Codex model (judge.py, gpt-6-luna) about the screenshot:
           "choices": {"<name>": "...", ...}}   screen.ask.answer is the choice's name, screen.ask.why its reason
   "note": "..."                           shown in the report
@@ -52,7 +55,8 @@ Expressions are Python over the game state (src/common/telemetry.cpp) after the 
 player.active, player.pos (x, y, z), player.yaw, player.hp, camera.heading, menu, modal, ...; prev is the state
 before the step, screen has mean, std and flat (one colour) and, with a judge, judge.scene, judge.defect,
 judge.hector and judge.by (the model; judge.first has Jev's answers a review replaced), step has fps, seconds and
-saved (the game wrote a save during it), settings the run's settings (--set changes them). A field the game did
+saved (the game wrote a save during it), settings the run's settings (--set changes them), shots["<shot>"] the
+screen of an earlier step with that shot (shots["a"].edges.floor < screen.edges.floor). A field the game did
 not report is None.
 
 Each step also fails when the game exits, a command does not finish in time, or the log has a new error or guest
@@ -189,6 +193,29 @@ def screen_stats(w, h, bgra):
     return {"mean": round(mean, 1), "std": round(std, 1), "flat": std < 3}
 
 
+def edges(w, h, bgra, box):
+    """the mean brightness step between neighbouring pixels in box (fractions of the window), right and down; rows
+    skipped over a large box, to keep under about 100,000 pixels"""
+    x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w - 1, x1), min(h - 1, y1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    every = max(1, (x1 - x0) * (y1 - y0) // 100000)
+
+    def lum(x, y):
+        i = (y * w + x) * 4
+        return bgra[i + 2] * 299 + bgra[i + 1] * 587 + bgra[i] * 114
+
+    total = count = 0
+    for y in range(y0, y1, every):
+        row = [lum(x, y) for x in range(x0, x1 + 1)]
+        below = [lum(x, y + 1) for x in range(x0, x1)]
+        for x in range(x1 - x0):
+            total += abs(row[x + 1] - row[x]) + abs(below[x] - row[x])
+            count += 2
+    return round(total / count / 1000, 2)
+
+
 # --- expressions over the state ---------------------------------------------------------------------------------
 
 class View:
@@ -213,10 +240,11 @@ def view(v):
     return v
 
 
-def holds(expr, state, prev, screen, step, settings=None):
+def holds(expr, state, prev, screen, step, settings=None, shots=None):
     names = {k: view(v) for k, v in (state or {}).items()}
-    names.update(prev=View(prev), screen=View(screen), step=View(step), settings=View(settings), abs=abs, min=min,
-                 max=max, round=round, len=len, any=any, all=all)
+    names.update(prev=View(prev), screen=View(screen), step=View(step), settings=View(settings),
+                 shots={k: View(v) for k, v in (shots or {}).items()}, abs=abs, min=min, max=max, round=round, len=len,
+                 any=any, all=all)
     try:
         return bool(eval(expr, {"__builtins__": {}}, names)), None
     except Exception as e:  # a field the game did not report, usually
@@ -804,6 +832,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
         results.append(r)
         failed |= not r["ok"]
     places = {}  # sweep: where each room put Hector and the camera
+    screens = {}  # each shot's screen, for later steps' shots["<shot>"]
     judge_model, review = scenario.get("judge"), None
     if judge_model or any("ask" in st for st in scenario["steps"]):
         sys.path.insert(0, str(Path(__file__).resolve().parent))  # judge.py beside this (python -I leaves it off)
@@ -858,6 +887,8 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                 img = capture(game.hwnd)
                 if img:
                     screen = screen_stats(*img)
+                    if step.get("measure"):
+                        screen["edges"] = {k: edges(*img, box) for k, box in step["measure"].items()}
                     shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
                     write_png(shot, *img)
                     if judge_model and step.get("judge", True):
@@ -888,10 +919,12 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                         r["warnings"].append(f"review: {e}")
                         seen = judge_warnings(screen["judge"], state, screen)
                 for expr in step.get("expect", []):
-                    ok, why = holds(expr, state, prev, screen, info, settings)
+                    ok, why = holds(expr, state, prev, screen, info, settings, screens)
                     if not ok:
                         r["errors"].append(f"expect {expr!r} failed" + (f" ({why})" if why else ""))
                 r.update(state=state, screen=screen, **info)
+                if step.get("shot"):
+                    screens[step["shot"]] = screen
                 if screen.get("flat"):
                     r["warnings"].append(f"screen is one colour (mean {screen['mean']})")
                 r["warnings"] += seen

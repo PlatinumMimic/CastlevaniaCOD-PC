@@ -302,6 +302,11 @@ Changes this game needed beyond the generated config:
 - `widescreen.json` keeps the screens widescreen reaches the sides of: the pause menu, the map, and with a route
   step's `"box_shots": true` each box on the first-save recording (the save point's, and the Memorial Ticket's
   dimmed panel when the first enemy drops it).
+- `filters.json` checks that render scale and anisotropic filtering change the picture. Hector stands in the courtyard
+  while each is changed live, as the in-game menu changes it (the live entry `set=<setting>=<value>`), and a step's
+  `"measure"` takes the edge strength of parts of the view (`screen.edges.<name>`; `shots["<shot>"]` has an earlier
+  step's screen). 50% takes a third or more of it away, 200% and 16x filtering add a sixth to a fifth, with the HD
+  pack and without it; two shots with the same settings differ by up to 4%.
 - `moai.json` walks a recording (`routes/moai.json`) to the far end of 5.0 and asks whether the Moai floats there and
   what the pickup's notice says: the Moai with `--set lament_save=true`, nothing without it.
 - `python -I tools\cvtest\install.py out\release\CastlevaniaCOD-PC-1.0.0.zip <your .iso, or an extracted disc>`

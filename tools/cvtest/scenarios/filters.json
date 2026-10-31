@@ -1,0 +1,30 @@
+{
+  "name": "filters",
+  "after": "newgame.json",
+  "note": "Render scale and anisotropic filtering change the picture: Hector stands in the courtyard while each setting is changed live, as the in-game menu changes it (set=), and the edge strength of three parts of the view is measured. On 2026-10-31 50% took a third to two fifths of it away, 200% added a fifth, 16x filtering a sixth to a fifth on the carvings and the floor, with the HD pack and without it (the pack has no pictures for those, they are the game's own textures). Two shots in a row with the same settings differ by up to 4% (the fire light flickers on the floor). The railing is measured below the HUD, which hides after a few seconds of standing.",
+  "settings": {"width": 1600, "height": 900},
+  "steps": [
+    {"press": "0f:wait:90f", "shot": "base", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]}},
+    {"press": "0f:wait:40f", "shot": "again", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]},
+     "note": "the same settings: the same picture",
+     "expect": ["abs(screen.edges.floor / shots['base'].edges.floor - 1) < 0.06",
+                "abs(screen.edges.carving / shots['base'].edges.carving - 1) < 0.06"]},
+    {"press": "0:set=render_percent=50,0f:wait:40f", "shot": "scale-50", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]},
+     "expect": ["screen.edges.rail < shots['base'].edges.rail * 0.85",
+                "screen.edges.carving < shots['base'].edges.carving * 0.85",
+                "screen.edges.floor < shots['base'].edges.floor * 0.85"]},
+    {"press": "0:set=render_percent=200,0f:wait:40f", "shot": "scale-200", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]},
+     "expect": ["screen.edges.carving > shots['base'].edges.carving * 1.1",
+                "screen.edges.floor > shots['base'].edges.floor * 1.1"]},
+    {"press": "0:set=render_percent=100,0:set=anisotropic_filtering=16,0f:wait:40f", "shot": "aniso-16", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]},
+     "expect": ["screen.edges.carving > shots['base'].edges.carving * 1.08",
+                "screen.edges.floor > shots['base'].edges.floor * 1.08"]},
+    {"press": "0:set=anisotropic_filtering=0,0:set=texture_pack=false,0f:wait:90f", "shot": "no-pack", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]}},
+    {"press": "0:set=anisotropic_filtering=16,0f:wait:40f", "shot": "no-pack-aniso-16", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]},
+     "note": "the game's own textures, without the pack",
+     "expect": ["screen.edges.carving > shots['no-pack'].edges.carving * 1.08",
+                "screen.edges.floor > shots['no-pack'].edges.floor * 1.08"]},
+    {"press": "0:set=anisotropic_filtering=0,0:set=render_percent=50,0f:wait:40f", "shot": "no-pack-scale-50", "measure": {"rail": [0.24, 0.13, 0.49, 0.2], "carving": [0, 0.26, 0.375, 0.44], "floor": [0, 0.71, 0.4, 0.85]},
+     "expect": ["screen.edges.floor < shots['no-pack'].edges.floor * 0.85"]}
+  ]
+}
