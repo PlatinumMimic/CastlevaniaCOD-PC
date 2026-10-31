@@ -11,6 +11,8 @@
 #include "app/app.h"
 #include "cpu/x86_ops.h"
 
+extern bool g_lament_save;  // menu.cpp
+
 namespace {
 
 constexpr float kWiden = (4.0f / 3.0f) / (16.0f / 9.0f);
@@ -35,4 +37,14 @@ X86_FUNC(sub_00012CD0) {
     Scale(base, 0x012FC5C0, kWiden);  // view clip matrix, x scale
     Scale(base, 0x012FC640, kWiden);  // its x scale as a vector
     Scale(base, 0x012FC660, kWiden);  // the projection's x scale as a vector
+}
+
+// The Lament of Innocence bonus. The PS2 game looked on the memory card for a Lament of Innocence save (BASLUS-20733,
+// its name still in the image, sub_0033D590) and, finding one, set flag 0x4002, which a game copies into its own flag
+// 0x30008006 (sub_00321860). This is that flag's one reader: a room event (sub_001425E0) that puts a Moai at the far
+// end of 5.0, left of the potion there. The Xbox has no PS2 memory card, so the setting answers for it.
+X86_EXTERN_FUNC(__imp__sub_0033E1D0);
+X86_FUNC(sub_0033E1D0) {
+    __imp__sub_0033E1D0(ctx, base);
+    if (g_lament_save) ctx.eax = 1;
 }

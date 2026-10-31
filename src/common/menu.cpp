@@ -25,6 +25,7 @@ bool g_fps_counter = false;
 bool g_pause_on_focus_loss = true;
 uint32_t g_menu_key = VK_F10;  // virtual key that opens the menu
 bool g_launcher_keep_open = false;  // the launcher's, kept when the game writes the file
+bool g_lament_save = false;  // as with a Lament of Innocence save on the PS2's memory card (hooks.cpp)
 extern uint32_t g_button_layout;    // texpack.cpp
 
 namespace {
@@ -153,6 +154,9 @@ void GameTab(bool& save) {
     save |= ImGui::Checkbox("##fpsc", &g_fps_counter);
     Row("Pause on focus loss", "Stops the game while another window is in front.");
     save |= ImGui::Checkbox("##pause", &g_pause_on_focus_loss);
+    Row("Lament of Innocence save", "As the PS2 game with a Lament of Innocence save on the memory card: a Moai "
+                                    "at the far end of the room behind the first courtyard, beside the potion.");
+    save |= ImGui::Checkbox("##lament", &g_lament_save);
     ImGui::EndTable();
 }
 
@@ -198,6 +202,7 @@ void Defaults() {
     g_fps_counter = false;
     g_pause_on_focus_loss = true;
     g_button_layout = 0;
+    g_lament_save = false;
     app::ApplyDisplay();
 }
 

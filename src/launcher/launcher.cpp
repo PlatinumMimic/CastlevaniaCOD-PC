@@ -259,6 +259,7 @@ struct Settings {
     bool texture_pack = true;
     uint32_t texture_pack_size = 2048;  // 0 full size
     uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
+    bool lament_save = false;           // the Moai of a Lament of Innocence save (hooks.cpp)
     toml::table rest;
 
     fs::path File() const { return ExeDir() / kSettings; }
@@ -283,6 +284,7 @@ struct Settings {
         texture_pack = rest["texture_pack"].value_or(texture_pack);
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
         button_layout = rest["button_layout"].value_or(button_layout);
+        lament_save = rest["lament_save"].value_or(lament_save);
     }
 
     bool Save() {
@@ -300,6 +302,7 @@ struct Settings {
         rest.insert_or_assign("texture_pack", texture_pack);
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
         rest.insert_or_assign("button_layout", int64_t(button_layout));
+        rest.insert_or_assign("lament_save", lament_save);
         std::ofstream f(File());
         f << rest << "\n";
         return bool(f);
@@ -1054,7 +1057,8 @@ private:
                std::to_string(s.render_percent) + "|" + std::to_string(s.aniso) + "|" + std::to_string(s.vsync) +
                std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
-               std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout);
+               std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout) +
+               std::to_string(s.lament_save);
     }
 
     void AutoSave() {
@@ -1295,6 +1299,11 @@ private:
         EndSetting();
         BeginSetting("Pause on focus loss", "Stops the game while another window is in front.");
         ToggleRight("pause", settings_.pause_on_focus_loss);
+        EndSetting();
+        BeginSetting("Lament of Innocence save", "As the PS2 game with a Lament of Innocence save on the memory "
+                                                 "card: a Moai at the far end of the room behind the first "
+                                                 "courtyard, beside the potion, for the item list.");
+        ToggleRight("lament", settings_.lament_save);
         EndSetting();
         BeginSetting("Settings menu key", "Opens the in-game settings. Pick another if F10 does nothing on your keyboard "
                                           "(laptops often need Fn for it). L3 + R3 on a controller always works.");

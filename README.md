@@ -88,6 +88,9 @@ pictures are not used yet.
 ### General
 - **FPS Counter** - Optional, in the corner.
 - **Pause on Focus Loss** - The game stops while another window is in front (on by default).
+- **Lament of Innocence Save** - As the PS2 game did when it found a Lament of Innocence save on the memory card:
+  a Moai to pick up at the far end of the room behind the first courtyard, beside the potion, for completing the
+  item list (the launcher's or the in-game menu's Game page; `lament_save = true`).
 
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
@@ -236,6 +239,8 @@ Changes this game needed beyond the generated config:
 - `widescreen.json` keeps the screens widescreen reaches the sides of: the pause menu, the map, and with a route
   step's `"box_shots": true` each box on the first-save recording (the save point's, and the Memorial Ticket's
   dimmed panel when the first enemy drops it).
+- `moai.json` walks a recording (`routes/moai.json`) to the far end of 5.0 and asks whether the Moai floats there and
+  what the pickup's notice says: the Moai with `--set lament_save=true`, nothing without it.
 - `tools\run_test.ps1 -Name x -At 10,20 -Env "CV_PAD_SCRIPT=@tools\scripts\newgame.txt"` runs the game, screenshots
   it at the given seconds into `tools\shots`, and closes it. It copies the screen, so keep the game window in front;
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.
