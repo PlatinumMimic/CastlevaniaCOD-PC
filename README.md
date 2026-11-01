@@ -3,11 +3,57 @@
 An unofficial native PC port of the original Xbox version of Castlevania: Curse of Darkness, statically recompiled
 into a 64 bit Windows executable. Rendering runs on Direct3D 12 and sound on XAudio2.
 
-This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) tool.
+This is a personal, non-commercial fan project. It has nothing to do with Konami, Microsoft or any other company: it
+is not affiliated with, endorsed or sponsored by them, and it is not an official release. See [Legal](#legal).
 
 > [!IMPORTANT]
-> This project does not include any game assets or game code. You must provide the files from your own legally
-> acquired copy of the game. See [Legal](#legal).
+> **You need your own copy of the game.** This project does not include, and will not provide, the game: no `.iso`
+> of the disc, none of its files and none of its code. The port plays from an `.iso` (or the extracted files) of
+> your own USA Xbox disc; see [Required Game Version](#required-game-version).
+
+## Where This Comes From
+
+This repository is a fork of [CastlevaniaCOD-PC](https://github.com/Pazzi7054/CastlevaniaCOD-PC) by Pazzi7054, the
+port that took the Xbox game from boot to gameplay on PC, with its launcher, settings menu, widescreen, any
+resolution and PCSX2 texture packs. It is built on, and was inspired by:
+
+- [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482: the static recompiler and runtime that turn
+  the Xbox executable into native x86-64 code, with the game's Direct3D 8 drawn on Direct3D 12 and its DirectSound
+  played on XAudio2.
+- [Castlevania-COD-Recomp](https://github.com/Neguchads/Castlevania-COD-Recomp) by Neguchads, another port of the same
+  game. Its findings are used here, credited where used: why Hector's shadow went missing, and where the game keeps
+  the camera, the maps, the rooms and the enemies.
+- [PCSX2](https://pcsx2.net), the PS2 emulator, whose names for replacement textures the HD packs use, so packs made
+  for the PS2 game work here as they are.
+
+Every project used is listed under [Credits](#credits).
+
+## What This Fork Adds
+
+On top of Pazzi7054's port:
+
+- **Plays from any copy of the USA disc** - an `.iso` (an xiso, or a whole disc dump of either disc layout) or the
+  extracted files. Copies whose xbe header was patched for a hard disk loader or another region play too, and the
+  launcher tells which of your copies will.
+- **Hector's shadow** - drawn by the Xbox with 4X multisampling, it is back under his feet.
+- **Widescreen menus** - the pause menu, the map, the save screens and the panels behind messages fill a 16:9
+  screen, and an area's name card keeps its left end.
+- **HD texture packs** - `.dds` packs as well as `.png`; eight Xbox textures the PS2 packs know under other names are
+  found (with Panda_Venom and Stan21's pack, 96.8% of what the game draws gets an HD picture); cut-out pictures keep
+  clean edges at every distance; a tool makes HD pictures for the textures a pack lacks; and the launcher shows
+  whether you have a pack, with a switch for it.
+- **No stutter the first time an effect is drawn** - compiled shaders are kept on disk between sessions.
+- **Anisotropic filtering without a pack** - it sharpens the game's own textures too.
+- **PS2 button layout** - the PS2's button icons (from a PS2 HD pack) and shoulder buttons, as an option.
+- **Lament of Innocence bonus** - the Moai the PS2 game gave for a Lament of Innocence save, as an option.
+- **Launcher** - in the game's own look, with the title logo from your HD pack. It chooses the graphics card and says
+  whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
+- **Program icon** - the game's crest, made from your copy when you build.
+- **Newer recompiler** - Xbox XBE Recomp moved up to its commit `91146ff`, this fork's changes kept as a patch.
+- **Requirements written out** - what a PC needs to play, down to which graphics can run it.
+- **Automated tests** - a runner that plays scenarios and checks the game state, warps to any room and sweeps every
+  room; a bot that replays routes recorded from real play and wins the fights on them; per-room timings; an AI judge
+  of screenshots; and a test that installs a release as a player would. See [Testing](#testing).
 
 ## Required Game Version
 
@@ -29,19 +75,14 @@ reads the xbe inside a disc image too.
 
 ## Installation
 
-1. Download the latest release from [Releases](https://github.com/Pazzi7054/CastlevaniaCOD-PC/releases) and extract it
+1. Download the latest release from [Releases](https://github.com/jmafort/CastlevaniaCOD-PC/releases) and extract it
    anywhere.
 2. Run `Castlevania.exe`. The `assets` folder opens.
-3. Put your game in it: the disc image (`.iso`, a whole disc dump or an xiso), or the extracted disc (`default.xbe`
-   with its `data`, `movie` and `sound` folders).
+3. Put your game in it: an `.iso` of your own disc (a whole disc dump or an xiso), or the extracted disc
+   (`default.xbe` with its `data`, `movie` and `sound` folders). This project does not provide it.
 4. Run `Castlevania.exe` again. The first start builds the game code from your copy, which takes a few minutes and
    shows its progress; press **Start** when it is done. After that the game starts straight away.
-5. Optional, HD textures: the game plays as it is, with its own textures. For sharper ones, get a texture pack made
-   for the PS2 game in PCSX2 (the Panda Venom & Stan21 pack, for one) and copy its pictures into a `textures` folder
-   beside `Castlevania.exe`, the pack's own folders and all (`textures\SLUS-21168\replacements\...` is fine). The
-   launcher's **Open textures folder** makes that folder. Keep one pack in it at a time. The launcher's home page then
-   says how many pictures it found, and its switch turns the pack on or off from the next start. See
-   [HD Texture Packs](#hd-texture-packs).
+5. Optional: an HD texture pack, see [HD Textures](#hd-textures). The game plays as it is without one.
 
 A release contains no game code. `Castlevania.exe` holds the runtime, and the first start makes `Castlevania.dll`
 from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder. The
@@ -54,6 +95,31 @@ a graphics driver; see [Requirements](#requirements).
 - `CastlevaniaLauncher.exe` has every setting and checks your game files; `Castlevania.exe` skips it.
 - The game can run from the extracted files in `assets`, or from an ISO of the disc placed in `assets`.
 - Recomp settings can be adjusted in `castlevania.toml` beside the exe. Saves go to `hdd\E\UDATA\4b4e002d`.
+
+## HD Textures
+
+Optional. Without a pack the game draws its own textures, as on the Xbox. The Xbox release kept the PS2 game's
+textures, so HD texture packs fans made for the PS2 game in PCSX2 work here as they are. These packs are their
+makers' work: they are not part of this project, and are linked here with thanks.
+
+| Pack | Made by | Notes |
+|---|---|---|
+| [Castlevania - Curse of Darkness (USA) HD Remaster](https://gbatemp.net/threads/castlevania-curse-of-darkness-usa-hd-remaster.619688/) | Panda_Venom and Stan21 | On GBAtemp. The pack this port was tested with: 96.8% of what the game draws gets an HD picture. |
+| [VK Curse of Darkness](https://drive.usercontent.google.com/download?id=1rEeBsGLc93pQerT_7j-MwzT-otxhGZl-&authuser=0) | VictorKratos | On Google Drive, a 15 GB `.rar`. |
+| [Castlevania PS2 4K Texture Packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs) | PlatinumMimic (Calm-Consideration41) | Free, on Buy Me a Coffee; Curse of Darkness and Lament of Innocence. |
+
+To add one:
+
+1. Download a pack and extract it.
+2. Copy its pictures into a `textures` folder beside `Castlevania.exe`, with the pack's own folders
+   (`textures\SLUS-21168\replacements\...` is fine). The launcher's **Open textures folder** makes that folder.
+   Keep one pack in it at a time.
+3. Open `CastlevaniaLauncher.exe`. Its home page says how many pictures it found, and its switch turns the pack on or
+   off. The pack is read when the game starts, so a change applies from the next start.
+
+`.png` and `.dds` pictures are both read. Pictures of a whole texture are used; the pieces of a texture some packs
+also have (`-rWxH` in their names) are not, nor pictures of the PS2's own screen buffers. More on how pictures are
+matched, and on the textures the PS2 packs lack, under [HD Texture Packs](#hd-texture-packs).
 
 ## Features
 
@@ -96,7 +162,7 @@ or off before you press Play (also on its Graphics page, with the size pictures 
 `texture_pack = false` turns it off). The Xbox release kept the PS2's textures, so each one is matched by the same
 hashes PCSX2 names the pictures by. Pictures load in the background with full mipmaps, scaled to the size set in the
 launcher (1024, 2048 by default, or full size). Paletted textures are replaced; region (`-rWxH`) and true colour
-pictures are not used yet. With the Panda Venom & Stan21 pack, 96% of the textures the game draws have a picture (1,926
+pictures are not used yet. With Panda_Venom and Stan21's pack, 96% of the textures the game draws have a picture (1,926
 of the 2,000 met in a sweep of every room, 96.8% of their area). Of the rest, some are not in the pack (two round stone
 doors, a few effects) and some the Xbox changed (the save screens say HARD DISK where the PS2's say MEMORY CARD; the
 HUD's icons have NEW! labels and the d-pad of its own), so the PS2's picture would be wrong for them.
@@ -209,7 +275,7 @@ See [To Build](#to-build).
 Clone this repository and the SDK beside it, then apply this port's SDK patch:
 
 ```
-git clone https://github.com/Pazzi7054/CastlevaniaCOD-PC
+git clone https://github.com/jmafort/CastlevaniaCOD-PC
 git clone https://github.com/TGP482/XboxXBERecomp XboxXBE-Recomp
 git -C XboxXBE-Recomp checkout 91146ff
 git -C XboxXBE-Recomp apply ..\CastlevaniaCOD-PC\sdk-patches\xboxxbe-recomp.patch
@@ -380,14 +446,19 @@ Changes this game needed beyond the generated config:
 
 ## Legal
 
-This is a non-commercial fan project for preservation and interoperability. It is not affiliated with, endorsed by
-or sponsored by Konami or Microsoft.
+This is a personal, non-commercial fan project, made for preservation and interoperability. It has nothing to do
+with Konami Digital Entertainment, Microsoft or any other company: it is not affiliated with, endorsed by or
+sponsored by them, and it is not an official product. Nothing here is sold.
 
 - This repository and its releases contain only original source code, configuration and documentation, the port's
   own runtime, and the LLVM compiler. They contain **no** game assets, game code (original or recompiled), disc
   images, BIOS, keys or Xbox SDK libraries, and none may be added. `assets`, `generated` and all build output are
   excluded by `.gitignore`; `release.bat` refuses a package with game files or objects in it.
 - `config\game.toml` lists addresses and names of functions in the game's executable. It contains no code from it.
+- You need your own copy of the game, the USA Xbox disc, as an `.iso` or its extracted files. This project does not
+  provide one, nor tell where to get one.
+- The HD texture packs linked under [HD Textures](#hd-textures) are their makers' own work, made for the PS2 game.
+  They are not part of this repository or its releases, which neither host nor include any of their pictures.
 - The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an
   executable from `build.bat`, are for your personal use only. Do not distribute them, generated code or game files.
 - Castlevania and Curse of Darkness are trademarks of Konami Digital Entertainment. Xbox is a trademark of
@@ -400,10 +471,21 @@ The source in this repository is released under the [GNU General Public License 
 
 ## Credits
 
+- [CastlevaniaCOD-PC](https://github.com/Pazzi7054/CastlevaniaCOD-PC) by Pazzi7054, the port this repository is a
+  fork of.
 - [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482, the recompiler and runtime this is built on.
+- [Castlevania-COD-Recomp](https://github.com/Neguchads/Castlevania-COD-Recomp) by Neguchads, for its findings in the
+  game: Hector's shadow on the 4X multisample grid, and the addresses of the camera, maps, rooms and enemies.
+- The HD texture packs' makers: Panda_Venom and Stan21
+  ([HD Remaster](https://gbatemp.net/threads/castlevania-curse-of-darkness-usa-hd-remaster.619688/)), VictorKratos
+  ([VK Curse of Darkness](https://drive.usercontent.google.com/download?id=1rEeBsGLc93pQerT_7j-MwzT-otxhGZl-&authuser=0))
+  and PlatinumMimic, Calm-Consideration41
+  ([4K Texture Packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs)).
 - [LLVM](https://llvm.org) for Clang and LLD, which releases bundle to build the game code on the player's PC.
 - [xxHash](https://github.com/Cyan4973/xxHash) for hashing textures, and [PCSX2](https://pcsx2.net) for the texture
   pack naming its replacement pictures follow.
+- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), the model `tools\texpack\upscale.py` makes HD pictures with
+  for the textures the packs lack.
 - [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) for the overridable function layout and instruction hooks.
 - [Zydis](https://github.com/zyantific/zydis) for decoding x86 instructions, [toml++](https://github.com/marzer/tomlplusplus) for the configs, [Dear ImGui](https://github.com/ocornut/imgui) for the settings overlay and [SDL](https://github.com/libsdl-org/SDL) for the window, input and controllers.
 - [xemu](https://github.com/xemu-project/xemu) and [Cxbx-Reloaded](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded) as references for the Xbox's hardware and API behaviour.
