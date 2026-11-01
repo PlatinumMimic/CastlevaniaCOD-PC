@@ -61,6 +61,7 @@ ID3D11DeviceContext* g_ctx = nullptr;
 IDXGISwapChain* g_swap = nullptr;
 ID3D11RenderTargetView* g_rtv = nullptr;
 HWND g_hwnd = nullptr;
+bool g_activated = false;  // the window came back to the front: the files are looked at again (a pack added meanwhile)
 
 void MakeTarget() {
     ID3D11Texture2D* bb = nullptr;
@@ -103,6 +104,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SYSCOMMAND:
             if ((wp & 0xFFF0) == SC_KEYMENU) return 0;  // Alt alone
+            break;
+        case WM_ACTIVATEAPP:
+            if (wp) g_activated = true;
             break;
         case WM_DESTROY:
             PostQuitMessage(0);
@@ -224,6 +228,11 @@ Release Check(const std::vector<uint8_t>& xbe) {
     memcpy(&copy[cert - base + 0x0C], kImageCertificate, 80);
     memcpy(&copy[cert - base + 0x9C], kImageCertificate + 80, 12);
     return Sha1(copy) == kImageSha1 ? Release::Patched : Release::Other;
+}
+
+// "1 picture", "3844 pictures"
+std::string Pictures(size_t n) {
+    return std::to_string(n) + (n == 1 ? " picture" : " pictures");
 }
 
 // what the game will find
@@ -772,9 +781,9 @@ bool Button(const char* label, ImVec2 size, Kind kind = Kind::Secondary, ImFont*
 }
 
 // a box framed as the game frames its messages; its contents laid out inside
-void BeginCard(const char* id) {
+void BeginCard(const char* id, float pad_y = 0) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {S(22), S(18)});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {S(22), pad_y ? pad_y : S(18)});
     ImGui::BeginChild(id, {0, 0}, ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
 }
 void EndCard() {
@@ -1100,6 +1109,7 @@ public:
         settings_.Load();
         saved_ = Snapshot();
         files_.Scan();
+        g_activated = false;  // the window's first time in front, just looked at
         gpus_ = Gpus();
         auto_gpu_ = Automatic();
         modes_ = Resolutions();
@@ -1111,6 +1121,10 @@ public:
 
     // false: the launcher closes
     bool Frame() {
+        if (g_activated) {
+            g_activated = false;
+            rescan_ = true;
+        }
         if (rescan_ && !import_.running) {
             rescan_ = false;
             files_.Scan();
@@ -1279,6 +1293,31 @@ private:
             EndCard();
         }
 
+        // the HD texture pack: whether there is one, and its switch, a click before Play (its size is on Graphics); one
+        // row, the button's height
+        BeginCard("pack", S(12));
+        float row = S(38), y = ImGui::GetCursorPosY(), mid = y + (row - g_semi->FontSize) * 0.5f;
+        ImGui::SetCursorPosY(mid);
+        Text(g_semi, kText, "HD texture pack");
+        ImGui::SameLine(0, S(26));
+        ImGui::SetCursorPosY(mid);
+        if (!files_.pictures) Status(kIconWarn, kMuted, "None in the textures folder (optional)");
+        else if (settings_.texture_pack) Status(kIconCheck, kGreen, Pictures(files_.pictures) + " found, in use");
+        else Status(kIconCheck, kMuted, Pictures(files_.pictures) + " found, off: the game's own textures");
+        ImGui::SameLine();
+        if (files_.pictures) {
+            ImGui::SetCursorPos({ImGui::GetContentRegionMax().x - S(46), y + (row - S(22)) * 0.5f});
+            Toggle("homepack", settings_.texture_pack);
+        } else {
+            const char* open = "Open textures folder";
+            float bw = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, open).x + S(40) + row * 0.6f;
+            ImGui::SetCursorPos({ImGui::GetContentRegionMax().x - bw, y});
+            if (Button(open, {bw, row}, Kind::Secondary)) OpenTextures();
+        }
+        ImGui::SetCursorPosY(y + row);
+        ImGui::Dummy({0, 0});
+        EndCard();
+
         // what is set, at a glance; each opens its page
         Label("CURRENT SETUP");
         ImGui::Dummy({0, S(2)});
@@ -1429,19 +1468,22 @@ private:
         Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", "Full"});
         EndSetting();
         ImGui::Dummy({0, S(2)});
-        if (files_.pictures) Status(kIconCheck, kGreen, std::to_string(files_.pictures) + " pictures in the textures folder");
+        if (files_.pictures) Status(kIconCheck, kGreen, Pictures(files_.pictures) + " in the textures folder");
         else Status(kIconWarn, kMuted, "No pack in the textures folder");
         ImGui::Dummy({0, S(4)});
-        if (Button("Open textures folder", {0, 0}, Kind::Secondary)) {
-            fs::path t = files_.textures.empty() ? ExeDir() / "textures" : files_.textures;
-            std::error_code ec;
-            fs::create_directories(t, ec);
-            Open(t);
-            rescan_ = true;
-        }
+        if (Button("Open textures folder", {0, 0}, Kind::Secondary)) OpenTextures();
         ImGui::SameLine();
         if (Button("Check again", {0, 0}, Kind::Secondary)) rescan_ = true;
         EndCard();
+    }
+
+    // made where the game looks for it when there is none
+    void OpenTextures() {
+        fs::path t = files_.textures.empty() ? ExeDir() / "textures" : files_.textures;
+        std::error_code ec;
+        fs::create_directories(t, ec);
+        Open(t);
+        rescan_ = true;
     }
 
     void GamePage() {

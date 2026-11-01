@@ -36,6 +36,12 @@ reads the xbe inside a disc image too.
    with its `data`, `movie` and `sound` folders).
 4. Run `Castlevania.exe` again. The first start builds the game code from your copy, which takes a few minutes and
    shows its progress; press **Start** when it is done. After that the game starts straight away.
+5. Optional, HD textures: the game plays as it is, with its own textures. For sharper ones, get a texture pack made
+   for the PS2 game in PCSX2 (the Panda Venom & Stan21 pack, for one) and copy its pictures into a `textures` folder
+   beside `Castlevania.exe`, the pack's own folders and all (`textures\SLUS-21168\replacements\...` is fine). The
+   launcher's **Open textures folder** makes that folder. Keep one pack in it at a time. The launcher's home page then
+   says how many pictures it found, and its switch turns the pack on or off from the next start. See
+   [HD Texture Packs](#hd-texture-packs).
 
 A release contains no game code. `Castlevania.exe` holds the runtime, and the first start makes `Castlevania.dll`
 from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder. The
@@ -61,8 +67,10 @@ filtering with quick presets, the HD texture pack, FPS counter, pause on focus l
 button layout. Changes are saved as you make them; **Play** starts the game. Saves and logs are a click away. `--page
 controls` (or home, display, graphics, game, files) opens it on that page. It looks like the game's menus: navy with fog
 and a teal band, page names on orange banners, the chosen option on a green bar, boxes framed in light blue, Palatino
-for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold) and the crest
-of its icon.
+for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold), the crest
+of its icon, and under **Play** the pack's row: how many pictures the `textures` folder has, with the switch for them,
+or a button that opens the folder when it has none. The files are looked at again whenever the launcher comes back to
+the front, so a pack copied in meanwhile shows.
 
 ### Settings Menu
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be
@@ -81,17 +89,20 @@ key or L3 + R3 closes it.
   smear; the frame fills the screen.
 
 ### HD Texture Packs
-Texture packs made for PCSX2 work as they are: put a pack's replacement pictures in a `textures` folder beside the
-game (folders inside it are fine). The Xbox release kept the PS2's textures, so each one is matched by the same
+Optional: without a pack the game draws its own textures, as on the Xbox. Texture packs made for PCSX2 work as they are:
+put a pack's replacement pictures (`.png` or `.dds`) in a `textures` folder beside the game (folders inside it are
+fine). The launcher's home page says whether that folder has a pack and how many pictures, with a switch to turn it on
+or off before you press Play (also on its Graphics page, with the size pictures load at; in `castlevania.toml`,
+`texture_pack = false` turns it off). The Xbox release kept the PS2's textures, so each one is matched by the same
 hashes PCSX2 names the pictures by. Pictures load in the background with full mipmaps, scaled to the size set in the
 launcher (1024, 2048 by default, or full size). Paletted textures are replaced; region (`-rWxH`) and true colour
-pictures are not used yet. With the Panda Venom & Stan21 pack, 96% of the textures the game draws have a picture
-(1,926 of the 2,000 met in a sweep of every room, 96.8% of their area). Of the rest, some are not in the pack
-(two round stone doors, a few effects) and some the Xbox changed (the save screens say HARD DISK where the PS2's say
-MEMORY CARD; the HUD's icons have NEW! labels and the d-pad of its own), so the PS2's picture would be wrong for them.
-`tools\texpack\upscale.py` makes pictures for those from the game's own textures (see Testing): 48 pictures for the
-24 textures, which put in `textures` cover the rest of that sweep. The pack is read when the game starts: the
-launcher's switch for it takes effect from the next start.
+pictures are not used yet. With the Panda Venom & Stan21 pack, 96% of the textures the game draws have a picture (1,926
+of the 2,000 met in a sweep of every room, 96.8% of their area). Of the rest, some are not in the pack (two round stone
+doors, a few effects) and some the Xbox changed (the save screens say HARD DISK where the PS2's say MEMORY CARD; the
+HUD's icons have NEW! labels and the d-pad of its own), so the PS2's picture would be wrong for them.
+`tools\texpack\upscale.py` makes pictures for those from the game's own textures (see Testing): 48 pictures for the 24
+textures, which put in `textures` cover the rest of that sweep. The pack is read when the game starts, so the switch
+takes effect from the next start; the in-game menu has none.
 
 ### Graphics
 - **Native Direct3D 12 Renderer** - The game's Direct3D 8 calls, fixed function stages and paletted textures are
