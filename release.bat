@@ -3,11 +3,10 @@ setlocal
 rem A release a player can download: Castlevania.exe and the launcher, without the game code. The exe's first start
 rem builds Castlevania.dll from the player's own default.xbe with the compiler folder (the SDK's
 rem runtime\app\game_code.cpp): the recompiler, Clang and LLD, the game's config and the headers the code includes.
-rem   release.bat [version]      writes out\release\CastlevaniaCOD-PC-<version>.zip
+rem   release.bat [version]      writes out\release\CastlevaniaCOD-PC-<version>.zip, by default CMakeLists.txt's version
 rem Needs what build.bat needs, and the game in assets: the build reads default.xbe, nothing of it is packed.
 cd /d "%~dp0"
 set "VERSION=%~1"
-if not defined VERSION set "VERSION=dev"
 set "OUT=out\build\package"
 set "PKG=out\release\CastlevaniaCOD-PC"
 if not exist assets\default.xbe (echo   Put the game's default.xbe in assets first, see README.md. & goto :fail)
@@ -30,6 +29,8 @@ echo [2/4] Castlevania.exe, the launcher and the compiler folder (no game code: 
 cmake --preset package > release_build_log.txt 2>&1 || (echo       configuring failed, see release_build_log.txt & goto :fail)
 cmake --build %OUT% --target Castlevania CastlevaniaLauncher >> release_build_log.txt 2>&1 || (echo       the build failed, see release_build_log.txt & goto :fail)
 set /p SDK=<%OUT%\sdk_dir.txt
+rem no version given: the one in CMakeLists.txt, which the exes carry
+if not defined VERSION set /p VERSION=<%OUT%\version.txt
 
 echo [3/4] Package
 if exist out\release rd /s /q out\release

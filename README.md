@@ -88,13 +88,29 @@ A release contains no game code. `Castlevania.exe` holds the runtime, and the fi
 from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder. The
 Visual C++ runtime comes with it, so a fresh Windows needs nothing else.
 
-The port's programs are not code-signed, so the first start of a download may bring up "Windows protected your PC":
-**More info**, then **Run anyway**. On a freshly installed Windows there is nothing to download besides the release and
-a graphics driver; see [Requirements](#requirements).
+On a freshly installed Windows there is nothing to download besides the release and a graphics driver; see
+[Requirements](#requirements).
 
 - `CastlevaniaLauncher.exe` has every setting and checks your game files; `Castlevania.exe` skips it.
 - The game can run from the extracted files in `assets`, or from an ISO of the disc placed in `assets`.
 - Recomp settings can be adjusted in `castlevania.toml` beside the exe. Saves go to `hdd\E\UDATA\4b4e002d`.
+
+### Windows or Antivirus Warnings
+
+The port's programs are not code-signed (a certificate costs money every year, and this is a free hobby project), and
+a new download has not been run by many people yet. So the first start may bring up "Windows protected your PC":
+**More info**, then **Run anyway**. Some antivirus programs are also wary of a program that builds code and then loads
+it, which is what the first start does. That is not a virus:
+
+- Every line of the code is in this repository, and a release is made by `release.bat` from it. You can
+  [build it yourself](#building) instead of downloading.
+- The release page lists each zip's SHA-256. In PowerShell, `Get-FileHash CastlevaniaCOD-PC-<version>.zip` shows the
+  one of your download; the same value means the same file.
+- The programs' Properties (Details tab) name the project, its version and this page.
+
+If an antivirus moves a file to quarantine, restore it and allow the folder, and please report it to that antivirus
+as a false positive (Microsoft Defender's is the [file submission](https://www.microsoft.com/en-us/wdsi/filesubmission)
+page). Download the port only from this repository's Releases page.
 
 ## HD Textures
 

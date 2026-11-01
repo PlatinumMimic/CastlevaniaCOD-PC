@@ -1,7 +1,7 @@
 # Castlevania: Curse of Darkness (original Xbox), statically recompiled
 
 cmake_minimum_required(VERSION 3.25)
-project(castlevania LANGUAGES C CXX)
+project(castlevania VERSION 1.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -69,6 +69,49 @@ target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d
                       ole32 windowscodecs)
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 add_dependencies(Castlevania CastlevaniaLauncher)
+
+# both exes' version details (their Properties, Task Manager): a program without them looks suspect to antivirus
+# heuristics. release.bat names the zip with the version.
+file(WRITE ${CMAKE_BINARY_DIR}/version.txt "${PROJECT_VERSION}\n")
+foreach(exe Castlevania CastlevaniaLauncher)
+    if(exe STREQUAL "Castlevania")
+        set(description "Castlevania: Curse of Darkness, PC port")
+    else()
+        set(description "Castlevania: Curse of Darkness, PC port launcher")
+    endif()
+    file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${exe}_version.rc @ONLY CONTENT [[
+1 VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "CastlevaniaCOD-PC, a fan project"
+            VALUE "FileDescription", "@description@"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "@exe@"
+            VALUE "OriginalFilename", "@exe@.exe"
+            VALUE "ProductName", "CastlevaniaCOD-PC"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+            VALUE "LegalCopyright", "GPL-2.0. Not affiliated with Konami; Castlevania is a trademark of Konami."
+            VALUE "Comments", "https://github.com/jmafort/CastlevaniaCOD-PC"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+]])
+    target_sources(${exe} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/${exe}_version.rc)
+endforeach()
 
 # both exes' icon, resource 1 as their windows load it: the game's crest, from the HD texture pack's picture of it (the
 # PS2 menu texture in its blue palette, and in its green one the ring of runes), else from the xbe's title image.

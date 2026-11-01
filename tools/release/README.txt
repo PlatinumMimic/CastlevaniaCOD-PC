@@ -29,6 +29,13 @@ fine: the game puts the original header back.
 CastlevaniaLauncher.exe has every setting (display, widescreen, render scale, controls) and
 checks your game files. In game, F10 or clicking both sticks in (L3 + R3) opens the settings.
 
+WINDOWS OR ANTIVIRUS WARNINGS
+  The programs are not code-signed (this is a free hobby project), so the first start may show
+  "Windows protected your PC": More info, then Run anyway. Some antivirus programs are wary of a
+  program that builds code and then loads it, as the first start does. All of the source is on
+  the project's page; if a file is quarantined, restore it, allow this folder and report it to the
+  antivirus as a false positive. Download the port only from the project's Releases page.
+
 HD TEXTURE PACKS (optional)
   Texture packs fans made for the PS2 game in PCSX2 work too: put the pack's replacement pictures
   (its .png or .dds files, folders inside are fine) in a textures folder beside Castlevania.exe.
