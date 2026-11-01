@@ -153,25 +153,28 @@ class Pack {
 public:
     void Init() {
         if (!g_texture_pack) return;
-        dir_ = Find();
-        if (dir_.empty()) return;
-        std::error_code ec;
-        for (auto it = fs::recursive_directory_iterator(dir_, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (!it->is_regular_file(ec)) continue;
-            std::string ext = it->path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-            if (ext != ".png" && ext != ".dds") continue;
-            // texture-palette-bits, no region
-            std::string name = it->path().stem().string();
-            unsigned long long t = 0, p = 0;
-            unsigned bits = 0;
-            char tail = 0;
-            if (std::sscanf(name.c_str(), "%llx-%llx-%8x%c", &t, &p, &bits, &tail) != 3) continue;
-            uint32_t psm = bits & 0x3F;
-            if (psm != 0x13 && psm != 0x14) continue;  // PSMT8, PSMT4
-            if (index_.emplace(Key{t, p}, uint32_t(files_.size())).second) files_.push_back(it->path());
+        std::string dirs;
+        for (const fs::path& dir : Folders()) {
+            std::error_code ec;
+            for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (!it->is_regular_file(ec)) continue;
+                std::string ext = it->path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (ext != ".png" && ext != ".dds") continue;
+                // texture-palette-bits, no region
+                std::string name = it->path().stem().string();
+                unsigned long long t = 0, p = 0;
+                unsigned bits = 0;
+                char tail = 0;
+                if (std::sscanf(name.c_str(), "%llx-%llx-%8x%c", &t, &p, &bits, &tail) != 3) continue;
+                uint32_t psm = bits & 0x3F;
+                if (psm != 0x13 && psm != 0x14) continue;  // PSMT8, PSMT4
+                if (index_.emplace(Key{t, p}, uint32_t(files_.size())).second) files_.push_back(it->path());
+            }
+            dirs += (dirs.empty() ? "" : "; ") + dir.string();
         }
-        LOGR("texpack: %zu pictures in %s, up to %u px", files_.size(), dir_.string().c_str(), g_texture_pack_size);
+        if (dirs.empty()) return;
+        LOGR("texpack: %zu pictures in %s, up to %u px", files_.size(), dirs.c_str(), g_texture_pack_size);
         if (files_.empty()) return;
         state_.resize(files_.size());
         unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 6u);
@@ -320,11 +323,23 @@ private:
         std::shared_ptr<gpu::Replacement> pixels;
     };
 
-    static fs::path Find() {
-        fs::path dir = app::ExeDir();
+    // the textures folder; CV_TEXTURES set, its folders instead (separated by ;), a picture in an earlier one taking
+    // the place of one with the same name in a later one: pictures tried out beside a pack without changing it
+    static std::vector<fs::path> Folders() {
         std::error_code ec;
+        std::vector<fs::path> dirs;
+        if (const char* list = std::getenv("CV_TEXTURES")) {
+            std::string s = list;
+            for (size_t at = 0; at <= s.size();) {
+                size_t end = std::min(s.find(';', at), s.size());
+                if (end > at && fs::is_directory(s.substr(at, end - at), ec)) dirs.emplace_back(s.substr(at, end - at));
+                at = end + 1;
+            }
+            return dirs;
+        }
+        fs::path dir = app::ExeDir();
         for (int i = 0; i < 6; i++) {
-            if (fs::is_directory(dir / "textures", ec)) return dir / "textures";
+            if (fs::is_directory(dir / "textures", ec)) return {dir / "textures"};
             if (!dir.has_parent_path() || dir.parent_path() == dir) break;
             dir = dir.parent_path();
         }
@@ -351,7 +366,34 @@ private:
         }
     }
 
-    // BGRA, scaled by halves to the size set, PS2 alpha (128 opaque) to the Xbox's, then every level below
+    // BGRA at half the size, each texel the mean of four, their colour weighted by their alpha: the colour under
+    // transparent texels (a PS2 picture's is often a key colour, a green) would otherwise run into the edges of what
+    // is drawn where a picture is drawn smaller than it is
+    static std::vector<uint8_t> Half(const std::vector<uint8_t>& a, uint32_t lw, uint32_t lh) {
+        uint32_t nw = std::max(lw / 2, 1u), nh = std::max(lh / 2, 1u);
+        std::vector<uint8_t> b(size_t(nw) * nh * 4);
+        for (uint32_t y = 0; y < nh; y++)
+            for (uint32_t x = 0; x < nw; x++) {
+                uint32_t x0 = std::min(x * 2, lw - 1), x1 = std::min(x * 2 + 1, lw - 1);
+                uint32_t y0 = std::min(y * 2, lh - 1), y1 = std::min(y * 2 + 1, lh - 1);
+                const uint8_t* t[4] = {&a[(size_t(y0) * lw + x0) * 4], &a[(size_t(y0) * lw + x1) * 4],
+                                       &a[(size_t(y1) * lw + x0) * 4], &a[(size_t(y1) * lw + x1) * 4]};
+                uint32_t alpha = t[0][3] + t[1][3] + t[2][3] + t[3][3];
+                uint8_t* o = &b[(size_t(y) * nw + x) * 4];
+                for (uint32_t c = 0; c < 3; c++) {
+                    uint32_t s = 0, w = 0;
+                    for (const uint8_t* p : t) {
+                        s += alpha ? p[c] * p[3] : p[c];
+                        w += alpha ? p[3] : 1;
+                    }
+                    o[c] = uint8_t((s + w / 2) / w);
+                }
+                o[3] = uint8_t((alpha + 2) / 4);
+            }
+        return b;
+    }
+
+    // BGRA, PS2 alpha (128 opaque) to the Xbox's, halved to the size set, then every level below
     static std::shared_ptr<gpu::Replacement> Load(IWICImagingFactory* wic, const fs::path& file) {
         ComPtr<IWICBitmapDecoder> dec;
         ComPtr<IWICBitmapFrameDecode> frame;
@@ -364,47 +406,27 @@ private:
         UINT w = 0, h = 0;
         conv->GetSize(&w, &h);
         if (!w || !h) return nullptr;
+        std::vector<uint8_t> px(size_t(w) * h * 4);
+        if (FAILED(conv->CopyPixels(nullptr, w * 4, UINT(px.size()), px.data()))) return nullptr;
+        for (size_t i = 3; i < px.size(); i += 4) px[i] = uint8_t(std::min(255u, (px[i] * 255u + 64) / 128));
         UINT cap = g_texture_pack_size ? g_texture_pack_size : 16384;
-        UINT tw = w, th = h;
-        while (std::max(tw, th) > cap && tw > 1 && th > 1) {
-            tw /= 2;
-            th /= 2;
-        }
-        ComPtr<IWICBitmapSource> src = conv;
-        if (tw != w || th != h) {
-            ComPtr<IWICBitmapScaler> sc;
-            if (FAILED(wic->CreateBitmapScaler(&sc)) || FAILED(sc->Initialize(conv.Get(), tw, th, WICBitmapInterpolationModeFant)))
-                return nullptr;
-            src = sc;
+        while (std::max(w, h) > cap && w > 1 && h > 1) {
+            px = Half(px, w, h);
+            w /= 2;
+            h /= 2;
         }
         auto r = std::make_shared<gpu::Replacement>();
-        r->width = tw;
-        r->height = th;
-        std::vector<uint8_t> px(size_t(tw) * th * 4);
-        if (FAILED(src->CopyPixels(nullptr, tw * 4, UINT(px.size()), px.data()))) return nullptr;
-        for (size_t i = 3; i < px.size(); i += 4) px[i] = uint8_t(std::min(255u, (px[i] * 255u + 64) / 128));
+        r->width = w;
+        r->height = h;
         r->levels.push_back(std::move(px));
-        for (uint32_t lw = tw, lh = th; lw > 1 || lh > 1;) {
-            uint32_t nw = std::max(lw / 2, 1u), nh = std::max(lh / 2, 1u);
-            const std::vector<uint8_t>& a = r->levels.back();
-            std::vector<uint8_t> b(size_t(nw) * nh * 4);
-            for (uint32_t y = 0; y < nh; y++)
-                for (uint32_t x = 0; x < nw; x++)
-                    for (uint32_t c = 0; c < 4; c++) {
-                        uint32_t x0 = std::min(x * 2, lw - 1), x1 = std::min(x * 2 + 1, lw - 1);
-                        uint32_t y0 = std::min(y * 2, lh - 1), y1 = std::min(y * 2 + 1, lh - 1);
-                        uint32_t s = a[(size_t(y0) * lw + x0) * 4 + c] + a[(size_t(y0) * lw + x1) * 4 + c] +
-                                     a[(size_t(y1) * lw + x0) * 4 + c] + a[(size_t(y1) * lw + x1) * 4 + c];
-                        b[(size_t(y) * nw + x) * 4 + c] = uint8_t((s + 2) / 4);
-                    }
-            r->levels.push_back(std::move(b));
-            lw = nw;
-            lh = nh;
+        for (uint32_t lw = w, lh = h; lw > 1 || lh > 1;) {
+            r->levels.push_back(Half(r->levels.back(), lw, lh));
+            lw = std::max(lw / 2, 1u);
+            lh = std::max(lh / 2, 1u);
         }
         return r;
     }
 
-    fs::path dir_;
     std::map<Key, uint32_t> index_;
     std::vector<fs::path> files_;
     std::mutex m_;

@@ -88,8 +88,10 @@ launcher (1024, 2048 by default, or full size). Paletted textures are replaced; 
 pictures are not used yet. With the Panda Venom & Stan21 pack, 96% of the textures the game draws have a picture
 (1,926 of the 2,000 met in a sweep of every room, 96.8% of their area). Of the rest, some are not in the pack
 (two round stone doors, a few effects) and some the Xbox changed (the save screens say HARD DISK where the PS2's say
-MEMORY CARD), so the PS2's picture would be wrong for them. The pack is read when the game starts: the launcher's
-switch for it takes effect from the next start.
+MEMORY CARD; the HUD's icons have NEW! labels and the d-pad of its own), so the PS2's picture would be wrong for them.
+`tools\texpack\upscale.py` makes pictures for those from the game's own textures (see Testing): 48 pictures for the
+24 textures, which put in `textures` cover the rest of that sweep. The pack is read when the game starts: the
+launcher's switch for it takes effect from the next start.
 
 ### Graphics
 - **Native Direct3D 12 Renderer** - The game's Direct3D 8 calls, fixed function stages and paletted textures are
@@ -258,7 +260,9 @@ Changes this game needed beyond the generated config:
 - `src\common\texpack.cpp`: PCSX2 texture packs. A P8 texture's indices are put back into GS memory order, 16x16
   (8 bit) or 32x16 (4 bit, indices under 16) blocks in the GS's column layout, and hashed with XXH3-64 block by
   block as PCSX2 does; its palette is hashed as the GS holds it (R G B A, alpha halved). The pair names the picture.
-  PNGs load on worker threads through WIC with their PS2 alpha (128 opaque) doubled. The SDK patch adds
+  PNGs load on worker threads through WIC with their PS2 alpha (128 opaque) doubled, halved to the size set and
+  each level below made with their colour weighted by alpha (the colour under a PS2 picture's transparent pixels
+  is often a key colour, a green, which an even mean runs into the edges of what is drawn). The SDK patch adds
   `Extension::Replace` and `Replaced`, `gpu::PaletteIndices`, and the backend draws a replacement with every level.
   Eight Xbox textures are found under the PS2's names (`kAliases`): on the PS2 each used part of its texture, the
   rest holding whatever else was in GS memory, which PCSX2 hashed with it, where the Xbox has that part blank. Their
@@ -313,6 +317,25 @@ Changes this game needed beyond the generated config:
   folder instead, it also saves each there as a PNG under that name, with the PS2's alpha as PCSX2 dumps it, so an
   upscaled copy in `textures` replaces it. `CV_TEXPACK_CENSUS=1` logs every texture the game uploads, once, with
   its format, size and what the pack made of it (a picture, none, or not looked for: the pack has P8 pictures only).
+  `CV_TEXTURES=<folder>;<folder>` reads pictures from those folders instead of `textures`, a picture in an earlier
+  one in place of one with the same name in a later one: pictures tried out beside a pack without changing it.
+- `tools\texpack\upscale.py make` makes a picture for each texture `CV_TEXPACK_MISSES` saved: upscaled 4x, the
+  pack's scale, by an AI model (RealESRGAN_x4plus; Python with PyTorch, its docstring has the setup). Where the pack
+  has the PS2's picture of a texture the Xbox changed in part, as for the save screens' HARD DISK and the HUD's
+  icons, it keeps that picture and takes from the upscale only what the Xbox changed: the parts that differ
+  throughout from the pack's picture shrunk (not only along edges, as wherever the pack's art was redrawn), in most of
+  the texture's colourings; and where in the result a strong colour lies over a texel not of it, the texture's own
+  colour, as the pack's upscale of a sheet of icons runs each into its neighbours: the line the HUD draws under
+  "Player" took the pure green of the letters above it in the colouring it is drawn with (found by pictures of one
+  colour each, in `CV_TEXTURES`, telling which colouring each part of the HUD is drawn with: the frame and that line
+  223ff5, "Player" 2c928c, the HP bar 66d55d). Cut-out shapes and text are upscaled with their colour weighted by
+  alpha, so the key colour under their transparent texels (often a green) does not run into their edges; soft
+  effects take half of the model's colour and half of a smooth resize, the model giving smoke a texture it does not
+  have. `CV_UPSCALE_CPU=1` keeps the model off the GPU, as while a game has it. `upscale.py calibrate` measures
+  models against the pack's own pictures of the same textures (`kAliases`' and those): of
+  RealESRGAN_x4plus, UltraSharpV2, GTAV textures (RGT, and its dither model) and GameAI 2.0, RealESRGAN_x4plus came
+  closest by far (31.2 dB on average, 45 dB on one, the others 26.7 to 28.7), the pack likely made with it, so its
+  pictures look like the pack's. They are the game's art, as a pack is: they stay out of this repository.
 - `widescreen.json` keeps the screens widescreen reaches the sides of: the pause menu, the map, and with a route
   step's `"box_shots": true` each box on the first-save recording (the save point's, and the Memorial Ticket's
   dimmed panel when the first enemy drops it).
