@@ -98,14 +98,21 @@ On a freshly installed Windows there is nothing to download besides the release 
 ### Windows or Antivirus Warnings
 
 The port's programs are not code-signed (a certificate costs money every year, and this is a free hobby project), and
-a new download has not been run by many people yet. So the first start may bring up "Windows protected your PC":
-**More info**, then **Run anyway**. Some antivirus programs are also wary of a program that builds code and then loads
-it, which is what the first start does. That is not a virus:
+a new download has not been run by many people yet. So browsers and Windows may warn about it:
+
+- **The browser** may block the download as "not commonly downloaded" or "suspicious". Open its downloads list
+  (Ctrl+J) and keep the file: in Chrome **Keep** or **Download suspicious file**; in Edge **...**, **Keep**,
+  **Show more**, then **Keep anyway**.
+- **Windows** may say "Windows protected your PC" on the first start: **More info**, then **Run anyway**.
+
+Some antivirus programs are also wary of a program that builds code and then loads it, which is what the first start
+does. That is not a virus:
 
 - Every line of the code is in this repository, and a release is made by `release.bat` from it. You can
   [build it yourself](#building) instead of downloading.
-- The release page lists each zip's SHA-256. In PowerShell, `Get-FileHash CastlevaniaCOD-PC-<version>.zip` shows the
-  one of your download; the same value means the same file.
+- The release page lists each zip's SHA-256 and links its [VirusTotal](https://www.virustotal.com) scan, where dozens
+  of antivirus programs checked it. In PowerShell, `Get-FileHash CastlevaniaCOD-PC-<version>.zip` shows the SHA-256
+  of your download; the same value means the same file.
 - The programs' Properties (Details tab) name the project, its version and this page.
 
 If an antivirus moves a file to quarantine, restore it and allow the folder, and please report it to that antivirus
