@@ -9,7 +9,7 @@
      "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]],
      "shot": "gameplay", "note": "the opening scenes the timed presses missed are skipped with Start"},
     {"press": "0f:wait:60f", "shot": "stand",
-     "expect": ["map == 5", "player.hp == player.hp_max == 100", "player.exp == 0", "not menu", "not modal",
+     "expect": ["map == 5", "mode == 0", "player.hp == player.hp_max == 100", "player.exp == 0", "not menu", "not modal",
                 "not screen.flat", "step.fps > 50"]},
     {"press": "0f:lsu:60f", "shot": "walk-up", "expect": ["player.pos[2] - prev.player.pos[2] > 300"]},
     {"press": "0:start,1500:wait", "shot": "menu", "expect": ["menu"]},

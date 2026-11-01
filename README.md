@@ -46,6 +46,7 @@ On top of Pazzi7054's port:
 - **Anisotropic filtering without a pack** - it sharpens the game's own textures too.
 - **PS2 button layout** - the PS2's button icons (from a PS2 HD pack) and shoulder buttons, as an option.
 - **Lament of Innocence bonus** - the Moai the PS2 game gave for a Lament of Innocence save, as an option.
+- **Crazy mode and Trevor from the start** - the name codes `@CRAZY` and `@TREVOR` work without beating the game first.
 - **Launcher** - in the game's own look, with the title logo from your HD pack. It chooses the graphics card and says
   whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
 - **Program icon** - the game's crest, made from your copy when you build.
@@ -209,6 +210,10 @@ takes effect from the next start; the in-game menu has none.
 - **Lament of Innocence Save** - As the PS2 game did when it found a Lament of Innocence save on the memory card:
   a Moai to pick up at the far end of the room behind the first courtyard, beside the potion, for completing the
   item list (the launcher's or the in-game menu's Game page; `lament_save = true`).
+- **Crazy Mode and Trevor Mode** - Name a new game `@CRAZY` for Crazy mode (harder enemies) or `@TREVOR` to play as
+  Trevor Belmont, with his whip and sub-weapons. The game takes these names only once it has been beaten; here they
+  work from the start. The `@` is on the last row of the name screen's letters. A beaten game is still not recorded
+  in your save.
 
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
@@ -448,6 +453,9 @@ Changes this game needed beyond the generated config:
   levels smoothed. Two shots with the same settings are the same.
 - `moai.json` walks a recording (`routes/moai.json`) to the far end of 5.0 and asks whether the Moai floats there and
   what the pickup's notice says: the Moai with `--set lament_save=true`, nothing without it.
+- `trevor.json` and `crazy.json` type `@TREVOR` and `@CRAZY` on the name screen of a game never beaten and play into
+  the first courtyard: the game's mode (`mode`, 2 and 1, with the save's `name`) and Trevor's hearts and sub-weapons
+  in the shots. `newgame.json` checks that a plain name gives mode 0.
 - `python -I tools\cvtest\install.py out\release\CastlevaniaCOD-PC-1.0.0.zip <your .iso, or an extracted disc>`
   installs a release as a player would and plays it: the zip extracted into a new folder in TEMP (outside the
   repository, where the game could find this PC's `assets` or `textures`), the game linked into its `assets`, every

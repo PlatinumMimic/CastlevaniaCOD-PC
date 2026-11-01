@@ -16,12 +16,15 @@
 //   menus                u32 0xB25518 is not 0 while the pause or inventory menu is up; a modal box sets bit 16 of the
 //                        word at u32 [0x548C10]
 //   scene                u32 0xB23410 (found here, by comparing memory in play and in a story scene)
+//   game                 0xB23700, what sub_002F7180 returns: the mode u32 at +0 (0 Hector, 1 Crazy, 2 Trevor) and the
+//                        save's name at +0x10, which sub_002F7240 returns
 //
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
 // the pad, with "pad": the buttons held as the game got them; a button pressed or let go also writes the state right
 // then, with "pressed" or "released". Recorded play becomes a route this way (tools/cvtest). Turn by turn play
 // (keyboard.cpp) writes the state beside each done file.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -234,6 +237,16 @@ std::string GameStateJson() {
         j.Int("scene", scene);
         j.Bool("cutscene", scene & 0x20000);
         j.Bool("loading", scene & 0x8000);
+    }
+    // the game's mode and the save's name (hooks.cpp: the name codes)
+    uint32_t mode = 0;
+    std::array<char, 16> raw{};
+    if (Read(0xB23700u, mode)) j.Int("mode", mode);
+    if (Read(0xB23710u, raw)) {
+        std::string name(raw.data(), strnlen(raw.data(), raw.size()));
+        for (char& c : name)
+            if (c < ' ' || c > '~' || c == '"' || c == '\\') c = '?';
+        j.Str("name", name.c_str());
     }
     uint32_t menu = 0, flags_at = 0, flags = 0;
     if (Read(0xB25518u, menu)) j.Bool("menu", menu != 0);

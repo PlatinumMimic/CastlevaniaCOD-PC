@@ -48,3 +48,24 @@ X86_FUNC(sub_0033E1D0) {
     __imp__sub_0033E1D0(ctx, base);
     if (g_lament_save) ctx.eax = 1;
 }
+
+// The name codes: a new game named @CRAZY plays Crazy mode, one named @TREVOR plays as Trevor. The game takes them
+// only once it has been beaten: this looks the new game's name up in three {name, flag} pairs at 0x548D9C (none,
+// @CRAZY with flag 0x30008004, @TREVOR with 0x30008003) and returns the index of the one it matches whose flag is set,
+// else 0, which sub_003219A0 hands to sub_003215E0 to start the game in that mode. Here they work from the start. The
+// flags are left alone, so the save records no beaten game.
+X86_EXTERN_FUNC(__imp__sub_002F7030);
+X86_FUNC(sub_002F7030) {
+    uint32_t name;
+    std::memcpy(&name, base + ctx.esp + 4, 4);
+    __imp__sub_002F7030(ctx, base);
+    if (ctx.eax || !name) return;
+    for (uint32_t i = 1; i < 3; i++) {
+        uint32_t code;
+        std::memcpy(&code, base + 0x548D9C + i * 8, 4);
+        if (code && !std::strcmp(reinterpret_cast<const char*>(base + code), reinterpret_cast<const char*>(base + name))) {
+            ctx.eax = i;
+            return;
+        }
+    }
+}

@@ -29,6 +29,9 @@ fine: the game puts the original header back.
 CastlevaniaLauncher.exe has every setting (display, widescreen, render scale, controls) and
 checks your game files. In game, F10 or clicking both sticks in (L3 + R3) opens the settings.
 
+Name a new game @CRAZY for Crazy mode or @TREVOR to play as Trevor Belmont; here these work
+without beating the game first. The @ is on the last row of the name screen's letters.
+
 WINDOWS OR ANTIVIRUS WARNINGS
   The programs are not code-signed (this is a free hobby project), so the first start may show
   "Windows protected your PC": More info, then Run anyway. Some antivirus programs are wary of a
