@@ -85,13 +85,19 @@ Texture packs made for PCSX2 work as they are: put a pack's replacement pictures
 game (folders inside it are fine). The Xbox release kept the PS2's textures, so each one is matched by the same
 hashes PCSX2 names the pictures by. Pictures load in the background with full mipmaps, scaled to the size set in the
 launcher (1024, 2048 by default, or full size). Paletted textures are replaced; region (`-rWxH`) and true colour
-pictures are not used yet.
+pictures are not used yet. With the Panda Venom & Stan21 pack, 96% of the textures the game draws have a picture
+(1,926 of the 2,000 met in a sweep of every room, 96.8% of their area). Of the rest, some are not in the pack
+(two round stone doors, a few effects) and some the Xbox changed (the save screens say HARD DISK where the PS2's say
+MEMORY CARD), so the PS2's picture would be wrong for them. The pack is read when the game starts: the launcher's
+switch for it takes effect from the next start.
 
 ### Graphics
 - **Native Direct3D 12 Renderer** - The game's Direct3D 8 calls, fixed function stages and paletted textures are
   drawn natively.
 - **Render Scale** - 50% to 200% of the output height; above 100% supersamples.
-- **Anisotropic Filtering** - Up to 16x.
+- **Anisotropic Filtering** - Up to 16x, on the game's own textures too: they have no mip levels, so a floor or
+  wall seen at an angle shimmers in the distance without it; with the HD pack, whose pictures have mip levels,
+  it keeps them sharp there instead.
 - **Shader Cache** - Shaders compiled while playing are kept in `cache\shaders` beside the game, so later sessions
   do not stutter the first time an effect is drawn.
 
@@ -227,7 +233,9 @@ Changes this game needed beyond the generated config:
   every single texture quad drew white); `XBE_VERBOSE` lets a release build log info lines; a `widescreen` setting;
   for renderer extensions, `ShaderHooks::Position` (HLSL after the vertex position is set), `Extension::Vertices`
   (each draw's assembled vertices) and `gpu::ReadsConstant`; an extension's replacement is drawn before the SDK's own
-  texture pack image; multisampled draws (2X, 4X) on the hardware's smaller grid, which puts Hector's 4X stencil
+  texture pack image; anisotropic filtering forced on textures without mip levels too (it was only forced where a
+  texture had them, which no texture of this game does); multisampled draws (2X, 4X) on the hardware's smaller
+  grid, which puts Hector's 4X stencil
   shadow volume back in place (found by Neguchads). The SDK's mixer plays every channel of a voice by itself now
   (cutscene audio is a 5.1 stream with the voices in the centre channel).
 - Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll`, which the exe builds on the
@@ -252,6 +260,9 @@ Changes this game needed beyond the generated config:
   block as PCSX2 does; its palette is hashed as the GS holds it (R G B A, alpha halved). The pair names the picture.
   PNGs load on worker threads through WIC with their PS2 alpha (128 opaque) doubled. The SDK patch adds
   `Extension::Replace` and `Replaced`, `gpu::PaletteIndices`, and the backend draws a replacement with every level.
+  Eight Xbox textures are found under the PS2's names (`kAliases`): on the PS2 each used part of its texture, the
+  rest holding whatever else was in GS memory, which PCSX2 hashed with it, where the Xbox has that part blank. Their
+  used parts are the same pictures, found by palette and by content against the pack, and each was looked at.
 - `src\game\hooks.cpp`: widescreen culling. The camera (`sub_00012CD0`, a PS2 libvu0 style camera) makes its
   view screen matrices and the clip data objects are culled against; with widescreen on, the clip data's x scale
   (`0x012FC500`, `0x012FC5C0`, `0x012FC640`, `0x012FC660`) is made 3/4, so objects in the wider view are drawn
@@ -298,15 +309,20 @@ Changes this game needed beyond the generated config:
 - A step's `"ask"` puts a question about its screenshot to GPT-6 Luna, with named answers an `expect` can check.
   `buttons.json` asks which controller's icons show at the courtyard door and on the controller settings page;
   `--set button_layout=1` runs it with the PS2 layout (`--set` changes any setting for a run).
-- `CV_TEXPACK_MISSES=1` logs each texture the HD pack has no picture for, once, as a pack would name it.
+- `CV_TEXPACK_MISSES=1` logs each texture the HD pack has no picture for, once, as a pack would name it; set to a
+  folder instead, it also saves each there as a PNG under that name, with the PS2's alpha as PCSX2 dumps it, so an
+  upscaled copy in `textures` replaces it. `CV_TEXPACK_CENSUS=1` logs every texture the game uploads, once, with
+  its format, size and what the pack made of it (a picture, none, or not looked for: the pack has P8 pictures only).
 - `widescreen.json` keeps the screens widescreen reaches the sides of: the pause menu, the map, and with a route
   step's `"box_shots": true` each box on the first-save recording (the save point's, and the Memorial Ticket's
   dimmed panel when the first enemy drops it).
-- `filters.json` checks that render scale and anisotropic filtering change the picture. Hector stands in the courtyard
-  while each is changed live, as the in-game menu changes it (the live entry `set=<setting>=<value>`), and a step's
+- `filters.json` checks that render scale and anisotropic filtering change the picture, with the HD pack and without
+  (`--set texture_pack=false`). Hector stands on the drawbridge while each is changed live, as the in-game menu
+  changes it (the live entry `set=<setting>=<value>`; one read only at the start is an error there), and a step's
   `"measure"` takes the edge strength of parts of the view (`screen.edges.<name>`; `shots["<shot>"]` has an earlier
-  step's screen). 50% takes a third or more of it away, 200% and 16x filtering add a sixth to a fifth, with the HD
-  pack and without it; two shots with the same settings differ by up to 4%.
+  step's screen). With the pack 50% halves it, 200% adds two fifths and filtering a half or more; without it 50%
+  takes nearly half, while 200% and filtering take a tenth to a third away, the shimmer of textures without mip
+  levels smoothed. Two shots with the same settings are the same.
 - `moai.json` walks a recording (`routes/moai.json`) to the far end of 5.0 and asks whether the Moai floats there and
   what the pickup's notice says: the Moai with `--set lament_save=true`, nothing without it.
 - `python -I tools\cvtest\install.py out\release\CastlevaniaCOD-PC-1.0.0.zip <your .iso, or an extracted disc>`

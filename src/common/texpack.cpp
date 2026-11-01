@@ -121,6 +121,34 @@ struct Key {
 constexpr Key kXboxButtons = {0xf381b771eed6d1a7ull, 0x485f27ac31c8011full};
 constexpr Key kPs2Buttons = {0x27818fa40a1117afull, 0x66279948575c23d7ull};
 
+// Xbox textures a pack has under other names. On the PS2 each of these used part of its texture only (the rest is
+// never sampled), and the rest held whatever else was in GS memory there, which PCSX2 hashed with it; the Xbox has
+// that part blank, so the names cannot match. The used parts are the same pictures: found by their colours (the
+// same palette, but for the two marked) and those parts (CV_TEXPACK_MISSES pictures against a pack's), each looked
+// at. The names are the PS2 game's, so any PCSX2 pack of it has them; a picture caught with two or three different
+// leftovers is there as often, any of them will do. Not here: Xbox textures that differ (the save screens' HARD DISK
+// where the PS2 has MEMORY CARD, an icon sheet with an extra NEW!), and those no pack has.
+struct Alias {
+    Key xbox;
+    Key ps2[3];
+};
+constexpr Alias kAliases[] = {
+    {{0x0cf3381b4682dc75ull, 0xb014ec40749e17abull}, {{0xb6b4a1f431c15313ull, 0xb014ec40749e17abull}}},  // a misty backdrop
+    {{0x146b17b78291a0daull, 0x46361247dbb7b045ull}, {{0x51240b26560f7efdull, 0x46361247dbb7b045ull}}},  // the Konami logo
+    {{0x2df803e5a08f824aull, 0x887cfe00634f8c92ull},  // an arch and carved panels
+     {{0x19a172cc2f3576b3ull, 0x887cfe00634f8c92ull}, {0x37b7ed40d9a49f51ull, 0x887cfe00634f8c92ull},
+      {0x09c7b8db618feadfull, 0x887cfe00634f8c92ull}}},
+    {{0x43cd7f2402145e02ull, 0xd63eec7aa2ab2be3ull}, {{0xff56bb0d4b8bb6d3ull, 0xd63eec7aa2ab2be3ull}}},  // a cloudy sky
+    {{0x4cbd1e391f78ce11ull, 0x3b3c2ba9916b03e1ull},  // a floor of carved scrolls
+     {{0x10a949fa295fb1fbull, 0x3b3c2ba9916b03e1ull}, {0x25be1d1b1ecdd45cull, 0x3b3c2ba9916b03e1ull}}},
+    {{0x6c619b9c19ccc7acull, 0x5ee9432c853b6524ull}, {{0x6ef4962b126286eeull, 0x44d9cb6a52ad4540ull}}},  // dark water, 4 bit,
+                                                                                                        // other colours
+    {{0xc57de7c4b83fd34aull, 0x47911e17dd5e98b8ull},  // a mossy floor
+     {{0x90bbc4ca79461f9dull, 0x47911e17dd5e98b8ull}, {0xe529931929ecbfccull, 0x47911e17dd5e98b8ull}}},
+    {{0xe0274fd1ae6986b8ull, 0x990f730a3507fd8dull}, {{0x6d7882647efda698ull, 0x32ee5c1e2825e7dfull}}},  // pale rock, other
+                                                                                                        // colours
+};
+
 class Pack {
 public:
     void Init() {
@@ -151,18 +179,26 @@ public:
     }
 
     uint64_t Replace(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette) {
+        Key tried{};
+        uint64_t id = Match(d, guest, palette, tried);
+        Census(d, guest, palette, id, tried);
+        return id;
+    }
+
+    uint64_t Match(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette, Key& tried) {
         if (files_.empty() || !palette) return 0;
         std::vector<uint8_t> idx;
         if (!gpu::PaletteIndices(d, guest, idx)) return 0;
         Key key{TextureHash(idx, d.width, d.height, false), PaletteHash(palette, 256)};
-        auto it = index_.find(key == kXboxButtons && g_button_layout == 1 ? kPs2Buttons : key);
+        auto it = Find(key == kXboxButtons && g_button_layout == 1 ? kPs2Buttons : key);
         bool four = *std::max_element(idx.begin(), idx.end()) < 16;
         if (it == index_.end() && four) {
             key = Key{TextureHash(idx, d.width, d.height, true), PaletteHash(palette, 16)};
-            it = index_.find(key);
+            it = Find(key);
         }
+        tried = key;
         if (it == index_.end()) {
-            Missed(key, d, four ? palette : nullptr);
+            Missed(key, d, idx, palette, four);
             return 0;
         }
         uint32_t i = it->second;
@@ -186,17 +222,96 @@ public:
     }
 
 private:
-    // CV_TEXPACK_MISSES set: each texture the pack has no picture for, once, as the pack would name it, with a 4 bit
-    // one's colours (RRGGBB), to find a texture's name for a pack
-    void Missed(const Key& key, const gpu::TextureDesc& d, const uint32_t* palette) {
-        static const bool on = std::getenv("CV_TEXPACK_MISSES") != nullptr;
-        if (!on) return;
+    // the pack's picture for a texture, under its own name or the PS2's (kAliases)
+    std::map<Key, uint32_t>::const_iterator Find(const Key& key) const {
+        auto it = index_.find(key);
+        if (it != index_.end()) return it;
+        for (const Alias& a : kAliases)
+            if (a.xbox == key)
+                for (const Key& ps2 : a.ps2)
+                    if (ps2.texture && (it = index_.find(ps2)) != index_.end()) return it;
+        return index_.end();
+    }
+
+    // CV_TEXPACK_CENSUS set: each texture the game uploads, once (its level 0 bytes and colours), with its format,
+    // size and what the pack made of it: the picture, none for a P8 texture (its name as the pack would have it), or
+    // not looked for, as the pack has pictures of P8 textures only
+    void Census(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette, uint64_t id, const Key& tried) {
+        static const bool on = std::getenv("CV_TEXPACK_CENSUS") != nullptr;
+        if (!on || !guest) return;
+        uint64_t seen = XXH3_64bits(guest, gpu::LevelSize(d, 0)) ^ (palette ? XXH3_64bits(palette, 1024) * 31 : 0) ^
+                        (uint64_t(d.format) << 56 | uint64_t(d.width) << 32 | d.height);
+        std::string what;
+        if (id) what = "picture " + files_[size_t(id - 1)].filename().string();
+        else if (!palette) what = "not looked for";
+        else {
+            char name[48];
+            std::snprintf(name, sizeof(name), "none %016llx-%016llx", (unsigned long long)tried.texture,
+                          (unsigned long long)tried.palette);
+            what = name;
+        }
         std::lock_guard lock(m_);
-        if (!missed_.insert(key).second) return;
+        if (!census_.insert(seen).second) return;
+        LOGR("texpack census: %s %ux%u %u levels%s: %s", gpu::Format(d.format).name, d.width, d.height, d.levels,
+             d.cube ? " cube" : "", what.c_str());
+    }
+
+    // CV_TEXPACK_MISSES set: each texture the pack has no picture for, once, as the pack would name it, with a 4 bit
+    // one's colours (RRGGBB), to find a texture's name for a pack. Set to a folder rather than 1, the texture is saved
+    // there too, a PNG named as its picture would be (the PSM alone in the TEX0 bits, which is all this reads) with
+    // the PS2's alpha, as PCSX2 dumps a texture: an upscaled copy of it in the textures folder replaces it.
+    void Missed(const Key& key, const gpu::TextureDesc& d, const std::vector<uint8_t>& idx, const uint32_t* palette,
+                bool four) {
+        static const char* to = std::getenv("CV_TEXPACK_MISSES");
+        if (!to) return;
+        {
+            std::lock_guard lock(m_);
+            if (!missed_.insert(key).second) return;
+        }
         char colours[16 * 7 + 1] = {};
-        for (uint32_t i = 0; palette && i < 16; i++) std::snprintf(colours + i * 7, 8, " %06X", palette[i] & 0xFFFFFF);
-        LOGR("texpack: no picture for %016llx-%016llx, %ux%u%s%s", (unsigned long long)key.texture,
-             (unsigned long long)key.palette, d.width, d.height, palette ? ", 4 bit:" : "", colours);
+        for (uint32_t i = 0; four && i < 16; i++) std::snprintf(colours + i * 7, 8, " %06X", palette[i] & 0xFFFFFF);
+        char name[64];
+        std::snprintf(name, sizeof(name), "%016llx-%016llx-000000%02x", (unsigned long long)key.texture,
+                      (unsigned long long)key.palette, four ? 0x14 : 0x13);
+        LOGR("texpack: no picture for %s, %ux%u%s%s", name, d.width, d.height, four ? ", 4 bit:" : "", colours);
+        if (std::string(to) == "1") return;
+        fs::path file = fs::path(to) / (std::string(name) + ".png");
+        std::vector<uint8_t> px(idx.size() * 4);  // B G R A
+        for (size_t i = 0; i < idx.size(); i++) {
+            uint32_t c = palette[idx[i]];
+            px[i * 4] = uint8_t(c);
+            px[i * 4 + 1] = uint8_t(c >> 8);
+            px[i * 4 + 2] = uint8_t(c >> 16);
+            px[i * 4 + 3] = uint8_t(((c >> 24) + 1) >> 1);
+        }
+        std::thread([file, px = std::move(px), w = d.width, h = d.height] { SavePng(file, px, w, h); }).detach();
+    }
+
+    static void SavePng(const fs::path& file, const std::vector<uint8_t>& bgra, uint32_t w, uint32_t h) {
+        std::error_code ec;
+        fs::create_directories(file.parent_path(), ec);
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        ComPtr<IWICImagingFactory> wic;
+        ComPtr<IWICStream> stream;
+        ComPtr<IWICBitmapEncoder> enc;
+        ComPtr<IWICBitmapFrameEncode> frame;
+        WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+        bool ok = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) &&
+                  SUCCEEDED(wic->CreateStream(&stream)) &&
+                  SUCCEEDED(stream->InitializeFromFilename(file.c_str(), GENERIC_WRITE)) &&
+                  SUCCEEDED(wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &enc)) &&
+                  SUCCEEDED(enc->Initialize(stream.Get(), WICBitmapEncoderNoCache)) &&
+                  SUCCEEDED(enc->CreateNewFrame(&frame, nullptr)) && SUCCEEDED(frame->Initialize(nullptr)) &&
+                  SUCCEEDED(frame->SetSize(w, h)) && SUCCEEDED(frame->SetPixelFormat(&fmt)) &&
+                  fmt == GUID_WICPixelFormat32bppBGRA &&
+                  SUCCEEDED(frame->WritePixels(h, w * 4, UINT(bgra.size()), const_cast<BYTE*>(bgra.data()))) &&
+                  SUCCEEDED(frame->Commit()) && SUCCEEDED(enc->Commit());
+        if (!ok) LOGW("texpack: %s not written", file.string().c_str());
+        frame.Reset();
+        enc.Reset();
+        stream.Reset();
+        wic.Reset();
+        CoUninitialize();
     }
 
     enum class Stage { Idle, Queued, Ready, Failed };
@@ -297,6 +412,7 @@ private:
     std::deque<uint32_t> queue_;
     std::vector<Entry> state_;
     std::set<Key> missed_;
+    std::set<uint64_t> census_;
 };
 
 Pack g_pack;

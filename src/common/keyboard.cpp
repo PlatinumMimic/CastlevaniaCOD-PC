@@ -25,7 +25,8 @@
 //   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
 //   0:set=<setting>=<value>           a setting changed at the command's start, as the in-game menu changes it
 //                                     (render_percent, anisotropic_filtering, widescreen, vsync, or a game option
-//                                     such as texture_pack): the renderer takes it after the frame it presents
+//                                     such as lament_save): the renderer takes it after the frame it presents. One
+//                                     read only at the start (texture_pack) is an error: give it with --set instead
 //   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
@@ -203,6 +204,13 @@ void ApplySetting(const std::string& entry) {
     size_t eq = entry.find('=');
     if (eq == std::string::npos) return;
     std::string key = entry.substr(0, eq), value = entry.substr(eq + 1);
+    // read once at the start (the pack's index and its size, the button sheet): changed here they would only seem to
+    // be, so a test asking for one fails (cvtest takes an error line as the step's)
+    for (const char* start : {"texture_pack", "texture_pack_size", "button_layout"})
+        if (key == start) {
+            LOGE("live: %s applies from the next start, not here", key.c_str());
+            return;
+        }
     uint32_t n = uint32_t(std::strtoul(value.c_str(), nullptr, 10));
     bool on = value == "true" || value == "1";
     app::Settings& st = app::Get();

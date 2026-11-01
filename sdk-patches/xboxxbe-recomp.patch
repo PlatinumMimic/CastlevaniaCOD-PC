@@ -171,7 +171,7 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..d87fb39 100644
+index fe65837..e15b96f 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -72,6 +72,7 @@ struct Perf {
@@ -428,19 +428,25 @@ index fe65837..d87fb39 100644
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
      const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1982,6 +2119,11 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2119,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
+-    // forced only where the title filters across mip levels and the texture has them
+-    if (aniso && lin(min) && mip && stages.sv[i].Texture2D.MipLevels > 1 && !stages.info[i].shadow) an = aniso;
 +    // a replacement is far larger than the console's texture: filtered across its levels whatever the title asked
 +    if (stages.replaced[i]) {
 +        mip = kTexfLinear;
 +        sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | D3D12_FILTER_TYPE_LINEAR);
 +    }
-     // forced only where the title filters across mip levels and the texture has them
-     if (aniso && lin(min) && mip && stages.sv[i].Texture2D.MipLevels > 1 && !stages.info[i].shadow) an = aniso;
++    // forced wherever the title filters a texture linearly as it shrinks, whether or not it has mip levels: a title
++    // whose textures have none (Castlevania's) gets its samples along a slope from level 0, where surfaces seen at an
++    // angle shimmer without them; a quad drawn flat to the screen samples the same as before
++    if (aniso && lin(min) && !stages.info[i].shadow) an = aniso;
      if (an > 1) {
-@@ -1993,7 +2135,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+         sd.Filter = D3D12_FILTER_ANISOTROPIC;
+         sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
+@@ -1993,7 +2137,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -449,7 +455,7 @@ index fe65837..d87fb39 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2218,6 +2360,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +2362,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -472,7 +478,7 @@ index fe65837..d87fb39 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2618,20 +2776,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2618,20 +2778,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
  }
  
  // viewport covers the target, the guest viewport is in the shader; scissor clips to it
@@ -505,7 +511,7 @@ index fe65837..d87fb39 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2815,6 +2975,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,6 +2977,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -513,7 +519,7 @@ index fe65837..d87fb39 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -2848,6 +3009,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2848,6 +3011,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      // constants
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
@@ -521,7 +527,7 @@ index fe65837..d87fb39 100644
      DrawConstants c{};
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
-@@ -2860,7 +3022,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,7 +3024,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -530,7 +536,7 @@ index fe65837..d87fb39 100644
      SetBlendFactorStencilRef(s);
  
      // geometry, counted while the title runs a visibility test
-@@ -3275,6 +3437,7 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +3439,7 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -538,7 +544,7 @@ index fe65837..d87fb39 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,6 +3454,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,6 +3456,7 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -546,7 +552,7 @@ index fe65837..d87fb39 100644
      f.used = 0;
      f.srv = 0;
      cl_->Reset(f.alloc.Get(), nullptr);
-@@ -3317,12 +3481,14 @@ void LogPerf() {
+@@ -3317,12 +3483,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -565,7 +571,7 @@ index fe65837..d87fb39 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,13 +3497,13 @@ void LogPerf() {
+@@ -3331,13 +3499,13 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
