@@ -46,6 +46,8 @@ add_xbe_image(Castlevania default.xbe game.toml ${GAME_PARTITIONS} game)
 set_property(TARGET Castlevania_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:Castlevania>)
 
 target_include_directories(Castlevania SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
+# the exe names its debug symbols by file name only, not the folder it was built in
+target_link_options(Castlevania PRIVATE -Wl,/pdbaltpath:%_PDB%)
 
 # the launcher beside it: game files check, settings, play; no game code, the xbe's SHA-1 add_xbe_image wrote, the
 # SDK's disc image reader for the xbe on an .iso
