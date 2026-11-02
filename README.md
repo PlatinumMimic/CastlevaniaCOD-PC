@@ -560,6 +560,9 @@ Changes this game needed beyond the generated config:
 
 ## Known Issues
 - Only the first areas have been tested so far, in both releases.
+- With the fog pushed out or off, or Far View on, some rooms' skies show the edges of the painted cards they are
+  made of. The Abandoned Castle's rampart keeps its sky as the game shows it; a fix for the other rooms is being
+  worked on.
 - Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
   Smart App Control, where it is on, may block such programs; that is untested.
 
