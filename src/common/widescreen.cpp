@@ -16,9 +16,12 @@
 // its castle.
 //
 // Overscan: the last pass of each frame draws a copy of the frame back over it with rows -16 to 496 of the copy
-// across rows 0 to 480, the PS2's 448 lines and their border shrunk into the NTSC frame. A TV's overscan hid the 16
-// rows at the top and bottom, which read past the copy and smear its first and last rows into streaks. The pass is
-// drawn that much taller instead, so the copy fills the frame row for row, as square pixels as the scene was drawn.
+// across rows 0 to 480, the PS2's 448 lines and their border shrunk into the NTSC frame; the European release's rows
+// -16 to 490, and its columns -20 to 660 across the 640, the picture narrowed by 640/680. A TV's overscan hid the
+// rows and columns at the edges, which read past the copy and smear its first and last ones into streaks, and the
+// copy's first row and column, which the game's 2D draws leave out (on the PS2's grid, a pixel right and down: a fade
+// misses them). The pass is drawn where its texels are instead, the copy's pixel at the frame's a pixel up and left of
+// it, so the copy fills the frame pixel for pixel, as square as the scene was drawn.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -60,10 +63,17 @@ struct Span {
 
 class Hooks : public gpu::ShaderHooks {
 public:
-    // ext.z: a vertex on the console frame's left or right edge goes out to the screen's instead
+    // ext.xy scale across and down, ext.zw then move, in clip space; ext.x negative: a vertex on the console frame's
+    // left or right edge goes out to the screen's instead
     std::string Position() const override {
-        return "    o.pos.x *= ext.z != 0 && abs(abs(o.pos.x / o.pos.w) - 1) < 0.006 ? 1 : ext.x;\n"
-               "    o.pos.y *= ext.y;\n";
+        return "    o.pos.x = ext.x < 0 && abs(abs(o.pos.x / o.pos.w) - 1) < 0.006 ? o.pos.x\n"
+               "            : o.pos.x * abs(ext.x) + ext.z * o.pos.w;\n"
+               "    o.pos.y = o.pos.y * abs(ext.y) + ext.w * o.pos.w;\n";
+    }
+    // ext.y negative: only the texture's own columns are drawn (stage 0's, in texels: a linear texture), not its edge
+    // ones repeated past them
+    std::string Output() const override {
+        return gpu::ShaderHooks::Output() + "if (ext.y < 0 && (tc0.x < 0 || tc0.x > texsize[0].x)) discard;\n";
     }
 };
 
@@ -105,11 +115,20 @@ public:
                   (std::fabs(x.lo - 0.5f) <= 1.5f || std::fabs(x.hi - gw - 0.5f) <= 1.5f);
         // a quad on the frame: across it, how far its texture coordinates go
         if (inside && a.vertex_count == 4) d_.u = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[0]; });
-        // the frame pass: screen positions, its copy's rows read over a taller span than it covers
+        // the frame pass: screen positions, its copy's rows read over a taller span than it covers (a picture of the
+        // frame's size drawn as it is). Each corner goes to its texel a pixel up and left, in clip space (y up there).
         if (prog && !p.screen && d_.whole && a.vertex_count == 4) {
-            Span t = Read(a, kFrameTexCoord, [](const float* v, uint32_t) { return v[1]; });
-            if (!t.Empty() && y.hi > y.lo && t.lo < y.lo - 0.5f && t.hi > y.hi + 0.5f)
-                d_.stretch = (t.hi - t.lo) / (y.hi - y.lo);
+            Span u = Read(a, kFrameTexCoord, [](const float* v, uint32_t) { return v[0]; });
+            Span t = d_.v = Read(a, kFrameTexCoord, [](const float* v, uint32_t) { return v[1]; });
+            if (!u.Empty() && !t.Empty() && x.hi > x.lo && y.hi > y.lo && t.lo < y.lo - 0.5f && t.hi > y.hi + 0.5f) {
+                d_.frame = true;
+                d_.gw = uint32_t(gw);
+                d_.gh = uint32_t(gh);
+                d_.scale[0] = (u.hi - u.lo) / (x.hi - x.lo);
+                d_.scale[1] = (t.hi - t.lo) / (y.hi - y.lo);
+                d_.move[0] = d_.scale[0] - 1 + 2 * (u.lo - d_.scale[0] * x.lo - 1) / gw;
+                d_.move[1] = 1 - d_.scale[1] - 2 * (t.lo - d_.scale[1] * y.lo - 1) / gh;
+            }
         }
     }
 
@@ -130,7 +149,9 @@ public:
     }
 
     void Sampled(const gpu::TextureDesc& d, const gpu::Target* t, uint8_t, gpu::TexInfo&) override {
-        d_.target |= t != nullptr;
+        // a target the GPU drew: the frame, or a pass over it. One whose picture the CPU wrote is a picture (the
+        // European release's intro decodes every other frame of its movie into a target of the game's).
+        d_.target |= t != nullptr && !t->cpu;
         if (!d_.sampled) d_.tex = d;
         d_.sampled = true;
     }
@@ -155,19 +176,26 @@ public:
             world_ += d_.world ? d_.count : 0;
             picture_ |= squeeze && d_.whole && d_.textured && !d_.target;
         }
-        ext[0] = squeeze ? kSqueeze : 1.0f;
-        ext[1] = back_buffer_ && d_.target ? d_.stretch : 1.0f;
-        ext[2] = edges ? 1.0f : 0.0f;
+        // the frame pass, or a picture of the frame's size drawn the way it is (the European release's intro movie),
+        // each texel on a pixel. The picture squeezed has the columns it reads past its texture at its sides, on the
+        // screen: left out.
+        bool placed = back_buffer_ && d_.frame && d_.tex.width == d_.gw && d_.tex.height == d_.gh;
+        float across = squeeze ? kSqueeze : 1.0f;
+        ext[0] = across * (placed ? d_.scale[0] : 1.0f) * (edges ? -1.0f : 1.0f);
+        ext[1] = (placed ? d_.scale[1] : 1.0f) * (placed && squeeze && d_.tex.linear ? -1.0f : 1.0f);
+        ext[2] = placed ? across * d_.move[0] : 0.0f;
+        ext[3] = placed ? d_.move[1] : 0.0f;
         // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
         if (kTrace && frame_ % kTrace == 0 && d_.world)
             LOGR("wide %llu: into %08x%s 3D, n %u", (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "",
                  d_.count);
         else if (kTrace && frame_ % kTrace == 0 && d_.squeeze)
-            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x u %g..%g%s blend %u: %s%s",
+            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x u %g..%g v %g..%g%s blend %u: "
+                 "%s%s%s",
                  (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
-                 d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, d_.u.lo, d_.u.hi,
+                 d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, d_.u.lo, d_.u.hi, d_.v.lo, d_.v.hi,
                  d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
-                 edges ? "edges out" : squeeze ? "squeezed" : "kept");
+                 edges ? "edges out" : squeeze ? "squeezed" : "kept", placed ? ", placed" : "");
     }
 
 private:
@@ -210,9 +238,11 @@ private:
     struct Draw {
         bool squeeze = false, world = false, whole = false, edge = false, textured = false, target = false;
         bool sampled = false;
-        float stretch = 1;
+        bool frame = false;  // the frame pass, its scale and move across and down in clip space, for a picture of
+        float scale[2] = {1, 1}, move[2] = {0, 0};  // gw by gh
+        uint32_t gw = 0, gh = 0;
         uint32_t count = 0;
-        Span x, y, u;  // on the console frame; the first texture coordinate, for one quad on it
+        Span x, y, u, v;  // on the console frame; the first texture coordinate, for one quad on it (v: whole)
         gpu::TextureDesc tex;
     };
     Draw d_;

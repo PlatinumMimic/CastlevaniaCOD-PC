@@ -367,7 +367,7 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..e15b96f 100644
+index fe65837..c4e0d87 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -72,6 +72,7 @@ struct Perf {
@@ -448,7 +448,36 @@ index fe65837..e15b96f 100644
          f6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter));
      }
      if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_))) &&
-@@ -1414,6 +1435,64 @@ void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect
+@@ -1201,10 +1222,12 @@ bool D3D12Backend::BindTargets(const State& s) {
+         if (LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
+         Transition(rt->res.Get(), rt->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+         rt->drawn = true;
++        rt->cpu = false;
+     }
+     if (ds) {
+         Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+         ds->drawn = true;
++        ds->cpu = false;
+     }
+     if (rt != bound_rt_ || ds != bound_ds_) {
+         D3D12_CPU_DESCRIPTOR_HANDLE rh = rt ? Cpu(rtv_heap_.Get(), rt->view, rtv_inc_) : D3D12_CPU_DESCRIPTOR_HANDLE{};
+@@ -1262,6 +1285,7 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+     Alloc cb = Upload(256, 256);
+     DrawFullScreen(pso, cb.gpu, slot);
+     dst.drawn = true;
++    dst.cpu = false;
+     bound_rt_ = bound_ds_ = nullptr;
+ }
+ 
+@@ -1350,6 +1374,7 @@ void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
+     CurrentFrame().garbage.push_back(tex);
+     t.epoch = DirtyEpoch(t.data);
+     t.sig = MemSig(t.data, t.bytes);
++    t.cpu = true;
+ }
+ 
+ // samplers_ key of the full screen passes' samplers, apart from the stage samplers' hashed keys
+@@ -1414,6 +1439,64 @@ void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect
      DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
  }
  
@@ -513,7 +542,7 @@ index fe65837..e15b96f 100644
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +1500,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +1504,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -535,7 +564,7 @@ index fe65837..e15b96f 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +1519,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +1523,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -543,7 +572,7 @@ index fe65837..e15b96f 100644
      return code.Get();
  }
  
-@@ -1674,6 +1760,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +1764,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -551,7 +580,7 @@ index fe65837..e15b96f 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1727,6 +1814,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +1818,7 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -559,7 +588,7 @@ index fe65837..e15b96f 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +1931,39 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +1935,39 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -599,7 +628,7 @@ index fe65837..e15b96f 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,8 +1991,24 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,8 +1995,24 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -624,7 +653,7 @@ index fe65837..e15b96f 100644
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
      const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1982,8 +2119,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2123,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -642,7 +671,7 @@ index fe65837..e15b96f 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2137,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2141,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -651,7 +680,7 @@ index fe65837..e15b96f 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2218,6 +2362,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +2366,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -674,7 +703,7 @@ index fe65837..e15b96f 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2618,20 +2778,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2618,20 +2782,22 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
  }
  
  // viewport covers the target, the guest viewport is in the shader; scissor clips to it
@@ -707,7 +736,7 @@ index fe65837..e15b96f 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2815,6 +2977,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,6 +2981,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -715,7 +744,7 @@ index fe65837..e15b96f 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -2848,6 +3011,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2848,6 +3015,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      // constants
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
@@ -723,7 +752,7 @@ index fe65837..e15b96f 100644
      DrawConstants c{};
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
-@@ -2860,7 +3024,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,7 +3028,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -732,7 +761,31 @@ index fe65837..e15b96f 100644
      SetBlendFactorStencilRef(s);
  
      // geometry, counted while the title runs a visibility test
-@@ -3275,6 +3439,7 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -2912,6 +3080,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+         }
+     }
+     t.drawn = true;
++    t.cpu = false;
+ }
+ 
+ // ClearChannels' pipeline for the target format and channel mask, kept in blit_psos_; null when it can't be made
+@@ -3074,6 +3243,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+         Blit(src_res, src_t.fmt, uv, o);
+     }
+     dst_t.drawn = true;
++    dst_t.cpu = false;
+     bound_rt_ = bound_ds_ = nullptr;
+ }
+ 
+@@ -3111,6 +3281,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+         cl_->CopyTextureRegion(&dl, dx, dy, 0, &sl, &b);
+     }
+     dst_t.drawn = true;
++    dst_t.cpu = false;
+     bound_rt_ = bound_ds_ = nullptr;
+ }
+ 
+@@ -3275,6 +3446,7 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -740,7 +793,7 @@ index fe65837..e15b96f 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,6 +3456,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,6 +3463,7 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -748,7 +801,7 @@ index fe65837..e15b96f 100644
      f.used = 0;
      f.srv = 0;
      cl_->Reset(f.alloc.Get(), nullptr);
-@@ -3317,12 +3483,14 @@ void LogPerf() {
+@@ -3317,12 +3490,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -767,7 +820,7 @@ index fe65837..e15b96f 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,13 +3499,13 @@ void LogPerf() {
+@@ -3331,13 +3506,13 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -785,7 +838,7 @@ index fe65837..e15b96f 100644
          perf_start = PerfClock::now();
          perf_frames = 0;
 diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
-index ce6acda..3309a42 100644
+index ce6acda..2479f99 100644
 --- a/runtime/gpu/ext.h
 +++ b/runtime/gpu/ext.h
 @@ -17,6 +17,7 @@
@@ -796,7 +849,15 @@ index ce6acda..3309a42 100644
  
  namespace gpu {
  
-@@ -60,6 +61,12 @@ public:
+@@ -30,6 +31,7 @@ struct Target {
+     uint32_t data = 0, bytes = 0;
+     uint64_t epoch = 0, sig = 0;  // last lock seen, guest memory as last matched
+     bool drawn = false;           // the GPU wrote it since the last readback
++    bool cpu = false;             // its picture is the CPU's: uploaded, no draw or copy into it since
+     std::vector<uint8_t> read;    // what Sync left in guest memory
+     Microsoft::WRL::ComPtr<ID3D12Resource> fb;  // copy read by draws that sample the target they render to
+     D3D12_RESOURCE_STATES fb_state = D3D12_RESOURCE_STATE_COPY_DEST;
+@@ -60,6 +62,12 @@ public:
      virtual uint64_t Presents() const = 0;
  };
  
@@ -809,7 +870,7 @@ index ce6acda..3309a42 100644
  class Extension {
  public:
      virtual ~Extension() = default;
-@@ -74,12 +81,18 @@ public:
+@@ -74,12 +82,18 @@ public:
      virtual void MakeTarget(const Surface&, bool /*depth*/, uint32_t /*gw*/, uint32_t /*gh*/, float& /*scale*/, DXGI_FORMAT& /*fmt*/) {}
      virtual void BeginDraw(const State&) {}
      virtual void EndDraw() {}

@@ -365,9 +365,9 @@ Changes this game needed beyond the generated config:
   texture had them, which no texture of this game does); multisampled draws (2X, 4X) on the hardware's smaller
   grid, which puts Hector's 4X stencil shadow volume back in place (found by Neguchads); another region's release in
   an executable of its own, which the others start for its game files (`GameInfo::releases`, `xbe_releases()`); the
-  console language a title reads (`GameInfo::language`); the settings file written over, its other keys kept. The
-  SDK's mixer plays every channel of a voice by itself now (cutscene audio is a 5.1 stream with the voices in the
-  centre channel).
+  console language a title reads (`GameInfo::language`); the settings file written over, its other keys kept; a
+  target telling whether its picture is the CPU's (`Target::cpu`). The SDK's mixer plays every channel of a voice by
+  itself now (cutscene audio is a 5.1 stream with the voices in the centre channel).
 - Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll` (`CastlevaniaEU.dll` for the
   European release), which the exe builds on the player's PC on its first start (the SDK's
   `runtime\app\game_code.cpp`, behind a progress window) from their own `default.xbe`, with the config whose `library`
@@ -421,7 +421,9 @@ Changes this game needed beyond the generated config:
     maps PS2 screen space to console pixels with `c94`/`c95`. Each draw into the back buffer is squeezed to 3/4 of its
     width around the centre: for draws that use the camera that is a wider field of view, for 2D draws a 4:3 shape.
     Draws over the whole width stay whole when they are untextured (fades), take a few texels across it (a message's
-    dimmed panel) or read a render target (the frame pass). Menus, the map and the save screens draw their backdrop
+    dimmed panel) or read a render target the GPU drew (the frame pass); one whose picture the CPU wrote is a picture
+    (the European release's intro decodes every other frame of its movie into a target of the game's, which once
+    kept it whole every other frame). Menus, the map and the save screens draw their backdrop
     in pieces; the pieces at the frame's edges have those edges pulled out to the screen's (a vertex on the edge is
     not squeezed), unless the 3D world (1000 vertices of it) or a 4:3 picture over the whole frame came first: the
     title's logo is in pieces at the edges, over its castle. `CV_WIDE_TRACE=<n>` logs every draw into the back buffer
@@ -429,8 +431,12 @@ Changes this game needed beyond the generated config:
     the game composes an area's name card in another 640x480 target and copies it out to a texture, and squeezed
     there the card lost its left end.
   - Overscan. The last pass of each frame draws a copy of the frame back with its rows -16 to 496 over rows 0 to 480
-    (PS2 448 lines plus border shrunk into the NTSC frame); the 16 rows past each edge clamped into streaks. The pass
-    is drawn that much taller, so the copy fills the frame row for row.
+    (PS2 448 lines plus border shrunk into the NTSC frame); the European release's rows -16 to 490 and columns -20 to
+    660 over the 640, its picture narrowed by 640/680. What reads past the copy clamps into streaks at the edges, and
+    the copy's first row and column are left out by the game's 2D draws, a pixel right and down on the PS2's grid
+    (a fade misses them: a light line at the top). The pass is drawn where its texels are, the copy's pixel a pixel up
+    and left on the frame, so the copy fills the frame pixel for pixel. The European intro's movie is drawn the same
+    way; squeezed to 4:3, the columns it reads past its texture are left out (`ShaderHooks::Output`).
 
 ### Testing
 - `python -I tools\cvtest\cvtest.py tools\cvtest\scenarios\newgame.json` plays a scenario in a test folder of its own
