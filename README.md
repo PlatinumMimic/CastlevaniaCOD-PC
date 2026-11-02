@@ -529,7 +529,8 @@ sponsored by them, and it is not an official product. Nothing here is sold.
   own runtime, and the LLVM compiler. They contain **no** game assets, game code (original or recompiled), disc
   images, BIOS, keys or Xbox SDK libraries, and none may be added. `assets`, `generated` and all build output are
   excluded by `.gitignore`; `release.bat` refuses a package with game files or objects in it.
-- `config\game.toml` lists addresses and names of functions in the game's executable. It contains no code from it.
+- `config\game.toml` and `config\game_eu.toml` list addresses and names of functions in each release's executable,
+  as `src\common\release.h` does for the port's own code. They contain no code from it.
 - You need your own copy of the game, the USA or the European Xbox disc, as an `.iso` or its extracted files. This
   project does not provide one, nor tell where to get one.
 - The HD texture packs linked under [HD Textures](#hd-textures) are their makers' own work, made for the PS2 game.
