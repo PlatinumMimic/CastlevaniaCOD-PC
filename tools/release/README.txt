@@ -2,8 +2,8 @@ Castlevania: Curse of Darkness - native PC port of the original Xbox version
 https://github.com/jmafort/CastlevaniaCOD-PC (a fork of https://github.com/Pazzi7054/CastlevaniaCOD-PC)
 
 This download contains no game: no game files, no disc image and no game code. You need your own
-copy of Castlevania: Curse of Darkness for the original Xbox, USA (NTSC-U) release, as an .iso or
-its extracted files.
+copy of Castlevania: Curse of Darkness for the original Xbox, the USA (NTSC-U) or the European
+(PAL) release, as an .iso or its extracted files.
 
 WHAT YOU NEED
   Windows 10 (version 1703 or later) or 11, 64-bit; graphics with Direct3D 12 and its driver
@@ -25,6 +25,10 @@ GETTING STARTED
 A disc image can be the whole disc (a redump) or its game partition alone (an xiso), and a copy
 whose header was patched for a hard disk loader or another region (title, media, region) is
 fine: the game puts the original header back.
+
+The European release plays too, in English, French, German, Spanish or Italian (the launcher's
+Game page sets which). It has an executable of its own, CastlevaniaEU.exe, which Castlevania.exe
+starts by itself when your copy is the European one: just run Castlevania.exe as above.
 
 CastlevaniaLauncher.exe has every setting (display, widescreen, render scale, controls) and
 checks your game files. In game, F10 or clicking both sticks in (L3 + R3) opens the settings.

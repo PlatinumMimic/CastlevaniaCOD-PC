@@ -1,7 +1,7 @@
 # Castlevania: Curse of Darkness (original Xbox), statically recompiled
 
 cmake_minimum_required(VERSION 3.25)
-project(castlevania VERSION 1.4.0 LANGUAGES C CXX)
+project(castlevania VERSION 1.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,34 +26,53 @@ FetchContent_Declare(xxhash GIT_REPOSITORY https://github.com/Cyan4973/xxHash.gi
 FetchContent_MakeAvailable(xxhash)
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
-list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/(game|launcher)/")
+list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/(game|game_eu|launcher)/")
 
-# partitions as xbe_symbols wrote them into config/game.toml
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS config/game.toml)
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/config/game.toml)
-    file(STRINGS config/game.toml GAME_PARTITIONS REGEX "^partitions *=")
-    string(REGEX MATCH "[0-9]+" GAME_PARTITIONS "${GAME_PARTITIONS}")
-endif()
-# no config yet: build.bat writes it with xbe_symbols, the change reconfigures
-if(NOT GAME_PARTITIONS)
-    set(GAME_PARTITIONS 8)
-endif()
+# partitions as xbe_symbols wrote them into a config
+function(cv_partitions config out)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/config/${config})
+    set(count "")
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/config/${config})
+        file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/config/${config} count REGEX "^partitions *=")
+        string(REGEX MATCH "[0-9]+" count "${count}")
+    endif()
+    # no config yet: build.bat writes it with xbe_symbols, the change reconfigures
+    if("${count}" STREQUAL "")
+        set(count 8)
+    endif()
+    set(${out} ${count} PARENT_SCOPE)
+endfunction()
 
 # target name = GAME_EXE in build.bat, xbe = GAME_XBE. A release (release.bat) is this build without Castlevania.dll:
 # the exe builds the game code from the player's own default.xbe on its first start, with the compiler folder.
+cv_partitions(game.toml GAME_PARTITIONS)
 add_xbe_image(Castlevania default.xbe game.toml ${GAME_PARTITIONS} game)
-# the DLL is linked again whenever the exe is: one older than the exe is built again on the first start
-set_property(TARGET Castlevania_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:Castlevania>)
+set(CV_RELEASES Castlevania)
+# The European release, when its default.xbe is in assets/eu: an executable of its own (the same game built later for
+# five languages, its code and data a little shifted), the same sources compiled for its addresses (CV_EU,
+# src/common/release.h), src/game_eu its hooks. Either executable, given the other release's game files, starts the
+# other (the SDK's game_files.cpp, from the releases below).
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets/eu/default.xbe)
+    cv_partitions(game_eu.toml GAME_EU_PARTITIONS)
+    add_xbe_image(CastlevaniaEU eu/default.xbe game_eu.toml ${GAME_EU_PARTITIONS} game_eu)
+    target_compile_definitions(CastlevaniaEU PRIVATE CV_EU)
+    list(APPEND CV_RELEASES CastlevaniaEU)
+endif()
+xbe_releases(${CMAKE_CURRENT_BINARY_DIR}/releases.cpp ${CV_RELEASES})
+foreach(exe ${CV_RELEASES})
+    target_sources(${exe} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/releases.cpp)
+    # the DLL is linked again whenever the exe is: one older than the exe is built again on the first start
+    set_property(TARGET ${exe}_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:${exe}>)
+    target_include_directories(${exe} SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
+    # the exe names its debug symbols by file name only, not the folder it was built in
+    target_link_options(${exe} PRIVATE -Wl,/pdbaltpath:%_PDB%)
+endforeach()
 
-target_include_directories(Castlevania SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
-# the exe names its debug symbols by file name only, not the folder it was built in
-target_link_options(Castlevania PRIVATE -Wl,/pdbaltpath:%_PDB%)
-
-# the launcher beside it: game files check, settings, play; no game code, the xbe's SHA-1 add_xbe_image wrote, the
-# SDK's disc image reader for the xbe on an .iso
+# the launcher beside them: game files check, settings, play; no game code, the releases' xbe SHA-1s, the SDK's disc
+# image reader for the xbe on an .iso
 add_executable(CastlevaniaLauncher WIN32
     src/launcher/launcher.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/Castlevania_xbe.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/releases.cpp
     ${XBE_SDK_DIR}/runtime/kernel/disc.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -68,14 +87,18 @@ target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall)  # D
 target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 d3d12 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32
                       ole32 windowscodecs)
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
-add_dependencies(Castlevania CastlevaniaLauncher)
+foreach(exe ${CV_RELEASES})
+    add_dependencies(${exe} CastlevaniaLauncher)
+endforeach()
 
-# both exes' version details (their Properties, Task Manager): a program without them looks suspect to antivirus
+# the exes' version details (their Properties, Task Manager): a program without them looks suspect to antivirus
 # heuristics. release.bat names the zip with the version.
 file(WRITE ${CMAKE_BINARY_DIR}/version.txt "${PROJECT_VERSION}\n")
-foreach(exe Castlevania CastlevaniaLauncher)
+foreach(exe ${CV_RELEASES} CastlevaniaLauncher)
     if(exe STREQUAL "Castlevania")
         set(description "Castlevania: Curse of Darkness, PC port")
+    elseif(exe STREQUAL "CastlevaniaEU")
+        set(description "Castlevania: Curse of Darkness, PC port (European release)")
     else()
         set(description "Castlevania: Curse of Darkness, PC port launcher")
     endif()
@@ -141,7 +164,7 @@ if(CV_GAME_ICON)
     file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icon.rc CONTENT "1 ICON \"${GAME_ICON}\"
 ")
     set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/icon.rc PROPERTIES OBJECT_DEPENDS ${GAME_ICON})
-    foreach(exe Castlevania CastlevaniaLauncher)
+    foreach(exe ${CV_RELEASES} CastlevaniaLauncher)
         target_sources(${exe} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/icon.rc)
         add_dependencies(${exe} castlevania_icon)
     endforeach()

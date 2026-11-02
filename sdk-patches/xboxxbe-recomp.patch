@@ -1,5 +1,5 @@
 diff --git a/cmake/XbeRecomp.cmake b/cmake/XbeRecomp.cmake
-index 22e033f..1213937 100644
+index 22e033f..ee09c7e 100644
 --- a/cmake/XbeRecomp.cmake
 +++ b/cmake/XbeRecomp.cmake
 @@ -82,6 +82,14 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
@@ -17,7 +17,7 @@ index 22e033f..1213937 100644
  function(add_xbe_image target xbe config partitions game_dir)
      set(GEN ${CMAKE_CURRENT_SOURCE_DIR}/generated/${game_dir})
      set(GEN_SOURCES ${GEN}/x86_func_mapping.cpp)
-@@ -107,8 +115,20 @@ function(add_xbe_image target xbe config partitions game_dir)
+@@ -107,9 +115,22 @@ function(add_xbe_image target xbe config partitions game_dir)
      set(xbe_file ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe})
      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${xbe_file})
      file(SHA1 ${xbe_file} xbe_sha1)
@@ -37,10 +37,42 @@ index 22e033f..1213937 100644
 +extern const unsigned char kImageCertificate[92] = {${xbe_cert_bytes}};
 +")
      add_executable(${target} WIN32 ${XBE_RUNTIME_SOURCES} ${XBE_HOST_SOURCES} ${GAME_SOURCES} ${XBE_IMGUI_SOURCES} ${XBE_HASH})
++    set_target_properties(${target} PROPERTIES XBE_SHA1 ${xbe_sha1} XBE_CERTIFICATE "${xbe_cert_bytes}")  # xbe_releases()
      add_dependencies(${target} recompile_${target} compiler_files)
      # the import library of what the executable exports to its DLL goes to the compiler folder
+     set_target_properties(${target} PROPERTIES ENABLE_EXPORTS ON ARCHIVE_OUTPUT_DIRECTORY ${XBE_COMPILER_DIR})
+@@ -138,3 +159,29 @@ function(add_xbe_image target xbe config partitions game_dir)
+     add_custom_command(TARGET ${target}_code POST_BUILD
+         COMMAND ${CMAKE_COMMAND} -E rm -f ${XBE_COMPILER_DIR}/work/${target}/built.txt)
+ endfunction()
++
++# A game's releases (each region's xbe, recompiled into its executable by add_xbe_image) for GameInfo::releases: writes
++# <file> with kReleases[kReleaseCount], each an xbe's SHA-1, its certificate's bytes and its executable's name, to
++# link into those executables, and into a launcher that tells them apart
++function(xbe_releases file)
++    set(certificates "")
++    set(list "")
++    set(i 0)
++    foreach(target ${ARGN})
++        get_target_property(sha ${target} XBE_SHA1)
++        get_target_property(certificate ${target} XBE_CERTIFICATE)
++        string(APPEND certificates "const unsigned char kCertificate${i}[92] = {${certificate}};\n")
++        string(APPEND list "    {\"${sha}\", kCertificate${i}, \"${target}\"},\n")
++        math(EXPR i "${i} + 1")
++    endforeach()
++    file(CONFIGURE OUTPUT ${file} CONTENT "// the game's releases, written by CMake (xbe_releases)
++#include \"app/app.h\"
++
++namespace {
++${certificates}}  // namespace
++
++extern const app::GameInfo::Release kReleases[] = {
++${list}};
++extern const unsigned kReleaseCount = ${i};
++")
++endfunction()
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index e1c1254..675be70 100644
+index e1c1254..e2b9fdd 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
 @@ -26,7 +26,9 @@ struct Settings {
@@ -63,8 +95,71 @@ index e1c1254..675be70 100644
  bool Widescreen();
  
  std::filesystem::path ExeDir();
+@@ -86,6 +89,14 @@ struct GameInfo {
+     const wchar_t* splash;       // .bmp or .png beside the exe
+     const wchar_t* missing;      // message when neither the game files nor a disc image are found
+     std::vector<std::pair<const char*, const char*>> images;  // xbe file name, executable name
++    // the game's other releases (another region's), each recompiled into an executable of its own: game files with
++    // one of their xbes start that executable instead (game_files.cpp)
++    struct Release {
++        const char* sha1;                  // its xbe's, lower case hex
++        const unsigned char* certificate;  // its certificate's title name (80 bytes), allowed media, region, ratings (12)
++        const char* exe;                   // beside this one, without .exe
++    };
++    std::vector<Release> releases;
+     std::vector<Option> options;
+     // the settings file's toml::table, for what options cannot hold
+     void (*load)(const void* table);
+@@ -98,6 +109,9 @@ struct GameInfo {
+     void (*ui)(double fps);        // each frame inside the ImGui frame, UiLock held
+     void (*pad)(int port, input::Pad& pad);  // a polled pad before the game gets it
+     void (*rumble)(int port, uint16_t& left, uint16_t& right);
++    // the console's language as XGetLanguage gives it (1 English, 2 Japanese, 3 German, 4 French, 5 Spanish,
++    // 6 Italian, 7 Korean, 8 Chinese, 9 Portuguese); English when null
++    uint32_t (*language)();
+ };
+ extern const GameInfo kGame;
+ 
+diff --git a/runtime/app/game_code.cpp b/runtime/app/game_code.cpp
+index 0582ed9..c2f7610 100644
+--- a/runtime/app/game_code.cpp
++++ b/runtime/app/game_code.cpp
+@@ -88,24 +88,28 @@ int64_t NowMs() {
+ 
+ fs::path CompilerDir() { return ExeDir() / "compiler"; }
+ 
+-// the config in compiler\config whose [xbe] path is this xbe; an included one has no path
+-fs::path ConfigFor(const std::string& xbe) {
++// the config in compiler\config whose [xbe] path is this xbe (an included one has no path), the one whose library is
++// this executable's DLL first: two releases of a game have an xbe of the same name, each its own executable
++fs::path ConfigFor(const std::string& xbe, const std::string& exe) {
+     std::error_code ec;
++    fs::path first;
+     for (auto& e : fs::directory_iterator(CompilerDir() / "config", ec)) {
+         try {
+             toml::table t = toml::parse_file(e.path().string());
+-            if (fs::path(t["xbe"]["path"].value_or(std::string())).filename() == xbe) return e.path();
++            if (fs::path(t["xbe"]["path"].value_or(std::string())).filename() != xbe) continue;
++            if (t["xbe"]["library"].value_or(std::string()) == exe + ".dll") return e.path();
++            if (first.empty()) first = e.path();
+         } catch (const toml::parse_error&) {
+         }
+     }
+-    return {};
++    return first;
+ }
+ 
+ std::vector<Image> Images() {
+     std::vector<Image> images;
+     for (auto& [xbe, exe] : kGame.images) {
+         std::string name = exe;
+-        images.push_back({std::wstring(name.begin(), name.end()), xbe, ConfigFor(xbe)});
++        images.push_back({std::wstring(name.begin(), name.end()), xbe, ConfigFor(xbe, name)});
+     }
+     return images;
+ }
 diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
-index 4570d3b..cd1e6f9 100644
+index 4570d3b..09c67b4 100644
 --- a/runtime/app/game_files.cpp
 +++ b/runtime/app/game_files.cpp
 @@ -9,6 +9,7 @@
@@ -84,45 +179,128 @@ index 4570d3b..cd1e6f9 100644
  
  namespace app {
  
-@@ -26,6 +29,23 @@ namespace {
+@@ -26,6 +29,59 @@ namespace {
  
  namespace fs = std::filesystem;
  
 +// Copies of a release often have their certificate's title name, allowed media and region patched (for a hard disk
-+// loader, or for any region's console), the signed sections left alone. Put back as this release has them, such a
-+// copy is this release, and the game runs that: true with the xbe restored.
-+bool RestoreCertificate(std::vector<uint8_t>& xbe) {
++// loader, or for any region's console), the signed sections left alone. Put back as the release with this SHA-1 has
++// them, such a copy is that release, and the game runs that: true with the xbe restored.
++bool RestoreCertificate(std::vector<uint8_t>& xbe, const char* sha1, const unsigned char* certificate) {
 +    if (xbe.size() < 0x11C) return false;
 +    uint32_t base, cert;
 +    memcpy(&base, &xbe[0x104], 4);
 +    memcpy(&cert, &xbe[0x118], 4);
 +    if (cert < base || uint64_t(cert - base) + 0xA8 > xbe.size()) return false;
 +    std::vector<uint8_t> copy = xbe;
-+    memcpy(&copy[cert - base + 0x0C], kImageCertificate, 80);
-+    memcpy(&copy[cert - base + 0x9C], kImageCertificate + 80, 12);
-+    if (Sha1(copy) != kImageSha1) return false;
++    memcpy(&copy[cert - base + 0x0C], certificate, 80);
++    memcpy(&copy[cert - base + 0x9C], certificate + 80, 12);
++    if (Sha1(copy) != sha1) return false;
 +    xbe = std::move(copy);
 +    return true;
++}
++
++// the game's other release this xbe is, as GameInfo::releases names them, with its executable beside this one
++const GameInfo::Release* OtherRelease(const std::vector<uint8_t>& xbe, const std::string& sha) {
++    for (const GameInfo::Release& release : kGame.releases) {
++        std::vector<uint8_t> copy = xbe;
++        std::error_code ec;
++        if ((sha == release.sha1 || RestoreCertificate(copy, release.sha1, release.certificate)) &&
++            fs::exists(ExeDir() / (std::string(release.exe) + ".exe"), ec))
++            return &release;
++    }
++    return nullptr;
++}
++
++// That release's executable with this one's arguments, for as long as it runs: this process ends with its exit code,
++// so whatever started the game (a launcher, Steam) sees it run until it ends. Returns when it could not start.
++void RunRelease(const GameInfo::Release& release) {
++    fs::path exe = ExeDir() / (std::string(release.exe) + ".exe");
++    std::wstring line = GetCommandLineW();
++    size_t args = line[0] == L'"' ? line.find(L'"', 1) + 1 : line.find(L' ');
++    line = L"\"" + exe.wstring() + L"\"" + (args == std::wstring::npos ? L"" : line.substr(args));
++    line += L" --handed-over";  // its log carries on this one's (main.cpp)
++    STARTUPINFOW si{sizeof(si)};
++    PROCESS_INFORMATION pi{};
++    if (!CreateProcessW(exe.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
++        LOGE("game: cannot start %s.exe (%lu)", release.exe, GetLastError());
++        return;
++    }
++    LOGR("Game: another release's, handed to %s.exe", release.exe);
++    logx::Flush();
++    AllowSetForegroundWindow(pi.dwProcessId);
++    CloseHandle(pi.hThread);
++    WaitForSingleObject(pi.hProcess, INFINITE);
++    DWORD code = 1;
++    GetExitCodeProcess(pi.hProcess, &code);
++    ExitProcess(code);
 +}
 +
  // assets beside the exe or in any folder above it (the build output)
  fs::path FindAssets() {
      auto dir = ExeDir();
-@@ -80,8 +100,10 @@ bool FindGame(GameFiles& game) {
+@@ -73,19 +129,28 @@ bool FindGame(GameFiles& game) {
+         }
+     std::sort(isos.begin(), isos.end());
+ 
+-    // the first copy with this xbe wins, the extracted files before any image; another release is kept to offer
++    // the first copy with this xbe wins, the extracted files before any image; else the first of a release another
++    // executable was made from runs there; another release is kept to offer
+     GameFiles other;
+     std::unique_ptr<kernel::Disc> other_disc;
+     fs::path other_name;
++    const GameInfo::Release* release = nullptr;
      auto consider = [&](const fs::path& name, std::vector<uint8_t> xbe, std::unique_ptr<kernel::Disc> disc) {
          std::string sha = Sha1(xbe);
          bool match = sha == kImageSha1;
 -        LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), match ? "" : ", another release");
 -        if (match) {
-+        bool restored = !match && RestoreCertificate(xbe);
++        bool restored = !match && RestoreCertificate(xbe, kImageSha1, kImageCertificate);
++        const GameInfo::Release* known = match || restored ? nullptr : OtherRelease(xbe, sha);
 +        LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(),
-+             match ? "" : restored ? ", this release with its certificate patched, put back" : ", another release");
++             match      ? ""
++             : restored ? ", this release with its certificate patched, put back"
++             : known    ? ", the release of another executable"
++                        : ", another release");
 +        if (match || restored) {
              game = {assets, std::move(xbe)};
              kernel::MountDisc(std::move(disc));
              return true;
+         }
++        if (known && !release) release = known;
+         if (other_name.empty()) {
+             other = {assets, std::move(xbe)};
+             other_disc = std::move(disc);
+@@ -110,6 +175,7 @@ bool FindGame(GameFiles& game) {
+         if (consider(iso, std::move(xbe), std::move(disc))) return true;
+     }
+ 
++    if (release) RunRelease(*release);  // returns only when it could not start
+     if (other_name.empty()) {
+         MessageBoxW(nullptr, kGame.missing, kGame.short_title, MB_ICONERROR);
+         return false;
+diff --git a/runtime/app/main.cpp b/runtime/app/main.cpp
+index e36f7ac..d207b3e 100644
+--- a/runtime/app/main.cpp
++++ b/runtime/app/main.cpp
+@@ -244,11 +244,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+     std::signal(SIGABRT, [](int) { app::WriteCrashDump(nullptr); });
+     timeBeginPeriod(1);
+     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+-    // one log a session: a relaunch into another image carries on its predecessor's
++    // one log a session: a relaunch into another image carries on its predecessor's, as does another release's
++    // executable the game files were handed to (game_files.cpp)
+     bool relaunched = std::wcsstr(GetCommandLineW(), L"--relaunched") != nullptr;
++    bool handed_over = std::wcsstr(GetCommandLineW(), L"--handed-over") != nullptr;
+     std::string log = app::kGame.log;
+     if (app::Instance() > 1) log += "-" + std::to_string(app::Instance());
+-    logx::Init((app::ExeDir() / "logs").string(), log, relaunched);
++    logx::Init((app::ExeDir() / "logs").string(), log, relaunched || handed_over);
+     app::Load();
+     if (app::kGame.init) app::kGame.init();
+     if (relaunched && !logx::kVerbose) LOGR("Relaunched: %s", IMAGE_XBE);
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..c31091b 100644
+index 075b3b7..d06321e 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
 @@ -53,7 +53,9 @@ void Load() {
@@ -146,7 +324,25 @@ index 075b3b7..c31091b 100644
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
-@@ -127,7 +131,7 @@ bool Widescreen() {
+@@ -86,9 +90,16 @@ toml::table Table() {
+ 
+ }  // namespace
+ 
++// the keys this executable knows written over the file's, the others kept (a launcher's own settings)
+ void Save() {
++    toml::table t;
++    try {
++        t = toml::parse_file(File().string());
++    } catch (...) {
++    }
++    for (auto&& [key, value] : Table()) t.insert_or_assign(key, value);
+     std::ofstream f(File());
+-    f << Table() << "\n";
++    f << t << "\n";
+ }
+ 
+ void LogSettings() {
+@@ -127,7 +138,7 @@ bool Widescreen() {
          Mode m = Output();
          wide = m.width * 2 >= m.height * 3;  // 3:2 or wider
      }
@@ -825,6 +1021,35 @@ index 6ee0fa3..e128ff1 100644
  // volume descriptor, sector 32 of the partition: magic, root table sector and size, FILETIME, magic again at +0x7EC
  constexpr uint32_t kVolume = 32 * kSector;
  constexpr char kMagic[] = "MICROSOFT*XBOX*MEDIA";
+diff --git a/runtime/kernel/xboxkrnl.cpp b/runtime/kernel/xboxkrnl.cpp
+index bec6e36..088429d 100644
+--- a/runtime/kernel/xboxkrnl.cpp
++++ b/runtime/kernel/xboxkrnl.cpp
+@@ -1224,12 +1224,14 @@ KERNEL_EXPORT(29, ExSaveNonVolatileSetting, 4) {
+ 
+ // widescreen (a 4:3 output plays the console's 4:3), 480p
+ static uint32_t VideoFlags() { return (app::Widescreen() ? 0x00010000 : 0) | 0x00080000; }
++// the dashboard's language, as the game says (GameInfo::language)
++static uint32_t Language() { return app::kGame.language ? app::kGame.language() : 1; }
+ 
+ KERNEL_EXPORT(24, ExQueryNonVolatileSetting, 5) {
+     uint32_t index = a[0], type_out = a[1], value = a[2], len = a[3], result_len = a[4];
+     uint32_t v = 0;
+     switch (index) {
+-        case 7: v = 1; break;                      // XC_LANGUAGE english
++        case 7: v = Language(); break;             // XC_LANGUAGE
+         case 8: v = VideoFlags(); break;          // XC_VIDEO_FLAGS
+         case 9: v = 0; break;                      // XC_AUDIO_FLAGS stereo
+         case 0x103: v = 0x00400100; break;         // XC_FACTORY_AV_REGION NTSC-M
+@@ -1242,7 +1244,7 @@ KERNEL_EXPORT(24, ExQueryNonVolatileSetting, 5) {
+         // the whole EEPROM image: user settings live at 0xC0 onwards
+         if (type_out) W32(type_out, 3);  // REG_BINARY
+         if (value && len >= 0x100) {
+-            W32(value + 0xE8, 1);                     // language
++            W32(value + 0xE8, Language());            // language
+             W32(value + 0xEC, VideoFlags());          // video flags
+             W32(value + 0xF0, 0);                     // audio flags, stereo
+             W32(value + 0x58, 0x00400100);            // factory video standard
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
 index 975e977..71805c3 100644
 --- a/runtime/xdk/d3d8.cpp

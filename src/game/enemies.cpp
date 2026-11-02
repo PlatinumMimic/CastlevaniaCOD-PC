@@ -11,10 +11,11 @@
 #include <mutex>
 #include <vector>
 
+#include "common/release.h"
 #include "cpu/x86_ops.h"
 #include "kernel/memory.h"
 
-X86_EXTERN_FUNC(__imp__sub_00060010);
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_MAX_HP));
 
 namespace {
 
@@ -34,9 +35,9 @@ bool Readable(uint32_t va, uint32_t bytes) {
 
 void MapRoom(int& map, int& room) {
     int8_t m = -1, r = -1;
-    if (Readable(0xB234F4, 2)) {
-        std::memcpy(&m, mem::Base() + 0xB234F4, 1);
-        std::memcpy(&r, mem::Base() + 0xB234F5, 1);
+    if (Readable(cv::kMapRoom, 2)) {
+        std::memcpy(&m, mem::Base() + cv::kMapRoom, 1);
+        std::memcpy(&r, mem::Base() + cv::kMapRoom + 1, 1);
     }
     map = m;
     room = r;
@@ -74,10 +75,10 @@ std::vector<EnemyInfo> Enemies() {
     return out;
 }
 
-X86_FUNC(sub_00060010) {
+X86_FUNC(CV_HOOK(CV_MAX_HP)) {
     uint32_t actor = 0;
     if (Readable(ctx.esp, 8)) std::memcpy(&actor, base + ctx.esp + 4, 4);
-    __imp__sub_00060010(ctx, base);
+    CV_ORIGINAL(CV_MAX_HP)(ctx, base);
     if (!actor || !Readable(actor, kActorBytes)) return;
     int map, room;
     MapRoom(map, room);

@@ -9,7 +9,7 @@ is not affiliated with, endorsed or sponsored by them, and it is not an official
 > [!IMPORTANT]
 > **You need your own copy of the game.** This project does not include, and will not provide, the game: no `.iso`
 > of the disc, none of its files and none of its code. The port plays from an `.iso` (or the extracted files) of
-> your own USA Xbox disc; see [Required Game Version](#required-game-version).
+> your own USA or European Xbox disc; see [Required Game Version](#required-game-version).
 
 ## Where This Comes From
 
@@ -35,6 +35,9 @@ On top of Pazzi7054's port:
 - **Plays from any copy of the USA disc** - an `.iso` (an xiso, or a whole disc dump of either disc layout) or the
   extracted files. Copies whose xbe header was patched for a hard disk loader or another region play too, and the
   launcher tells which of your copies will.
+- **The European release too** - with everything below, at 60 FPS, in its five languages (English, French, German,
+  Spanish, Italian, set on the launcher's Game page). It has an executable of its own, `CastlevaniaEU.exe`, which
+  `Castlevania.exe` starts by itself for a European copy: a player just puts their disc image in `assets`.
 - **Hector's shadow** - drawn by the Xbox with 4X multisampling, it is back under his feet.
 - **Widescreen menus** - the pause menu, the map, the save screens and the panels behind messages fill a 16:9
   screen, and an area's name card keeps its left end.
@@ -60,21 +63,26 @@ On top of Pazzi7054's port:
 
 ## Required Game Version
 
-Only the USA release is supported. The config is tied to the exact code addresses in its `default.xbe`, and the
-built exe refuses any other `default.xbe`. Many copies have the xbe's certificate patched (its title, allowed media
-and region, for a hard disk loader or any region's console); the code is the same, and the game puts those fields
-back as the release has them and plays that.
+The USA and the European releases are supported, each by an executable of its own, as each config is tied to the
+exact code addresses in that release's `default.xbe`. `Castlevania.exe` plays the USA release and starts
+`CastlevaniaEU.exe` by itself when the game it finds is the European one (the launcher's **Play** too), so either copy
+is just put in `assets`. Many copies have the xbe's certificate patched (its title, allowed media and region, for a
+hard disk loader or any region's console); the code is the same, and the game puts those fields back as the release
+has them and plays that.
 
-| | |
-|---|---|
-| Game | Castlevania: Curse of Darkness, original Xbox, **USA (NTSC-U)** |
-| Title ID | `4B4E002D` (KN-045), version 1, XDK 5849 |
-| `default.xbe` size | 7,352,320 bytes |
-| `default.xbe` SHA-1 | `423BC19B7CED263570DCE5E7CD5D81954DFBE13C` |
-| `default.xbe` MD5 | `92176FDDF071667F596680DF64DED7FE` |
+| | USA | Europe |
+|---|---|---|
+| Game | Castlevania: Curse of Darkness, original Xbox, **USA (NTSC-U)** | the same, **Europe (PAL)**: En, Fr, De, Es, It |
+| Title ID | `4B4E002D` (KN-045), version 1, XDK 5849 | `4B4E002D` (KN-045), version 3, XDK 5849 |
+| `default.xbe` size | 7,352,320 bytes | 7,385,088 bytes |
+| `default.xbe` SHA-1 | `423BC19B7CED263570DCE5E7CD5D81954DFBE13C` | `B1910AAA4897CC9CA9627190289BF18D6A0943BD` |
+| `default.xbe` MD5 | `92176FDDF071667F596680DF64DED7FE` | `3AD73BED2302CB60EFEED4E8721959AB` |
 
-Other regions (PAL, Japan) will not work. The launcher's Game files page tells which of your copies will play, and
-reads the xbe inside a disc image too.
+The European release plays at 60 FPS (the console it sees is set to 60 Hz) in the language set on the launcher's
+Game page: English, French, German, Spanish or Italian, at first the launcher's own language when it is one of them.
+Its text, menus, subtitles and opening movie follow; the voices are the same in both releases. Other releases
+(Japan, and the PS2 versions, a different machine) will not work. The launcher's Game files page tells which of your
+copies will play, and reads the xbe inside a disc image too.
 
 ## Installation
 
@@ -151,12 +159,13 @@ matched, and on the textures the PS2 packs lack, under [HD Texture Packs](#hd-te
 
 ### Launcher
 `CastlevaniaLauncher.exe` checks your graphics (whether they have the Direct3D 12 the game draws with, as the game picks
-them: the high performance GPU first; `CV_NO_D3D12=1` shows the warning anywhere) and your game files (the USA
-`default.xbe` by its hash, or a disc image), adds a disc image to `assets` for you (a hard link on the same drive,
-otherwise a copy), and has every setting: the graphics card (Automatic, the fastest, or any with Direct3D 12: on a
-laptop the one in the processor saves battery), display mode, resolution, v-sync, widescreen, render scale, anisotropic
-filtering with quick presets, the HD texture pack, FPS counter, pause on focus loss, the settings menu key and the
-button layout. Changes are saved as you make them; **Play** starts the game. Saves and logs are a click away. `--page
+them: the high performance GPU first; `CV_NO_D3D12=1` shows the warning anywhere) and your game files (the USA or
+European `default.xbe` by its hash, or a disc image, each copy named by its release), adds a disc image to `assets` for
+you (a hard link on the same drive, otherwise a copy), and has every setting: the graphics card (Automatic, the
+fastest, or any with Direct3D 12: on a laptop the one in the processor saves battery), display mode, resolution,
+v-sync, widescreen, render scale, anisotropic filtering with quick presets, the HD texture pack, FPS counter, pause on
+focus loss, the settings menu key, the button layout and the European release's language. Changes are saved as you
+make them; **Play** starts the game, with the executable of the release it found. Saves and logs are a click away. `--page
 controls` (or home, display, graphics, game, files) opens it on that page. It looks like the game's menus: navy with fog
 and a teal band, page names on orange banners, the chosen option on a green bar, boxes framed in light blue, Palatino
 for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold), the crest
@@ -268,8 +277,8 @@ A release needs nothing installed on a fresh Windows but the graphics driver:
   AMD since Bulldozer (2011). The graphics are the stricter limit on old PCs.
 - **Disk**: about 0.2 GB for the release, and 0.2 GB more once the first start has built the game code (it wants
   1 GB free to start; its ready page can delete the compiler folder afterwards), besides your game: 3.1 GB as a disc
-  image, 2.9 GB extracted.
-- **Your copy of the game**, the USA release (see [Required Game Version](#required-game-version)).
+  image, 2.9 GB extracted (a whole dump of the European disc is 7.8 GB).
+- **Your copy of the game**, the USA or the European release (see [Required Game Version](#required-game-version)).
 - Optional: a controller (Xbox, PlayStation or Switch; the keyboard plays too), and an HD texture pack.
 
 Everything else comes in the zip or with Windows. The zip has the Visual C++ runtime (`msvcp140.dll`,
@@ -320,7 +329,11 @@ git -C XboxXBE-Recomp apply ..\CastlevaniaCOD-PC\sdk-patches\xboxxbe-recomp.patc
 ### 3. Add the Required Game Files
 Put your disc image (`.iso`) in the `assets` folder, or the extracted disc: `default.xbe` with the `data`, `movie` and
 `sound` folders beside it. With only a disc image there, `build.bat` first extracts its files into `assets`
-(`tools\extract_iso.ps1`, a minute or less), as the build reads `default.xbe`.
+(`tools\extract_iso.ps1`, a minute or less), as the build reads `default.xbe`. That is the USA release's.
+
+The European release's executable is built too when its `default.xbe` is in `assets\eu` (out of its disc image, for
+its SHA-1 and its code; `config\game_eu.toml` is its config). To play it from the build, put its disc image in
+`assets` beside the USA files: `CastlevaniaEU.exe` finds it there. `release.bat` needs both xbes.
 
 ### 4. Build the Project
 Run `build.bat`. The first build recompiles the game and takes a while. `Castlevania.exe` and
@@ -330,10 +343,10 @@ picture of it (the PS2 menu's, with its ring of runes at the larger sizes), or e
 dashboard, 128x128 in your `default.xbe`. A release has no icon, as it packs nothing of the game.
 
 ### 5. Make a Release
-`release.bat 1.0.0` writes `out\release\CastlevaniaCOD-PC-1.0.0.zip`: `Castlevania.exe` and the launcher, built in
-`out\build\package` (the `package` preset: no icon, and no `Castlevania.dll`, the game code), the `compiler` folder
-the exe's first start builds the game code with on the player's PC (without its `work` folder), and the Visual C++
-runtime. It checks that nothing of the game went into the package. `tools\cvtest\install.py` then tests the zip as
+`release.bat 1.0.0` writes `out\release\CastlevaniaCOD-PC-1.0.0.zip`: `Castlevania.exe`, `CastlevaniaEU.exe` and the
+launcher, built in `out\build\package` (the `package` preset: no icon, and no DLL, the game code), the `compiler`
+folder the exe's first start builds the game code with on the player's PC (without its `work` folder; both releases'
+configs and import libraries), and the Visual C++ runtime. It checks that nothing of the game went into the package. `tools\cvtest\install.py` then tests the zip as
 a player would install it (see Testing).
 
 ## Port Notes
@@ -350,12 +363,31 @@ Changes this game needed beyond the generated config:
   (each draw's assembled vertices) and `gpu::ReadsConstant`; an extension's replacement is drawn before the SDK's own
   texture pack image; anisotropic filtering forced on textures without mip levels too (it was only forced where a
   texture had them, which no texture of this game does); multisampled draws (2X, 4X) on the hardware's smaller
-  grid, which puts Hector's 4X stencil
-  shadow volume back in place (found by Neguchads). The SDK's mixer plays every channel of a voice by itself now
-  (cutscene audio is a 5.1 stream with the voices in the centre channel).
-- Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll`, which the exe builds on the
-  player's PC on its first start (the SDK's `runtime\app\game_code.cpp`, behind a progress window) from their own
-  `default.xbe`. A DLL whose stamp does not match the exe and xbe is built again.
+  grid, which puts Hector's 4X stencil shadow volume back in place (found by Neguchads); another region's release in
+  an executable of its own, which the others start for its game files (`GameInfo::releases`, `xbe_releases()`); the
+  console language a title reads (`GameInfo::language`); the settings file written over, its other keys kept. The
+  SDK's mixer plays every channel of a voice by itself now (cutscene audio is a 5.1 stream with the voices in the
+  centre channel).
+- Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll` (`CastlevaniaEU.dll` for the
+  European release), which the exe builds on the player's PC on its first start (the SDK's
+  `runtime\app\game_code.cpp`, behind a progress window) from their own `default.xbe`, with the config whose `library`
+  is that DLL. A DLL whose stamp does not match the exe and xbe is built again.
+- Two releases: the European `default.xbe` is the same game built later for five languages, its code and data a
+  little shifted (9 KB more code; data 0x2C40 to 0x7980 bytes further on). It is a second image of its own
+  (`add_xbe_image(CastlevaniaEU eu/default.xbe game_eu.toml ...)`, its config written by `xbe_symbols`): the same
+  sources compiled with `CV_EU`, every address they use taken from `src\common\release.h`, `src\game_eu` the hooks
+  (each includes its `src\game` file). The European addresses came from matching the two xbes
+  (`tools\release_map.py`): functions by their bytes with addresses and call offsets masked (15,454 of 20,373
+  matched), data by what the instructions of matched functions name, and the few reached only through pointers
+  (Hector's attributes and gold, the camera's view) checked in play and against the USA release's memory at the same
+  moment. The European game resets the device for its present interval (`D3DDevice_Reset`, which the USA release never
+  calls and the 5849 signatures do not find), named in its config by hand. The SDK's `GameInfo::releases`
+  (`xbe_releases()` in CMake) lists each release's xbe SHA-1, certificate and executable: an executable whose game
+  files hold another release's xbe starts that release's executable with its arguments, waits for it and ends with
+  its exit code (its log carries on, `--handed-over`). `GameInfo::language` is the console language the kernel gives
+  the game: the European release's `game_language`, English for the USA one, whose disc has only placeholders for the
+  other languages' files. The SDK's settings file is written over rather than replaced, so a key the game does not
+  know (the launcher's own) is kept.
 - The game's copy: the SDK patch has the exe take a copy whose certificate was patched (title name, allowed media,
   region, ratings) once those are put back as in the build's own xbe, which CMake reads them from
   (`kImageCertificate`, beside `kImageSha1`); the game then plays the restored xbe. A disc image may also be a whole
@@ -406,12 +438,16 @@ Changes this game needed beyond the generated config:
   every step (`src\common\telemetry.cpp`: map and room, Hector's position, HP, the camera, menus), the log and
   the screen, and writes `report.md` with a screenshot per step. Scenario format: the top of `cvtest.py`.
   `bot.json` has the test bot (`src\common\bot.cpp`) walk Hector to points and fight the knights of room 5.12.
+  `--release eu` plays it on the European release (`CastlevaniaEU.exe`, its disc image in `assets`): every scenario
+  here passes on both, and `--set game_language=5` (3 German, 4 French, 6 Italian) plays it in another language.
 - `python -I tools\cvtest\cvtest.py --record <route> [--save <name>]` starts the game for play (the play folder's
   settings, keyboard and controllers) and records it; once the game is closed the recording becomes
   `tools\cvtest\routes\<route>.json`, a leg per room with the points walked, the jumps and B presses (doors,
   save points), the menus and message boxes as they were answered, and the fights that were won. A scenario step
   `{"route": "<route>"}` plays it back with the bot: `route.json`, and `first-save.json` (a new game to the first
-  save room, a save there, the pause menu and the map).
+  save room, a save there, the pause menu and the map). `keep-save.json` keeps that save, and `load-save.json`
+  continues from it: one release's save loads in the other (both releases' saves are in `hdd\E\UDATA\4b4e002d`, the
+  same title), which they do both ways.
 - `--judge` has every screenshot judged by GPT-6 Luna through the Codex CLI (`codex exec`, on its sign-in;
   `tools\cvtest\judge.py`): what the screen shows, whether it rendered right, whether Hector is in it, about 4 s a
   picture. A likely defect, or a scene the game state disagrees with, is a warning in the report.
@@ -479,7 +515,7 @@ Changes this game needed beyond the generated config:
   draw list.
 
 ## Known Issues
-- Only the first areas have been tested so far.
+- Only the first areas have been tested so far, in both releases.
 - Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
   Smart App Control, where it is on, may block such programs; that is untested.
 
@@ -494,8 +530,8 @@ sponsored by them, and it is not an official product. Nothing here is sold.
   images, BIOS, keys or Xbox SDK libraries, and none may be added. `assets`, `generated` and all build output are
   excluded by `.gitignore`; `release.bat` refuses a package with game files or objects in it.
 - `config\game.toml` lists addresses and names of functions in the game's executable. It contains no code from it.
-- You need your own copy of the game, the USA Xbox disc, as an `.iso` or its extracted files. This project does not
-  provide one, nor tell where to get one.
+- You need your own copy of the game, the USA or the European Xbox disc, as an `.iso` or its extracted files. This
+  project does not provide one, nor tell where to get one.
 - The HD texture packs linked under [HD Textures](#hd-textures) are their makers' own work, made for the PS2 game.
   They are not part of this repository or its releases, which neither host nor include any of their pictures.
 - The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an

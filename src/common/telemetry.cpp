@@ -2,7 +2,7 @@
 // where the camera is and looks, and whether a menu is up, as one line of JSON. Every read checks its pages first,
 // so a pointer that is not there leaves its fields out instead of faulting.
 //
-// Addresses in the USA default.xbe, found by Neguchads (Castlevania-COD-Recomp: camera.cpp, minimap.cpp, hooks.cpp,
+// Addresses in the USA default.xbe (common/release.h has each release's), found by Neguchads (Castlevania-COD-Recomp: camera.cpp, minimap.cpp, hooks.cpp,
 // game_cheat_rules.h) and checked in play: stick up with the camera heading 0 moves Hector along +z with yaw 0,
 // the pause menu shows the same HP, EXP and gold:
 //   map, room            int8 0xB234F4, 0xB234F5 (the game's getter at 0x2F6970 returns 0xB234F4)
@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "common/release.h"
 #include "core/input.h"
 #include "kernel/memory.h"
 #include "xdk/d3d8.h"
@@ -113,7 +114,7 @@ void Player(Json& j) {
     uint32_t h = 0;
     int16_t index = -1, state = 0;
     uint8_t flags = 0;
-    bool active = Read(0xB41394u, h) && h && Read(h + 0x144, index) && index >= 0 && index < 128 &&
+    bool active = Read(cv::kPlayer, h) && h && Read(h + 0x144, index) && index >= 0 && index < 128 &&
                   Read(h + 0x146 + uint32_t(index) * 2, state) && state == 2 && Read(h + 0xEE, flags) &&
                   (flags & 0x18) == 0x18;
     j.Open("player");
@@ -121,8 +122,8 @@ void Player(Json& j) {
     uint32_t record = 0;
     Vec3 pos;
     float yaw = 0;
-    if (h && Read(h, record) && record < 128 && Read(0xB4129Cu + record * 0x1210 + 0x10, pos) && Finite(pos) &&
-        Read(0xB4129Cu + record * 0x1210 + 0x2C, yaw) && std::isfinite(yaw)) {
+    if (h && Read(h, record) && record < 128 && Read(cv::kRecords + record * 0x1210 + 0x10, pos) && Finite(pos) &&
+        Read(cv::kRecords + record * 0x1210 + 0x2C, yaw) && std::isfinite(yaw)) {
         j.Vec("pos", pos);
         j.Num("yaw", yaw);
     }
@@ -130,8 +131,9 @@ void Player(Json& j) {
         const char* name;
         uint32_t va;
     };
-    static const Stat kStats[] = {{"hp", 0xB2CCC0 + 6 * 4},     {"hp_max", 0xB2CCC0 + 5 * 4}, {"mp", 0xB2CCC0 + 32 * 4},
-                                  {"mp_max", 0xB2CCC0 + 31 * 4}, {"exp", 0xB2CCC0 + 3 * 4},   {"gold", 0xB35204}};
+    constexpr uint32_t a = cv::kAttributes;
+    static const Stat kStats[] = {{"hp", a + 6 * 4},     {"hp_max", a + 5 * 4}, {"mp", a + 32 * 4},
+                                  {"mp_max", a + 31 * 4}, {"exp", a + 3 * 4},   {"gold", cv::kGold}};
     for (const Stat& s : kStats) {
         int32_t v;
         if (Read(s.va, v)) j.Int(s.name, v);
@@ -142,7 +144,7 @@ void Player(Json& j) {
 void Camera(Json& j) {
     uint32_t view = 0, descriptor = 0, callback = 0;
     Vec3 angles, target, pos;
-    if (!Read(0xC36B74u, view) || !view || !Read(view + 0x20, angles) || !Read(view + 0x30, target) ||
+    if (!Read(cv::kCameraView, view) || !view || !Read(view + 0x20, angles) || !Read(view + 0x30, target) ||
         !Read(view + 0x40, pos) || !Finite(angles) || !Finite(target) || !Finite(pos))
         return;
     j.Open("camera");
@@ -151,8 +153,8 @@ void Camera(Json& j) {
     j.Vec("angles", angles);
     // the direction the camera looks across the floor, as Hector's yaw: atan2 of x over z
     j.Num("heading", std::atan2(target.x - pos.x, target.z - pos.z));
-    if (Read(0xC36B70u, descriptor) && descriptor && Read(descriptor + 0x1D0, callback))
-        j.Bool("special", callback == 0x345020 || callback == 0x4E7D0);  // title, map screen or a debug view
+    if (Read(cv::kCameraDescriptor, descriptor) && descriptor && Read(descriptor + 0x1D0, callback))
+        j.Bool("special", callback == cv::kTitleCallback || callback == cv::kDebugCallback);  // title, map screen or a debug view
     j.Close();
 }
 
@@ -172,8 +174,8 @@ std::string BotJson();  // bot.cpp
 bool PlayerPose(float pos[3], float& yaw) {
     uint32_t h = 0, record = 0;
     Vec3 p;
-    if (!Read(0xB41394u, h) || !h || !Read(h, record) || record >= 128) return false;
-    uint32_t at = 0xB4129Cu + record * 0x1210;
+    if (!Read(cv::kPlayer, h) || !h || !Read(h, record) || record >= 128) return false;
+    uint32_t at = cv::kRecords + record * 0x1210;
     if (!Read(at + 0x10, p) || !Finite(p) || !Read(at + 0x2C, yaw) || !std::isfinite(yaw)) return false;
     pos[0] = p.x, pos[1] = p.y, pos[2] = p.z;
     return true;
@@ -182,7 +184,7 @@ bool PlayerPose(float pos[3], float& yaw) {
 bool CameraHeading(float& heading) {
     uint32_t view = 0;
     Vec3 target, pos;
-    if (!Read(0xC36B74u, view) || !view || !Read(view + 0x30, target) || !Read(view + 0x40, pos) || !Finite(target) ||
+    if (!Read(cv::kCameraView, view) || !view || !Read(view + 0x30, target) || !Read(view + 0x40, pos) || !Finite(target) ||
         !Finite(pos))
         return false;
     heading = std::atan2(target.x - pos.x, target.z - pos.z);
@@ -191,30 +193,31 @@ bool CameraHeading(float& heading) {
 
 uint32_t SceneWord() {
     uint32_t v = 0;
-    return Read(0xB23410u, v) ? v : 0;
+    return Read(cv::kScene, v) ? v : 0;
 }
 
 // a test's "heal": Hector's HP set to his max HP (attributes 6 and 5)
 void HealPlayer() {
     int32_t max = 0;
-    if (Read(0xB2CCD4u, max) && max > 0 && mem::IsCommitted(0xB2CCD8u)) std::memcpy(mem::Base() + 0xB2CCD8, &max, 4);
+    constexpr uint32_t hp_max = cv::kAttributes + 5 * 4, hp = cv::kAttributes + 6 * 4;
+    if (Read(hp_max, max) && max > 0 && mem::IsCommitted(hp)) std::memcpy(mem::Base() + hp, &max, 4);
 }
 
 bool PauseMenuUp() {
     uint32_t v = 0;
-    return Read(0xB25518u, v) && v;
+    return Read(cv::kMenu, v) && v;
 }
 
 // a message box is up: the save point's, an item's, a hint
 bool ModalUp() {
     uint32_t at = 0, flags = 0;
-    return Read(0x548C10u, at) && at && Read(at, flags) && ((flags >> 16) & 1);
+    return Read(cv::kModalFlags, at) && at && Read(at, flags) && ((flags >> 16) & 1);
 }
 
 // map * 256 + room, -1 before the game has one
 int RoomId() {
     int8_t map = 0, room = 0;
-    if (!Read(0xB234F4u, map) || !Read(0xB234F5u, room)) return -1;
+    if (!Read(cv::kMapRoom, map) || !Read(cv::kMapRoom + 1, room)) return -1;
     return map * 256 + room;
 }
 
@@ -223,7 +226,7 @@ std::string GameStateJson() {
     Json j;
     j.Int("frame", d3d::Swaps());
     int8_t map = 0, room = 0;
-    if (Read(0xB234F4u, map) && Read(0xB234F5u, room)) {
+    if (Read(cv::kMapRoom, map) && Read(cv::kMapRoom + 1, room)) {
         j.Int("map", map);
         j.Int("room", room);
         if (const char* name = AreaName(map)) j.Str("area", name);
@@ -233,7 +236,7 @@ std::string GameStateJson() {
     // u32 0xB23410, seen in play: 0x20000 for a story scene (the room 5.11 tombstone, from its start until Start skips
     // it), 0x8000 while a room change loads, 0 in play, menus and the title
     uint32_t scene = 0;
-    if (Read(0xB23410u, scene)) {
+    if (Read(cv::kScene, scene)) {
         j.Int("scene", scene);
         j.Bool("cutscene", scene & 0x20000);
         j.Bool("loading", scene & 0x8000);
@@ -241,16 +244,16 @@ std::string GameStateJson() {
     // the game's mode and the save's name (hooks.cpp: the name codes)
     uint32_t mode = 0;
     std::array<char, 16> raw{};
-    if (Read(0xB23700u, mode)) j.Int("mode", mode);
-    if (Read(0xB23710u, raw)) {
+    if (Read(cv::kGameInfo, mode)) j.Int("mode", mode);
+    if (Read(cv::kGameInfo + 0x10, raw)) {
         std::string name(raw.data(), strnlen(raw.data(), raw.size()));
         for (char& c : name)
             if (c < ' ' || c > '~' || c == '"' || c == '\\') c = '?';
         j.Str("name", name.c_str());
     }
     uint32_t menu = 0, flags_at = 0, flags = 0;
-    if (Read(0xB25518u, menu)) j.Bool("menu", menu != 0);
-    if (Read(0x548C10u, flags_at) && flags_at && Read(flags_at, flags)) j.Bool("modal", (flags >> 16) & 1);
+    if (Read(cv::kMenu, menu)) j.Bool("menu", menu != 0);
+    if (Read(cv::kModalFlags, flags_at) && flags_at && Read(flags_at, flags)) j.Bool("modal", (flags >> 16) & 1);
     // the enemies with HP left in this room, nearest first: actor, type, HP, position, distance across the floor
     float me[3], yaw;
     bool posed = PlayerPose(me, yaw);
@@ -278,7 +281,7 @@ std::string GameStateJson() {
 // room count, pointer +4 to 24 byte room records, the room ID at +8. [{"map": m, "rooms": [r, ...]}, ...], or "" when
 // the table is not there yet
 std::string RoomListJson() {
-    constexpr uint32_t kHeader = 0x55BA00;
+    constexpr uint32_t kHeader = cv::kRoomTable;
     uint32_t flags = 0, groups = 0;
     int16_t count = 0;
     if (!Read(kHeader + 4, flags) || !Read(kHeader + 10, count) || count < 1 || count > 32 || !Read(kHeader + 12, groups))

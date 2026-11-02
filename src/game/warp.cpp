@@ -6,19 +6,21 @@
 //   sub_002F6950(map, room, entry)   the destination, kept at 0xB234F8 until the change copies it to 0xB234F4
 //   sub_002F62E0(0x100000A4, 8)      the flag doors set before a change (teleporters set it to 1)
 //   sub_002F6AD0(6)                  the room change
+// (the USA release's addresses; common/release.h has each release's)
 #include <atomic>
 #include <cstring>
 #include <initializer_list>
 
+#include "common/release.h"
 #include "core/log.h"
 #include "cpu/x86_ops.h"
 #include "kernel/memory.h"
 
-X86_EXTERN_FUNC(__imp__sub_003623B0);
-X86_EXTERN_FUNC(__imp__sub_002F6AB0);
-X86_EXTERN_FUNC(__imp__sub_002F6950);
-X86_EXTERN_FUNC(__imp__sub_002F62E0);
-X86_EXTERN_FUNC(__imp__sub_002F6AD0);
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_CAMERA_UPDATE));
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_SCENE_FREE));
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_SET_ROOM));
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_SET_FLAG));
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_CHANGE_ROOM));
 
 namespace {
 
@@ -46,16 +48,16 @@ void RequestWarp(int map, int room, int entry) {
 }
 
 // the camera update, each frame of play: a warp asked for goes here
-X86_FUNC(sub_003623B0) {
+X86_FUNC(CV_HOOK(CV_CAMERA_UPDATE)) {
     uint32_t w = g_warp.load();
     if (w && ctx.esp >= 0x10000 && mem::IsCommitted(ctx.esp - 256) &&
-        Call(ctx, base, __imp__sub_002F6AB0, {kRoomChange})) {
+        Call(ctx, base, CV_ORIGINAL(CV_SCENE_FREE), {kRoomChange})) {
         uint32_t map = w >> 16 & 0xFF, room = w >> 8 & 0xFF, entry = w & 0xFF;
-        Call(ctx, base, __imp__sub_002F6950, {map, room, entry});
-        Call(ctx, base, __imp__sub_002F62E0, {kFlagBeforeChange, 8});
-        Call(ctx, base, __imp__sub_002F6AD0, {kRoomChange});
+        Call(ctx, base, CV_ORIGINAL(CV_SET_ROOM), {map, room, entry});
+        Call(ctx, base, CV_ORIGINAL(CV_SET_FLAG), {kFlagBeforeChange, 8});
+        Call(ctx, base, CV_ORIGINAL(CV_CHANGE_ROOM), {kRoomChange});
         g_warp = 0;
         LOGR("warp: sent to map %u room %u entry %u", map, room, entry);
     }
-    __imp__sub_003623B0(ctx, base);
+    CV_ORIGINAL(CV_CAMERA_UPDATE)(ctx, base);
 }

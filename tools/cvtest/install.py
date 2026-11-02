@@ -80,7 +80,7 @@ def imports(path):
 def check_package(pkg):
     """each DLL a program or DLL in the package loads: beside it, or part of Windows"""
     errors, seen = [], 0
-    built = {"castlevania.dll"}  # the game code, which the first start builds
+    built = {"castlevania.dll", "castlevaniaeu.dll"}  # each release's game code, which its first start builds
     for f in sorted(p for p in pkg.rglob("*") if p.suffix.lower() in (".exe", ".dll")):
         seen += 1
         for dll in imports(f):
@@ -97,10 +97,13 @@ def check_package(pkg):
 def check_contents(pkg):
     """nothing of the game in the download, and what the first start needs is there"""
     errors = [f"game file in the package: {p.relative_to(pkg)}" for p in pkg.rglob("*")
-              if p.suffix.lower() in (".xbe", ".iso", ".cpp", ".obj", ".ico") or p.name.lower() == "castlevania.dll"
-              or p.name.startswith("x86_recomp")]
-    for need in ("Castlevania.exe", "CastlevaniaLauncher.exe", "compiler/xbe_recomp.exe", "compiler/clang.exe",
-                 "compiler/lld-link.exe", "compiler/config/game.toml", "assets", "textures"):
+              if p.suffix.lower() in (".xbe", ".iso", ".cpp", ".obj", ".ico")
+              or p.name.lower() in ("castlevania.dll", "castlevaniaeu.dll") or p.name.startswith("x86_recomp")]
+    # both releases' executables (the USA one starts the European one for its game) and what builds their code
+    for need in ("Castlevania.exe", "CastlevaniaEU.exe", "CastlevaniaLauncher.exe", "compiler/xbe_recomp.exe",
+                 "compiler/clang.exe", "compiler/lld-link.exe", "compiler/config/game.toml",
+                 "compiler/config/game_eu.toml", "compiler/Castlevania.lib", "compiler/CastlevaniaEU.lib", "assets",
+                 "textures"):
         if not (pkg / need).exists():
             errors.append(f"missing from the package: {need}")
     return {"step": "package", "label": "package: no game files, the first start's tools there", "ok": not errors,

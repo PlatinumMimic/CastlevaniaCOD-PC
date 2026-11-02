@@ -3,6 +3,7 @@ touched), plays a scenario turn by turn through CV_PAD_LIVE (src/common/keyboard
 
 usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/release] [--keep] [--judge[=<model>]]
                                         [--review=<model>|none] [--set <setting>=<value> ...]
+                                        [--release eu]   the European release's executable (CastlevaniaEU)
        python -I tools/cvtest/cvtest.py --record <route> [--save <name>]    play, and keep it as routes/<route>.json
        python -I tools/cvtest/cvtest.py --make-route <telemetry.jsonl> <route>
 
@@ -99,15 +100,46 @@ user32.SetProcessDPIAware()
 
 # --- the game window -------------------------------------------------------------------------------------------
 
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260)]
+
+
+def family(pid):
+    """the process and those it started, and theirs: Castlevania.exe hands another release's game to its executable"""
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    parents = {}
+    e = PROCESSENTRY32W()
+    e.dwSize = ctypes.sizeof(e)
+    ok = kernel32.Process32FirstW(snap, ctypes.byref(e))
+    while ok:
+        parents[e.th32ProcessID] = e.th32ParentProcessID
+        ok = kernel32.Process32NextW(snap, ctypes.byref(e))
+    kernel32.CloseHandle(snap)
+    out, grew = {pid}, True
+    while grew:
+        grew = False
+        for child, parent in parents.items():
+            if parent in out and child not in out:
+                out.add(child)
+                grew = True
+    return out
+
+
 def windows(pid):
-    """the process's visible top level windows"""
+    """the visible top level windows of the process and of those it started"""
     found = []
+    pids = family(pid)
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def each(hwnd, _):
         owner = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value == pid and user32.IsWindowVisible(hwnd):
+        if owner.value in pids and user32.IsWindowVisible(hwnd):
             found.append(hwnd)
         return True
 
@@ -266,15 +298,21 @@ def command_ms(entries):
     return end
 
 
+def exe_name(scenario):
+    """the executable a scenario plays: "release": "eu" the European release's"""
+    return "CastlevaniaEU" if scenario.get("release") == "eu" else "Castlevania"
+
+
 class Game:
     def __init__(self, build, folder, scenario, installed=False, env=None):
         """installed: folder is a player's install (install.py), played where it is with env as the whole
         environment; its first start builds the game code behind a window of its own (the SDK's
         runtime/app/game_code.cpp), whose Start is pressed once it is ready"""
         self.folder = folder
+        self.exe = exe_name(scenario)
         if not installed:
             folder.mkdir(parents=True)
-            for f in ("Castlevania.exe", "Castlevania.dll"):
+            for f in (self.exe + ".exe", self.exe + ".dll"):
                 shutil.copy2(build / f, folder / f)  # dates kept: the exe takes a DLL that is not older than it
         settings = dict(DEFAULT_SETTINGS, **scenario.get("settings", {}))
         lines = [f"{k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}" for k, v in settings.items()]
@@ -296,7 +334,9 @@ class Game:
         if scenario.get("telemetry"):  # the state every n frames, as a recording would have it
             env.update(CV_TELEMETRY=str(folder / "telemetry.jsonl"), CV_TELEMETRY_EVERY=str(scenario["telemetry"]))
         started = time.time()
-        self.proc = subprocess.Popen([str(folder / "Castlevania.exe")], cwd=folder, env=env)
+        # an install is started as a player starts it, by Castlevania.exe, whatever the release
+        self.proc = subprocess.Popen([str(folder / ("Castlevania.exe" if installed else self.exe + ".exe"))], cwd=folder,
+                                     env=env)
         self.n = 0
         self.hwnd = None
         self.dialog = None  # a message box's text, shown instead of the game
@@ -805,9 +845,13 @@ def load(path):
     return scenario
 
 
-def run(scenario_path, build, keep, judge_model=None, review=None, overrides=None, install=None, env=None, checks=()):
-    """install: a player's install to play in (install.py), env its environment, checks its results to report first"""
+def run(scenario_path, build, keep, judge_model=None, review=None, overrides=None, install=None, env=None, checks=(),
+        release=None):
+    """install: a player's install to play in (install.py), env its environment, checks its results to report first;
+    release "eu": the European release's executable, which finds its own game files in assets (a disc image there)"""
     scenario = load(scenario_path)
+    if release:
+        scenario["release"] = release
     scenario["settings"] = dict(scenario.get("settings", {}), **(overrides or {}))
     settings = dict(DEFAULT_SETTINGS, **scenario["settings"])
     if judge_model:
@@ -961,7 +1005,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
             results.append({"step": "end", "ok": False, "errors": ["crash dumps: " + ", ".join(dumps)]})
         report(out, name, results, failed)
         if not keep and not install:
-            for f in ("Castlevania.exe", "Castlevania.dll"):
+            for f in (game.exe + ".exe", game.exe + ".dll"):
                 (game.folder / f).unlink(missing_ok=True)
     print(f"{name}: {'FAILED' if failed else 'passed'} ({sum(r['ok'] for r in results)}/{len(results)} steps)")
     return not failed
@@ -1027,7 +1071,8 @@ def main():
                 overrides[k] = json.loads(v)
             except ValueError:
                 overrides[k] = v
-    return 0 if run(args[0], build, "--keep" in args, judge_model, review, overrides) else 1
+    release = args[args.index("--release") + 1] if "--release" in args else None  # --release eu
+    return 0 if run(args[0], build, "--keep" in args, judge_model, review, overrides, release=release) else 1
 
 
 if __name__ == "__main__":

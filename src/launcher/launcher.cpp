@@ -39,12 +39,15 @@
 #include <backends/imgui_impl_win32.h>
 #include <toml++/toml.hpp>
 
+#include "app/app.h"
 #include "kernel/disc.h"
 #include "words.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
-extern const char kImageSha1[];  // the xbe the game exe was recompiled from, written by CMake
-extern const unsigned char kImageCertificate[92];  // its certificate's title name, then media, region and ratings
+// each release's xbe (its SHA-1, its certificate's title name, media, region and ratings) and the executable it was
+// recompiled into, written by CMake: the USA one first, then the European one
+extern const app::GameInfo::Release kReleases[];
+extern const unsigned kReleaseCount;
 
 namespace {
 
@@ -52,7 +55,6 @@ namespace fs = std::filesystem;
 using words::F;
 using words::T;
 
-constexpr wchar_t kGameExe[] = L"Castlevania.exe";
 constexpr char kSettings[] = "castlevania.toml";
 constexpr char kXbe[] = "default.xbe";
 constexpr wchar_t kSaves[] = L"hdd\\E\\UDATA\\4b4e002d";
@@ -223,22 +225,35 @@ Gpu Automatic() {
     return Describe(adapter.Get(), d3d12);
 }
 
-// the game's check: the xbe the exe was made from, or that with the certificate's title, media and region patched
+// The game's check: an xbe one of the executables was made from, or that with the certificate's title, media and
+// region patched; which release it is (kReleases), and so which executable plays it
 enum class Release { Missing, Match, Patched, Other };
+struct Copy {
+    Release release = Release::Missing;  // Missing: no Xbox disc, or no default.xbe on it
+    int which = -1;                       // the release in kReleases
+    bool europe() const { return which > 0; }
+};
 
-Release Check(const std::vector<uint8_t>& xbe) {
-    if (Sha1(xbe) == kImageSha1) return Release::Match;
+Copy Check(const std::vector<uint8_t>& xbe) {
+    std::string sha = Sha1(xbe);
+    for (unsigned i = 0; i < kReleaseCount; i++)
+        if (sha == kReleases[i].sha1) return {Release::Match, int(i)};
     uint32_t base = 0, cert = 0;
     if (xbe.size() >= 0x11C) {
         memcpy(&base, &xbe[0x104], 4);
         memcpy(&cert, &xbe[0x118], 4);
     }
-    if (cert < base || uint64_t(cert - base) + 0xA8 > xbe.size()) return Release::Other;
-    std::vector<uint8_t> copy = xbe;
-    memcpy(&copy[cert - base + 0x0C], kImageCertificate, 80);
-    memcpy(&copy[cert - base + 0x9C], kImageCertificate + 80, 12);
-    return Sha1(copy) == kImageSha1 ? Release::Patched : Release::Other;
+    if (cert < base || uint64_t(cert - base) + 0xA8 > xbe.size()) return {Release::Other};
+    for (unsigned i = 0; i < kReleaseCount; i++) {
+        std::vector<uint8_t> copy = xbe;
+        memcpy(&copy[cert - base + 0x0C], kReleases[i].certificate, 80);
+        memcpy(&copy[cert - base + 0x9C], kReleases[i].certificate + 80, 12);
+        if (Sha1(copy) == kReleases[i].sha1) return {Release::Patched, int(i)};
+    }
+    return {Release::Other};
 }
+
+fs::path ReleaseExe(int which) { return ExeDir() / (std::string(kReleases[which].exe) + ".exe"); }
 
 // what the game will find
 // the textures folder the game looks for, found the same way as assets
@@ -255,13 +270,13 @@ fs::path FindTextures() {
 
 struct Files {
     fs::path assets;
-    Release xbe = Release::Missing;
+    Copy xbe;
     struct Image {
         fs::path path;
-        Release release = Release::Missing;  // Missing: no Xbox disc, or no default.xbe on it
+        Copy copy;
     };
     std::vector<Image> isos;
-    bool exe = false;
+    bool exe = false;  // Castlevania.exe, the USA release's, which the other starts when it has no game of its own
     fs::path textures;
     size_t pictures = 0;      // .png and .dds in textures and the folders inside it
     bool ps2_buttons = false;  // the PS2's button icons among them (texpack.cpp, the PS2 button layout)
@@ -288,9 +303,9 @@ struct Files {
             }
         }
         assets = FindAssets();
-        xbe = Release::Missing;
+        xbe = {};
         isos.clear();
-        exe = fs::exists(ExeDir() / kGameExe);
+        exe = fs::exists(ReleaseExe(0));
         if (assets.empty()) return;
         std::error_code ec;
         if (std::ifstream f{assets / kXbe, std::ios::binary}) xbe = Check({std::istreambuf_iterator<char>(f), {}});
@@ -302,15 +317,24 @@ struct Files {
             kernel::Disc disc;
             std::string error;
             std::vector<uint8_t> data;
-            if (disc.Open(e.path(), error) && disc.Load(kXbe, data)) image.release = Check(data);
+            if (disc.Open(e.path(), error) && disc.Load(kXbe, data)) image.copy = Check(data);
             isos.push_back(image);
         }
         std::sort(isos.begin(), isos.end(), [](const Image& a, const Image& b) { return a.path < b.path; });
     }
-    static bool Good(Release r) { return r == Release::Match || r == Release::Patched; }
-    bool Playable() const {
-        return exe && (Good(xbe) || std::any_of(isos.begin(), isos.end(), [](const Image& i) { return Good(i.release); }));
+    static bool Good(const Copy& c) { return c.release == Release::Match || c.release == Release::Patched; }
+    // The executable that plays the game found, as each executable picks its game (the SDK's game_files.cpp): a copy
+    // of the USA release anywhere first, the extracted files before a disc image; empty with none, or without it.
+    fs::path Player() const {
+        for (unsigned which = 0; which < kReleaseCount; which++) {
+            bool found = (Good(xbe) && xbe.which == int(which)) ||
+                         std::any_of(isos.begin(), isos.end(), [&](const Image& i) { return Good(i.copy) && i.copy.which == int(which); });
+            std::error_code ec;
+            if (found && fs::exists(ReleaseExe(int(which)), ec)) return ReleaseExe(int(which));
+        }
+        return {};
     }
+    bool Playable() const { return !Player().empty(); }
 };
 
 // a disc image into assets: a hard link on the same drive, a copy with progress otherwise
@@ -350,6 +374,24 @@ struct Import {
     }
 };
 
+// The European release's languages, as the console's (XGetLanguage), each by its name in itself; the USA release
+// plays English
+struct GameLanguage {
+    uint32_t console;
+    const char* name;
+    const char* launcher;  // the launcher's language that picks it at first (words.h)
+};
+const GameLanguage kGameLanguages[] = {
+    {1, "English", "en"}, {3, "Deutsch", "de"}, {5, "Español", "es"}, {4, "Français", "fr"}, {6, "Italiano", "it"},
+};
+
+// a player who reads the launcher in one of the game's languages plays in it, until they choose
+uint32_t GameLanguageFor(const std::string& launcher) {
+    for (const GameLanguage& g : kGameLanguages)
+        if (launcher == g.launcher) return g.console;
+    return 1;
+}
+
 // settings: the keys the game reads, the rest of the file kept
 
 struct Settings {
@@ -364,6 +406,7 @@ struct Settings {
     uint32_t menu_key = VK_F10;
     bool keep_open = false;        // the launcher's own
     std::string language = "en";   // the launcher's own too, a code of words.h
+    uint32_t game_language = 1;    // the European release's, as the console's (XGetLanguage): kGameLanguages
     bool texture_pack = true;
     uint32_t texture_pack_size = 2048;  // 0 full size
     uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
@@ -391,6 +434,7 @@ struct Settings {
         menu_key = rest["menu_key"].value_or(menu_key);
         keep_open = rest["launcher_keep_open"].value_or(keep_open);
         language = rest["launcher_language"].value_or(language);
+        game_language = rest["game_language"].value_or(GameLanguageFor(language));
         texture_pack = rest["texture_pack"].value_or(texture_pack);
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
         button_layout = rest["button_layout"].value_or(button_layout);
@@ -411,6 +455,7 @@ struct Settings {
         rest.insert_or_assign("menu_key", int64_t(menu_key));
         rest.insert_or_assign("launcher_keep_open", keep_open);
         rest.insert_or_assign("launcher_language", language);
+        rest.insert_or_assign("game_language", int64_t(game_language));
         rest.insert_or_assign("texture_pack", texture_pack);
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
         rest.insert_or_assign("button_layout", int64_t(button_layout));
@@ -426,6 +471,7 @@ struct Settings {
         d.rest = std::move(rest);
         d.keep_open = keep_open;
         d.language = language;
+        d.game_language = game_language;
         *this = std::move(d);
     }
 };
@@ -1192,7 +1238,7 @@ private:
                std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
                std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout) +
-               std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language;
+               std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language + "|" + std::to_string(s.game_language);
     }
 
     void AutoSave() {
@@ -1544,8 +1590,20 @@ private:
 
     void GamePage() {
         PageTitle(T("Game"), T("In-game overlay and behaviour."));
+        // one card: three would not fit the window
         BeginCard("game");
-        BeginSetting(T("FPS counter"), T("Shows the frame rate in the corner."), true);
+        BeginSetting(T("Game language"), T("The European release's text, from its next start. The USA release has English only."), true);
+        {
+            std::vector<uint32_t> values;
+            std::vector<std::string> names;
+            for (const GameLanguage& g : kGameLanguages) {
+                values.push_back(g.console);
+                names.push_back(g.name);
+            }
+            Combo<uint32_t>("##gamelanguage", settings_.game_language, values, names);
+        }
+        EndSetting();
+        BeginSetting(T("FPS counter"), T("Shows the frame rate in the corner."));
         ToggleRight("fps", settings_.fps_counter);
         EndSetting();
         BeginSetting(T("Pause on focus loss"), T("Stops the game while another window is in front."));
@@ -1566,9 +1624,7 @@ private:
         for (uint32_t k : keys) names.push_back(KeyName(k));
         Combo<uint32_t>("##key", settings_.menu_key, keys, names);
         EndSetting();
-        EndCard();
-        BeginCard("launcher");
-        BeginSetting(T("Keep launcher open"), T("Leave this window open while the game runs."), true);
+        BeginSetting(T("Keep launcher open"), T("Leave this window open while the game runs."));
         ToggleRight("keep", settings_.keep_open);
         EndSetting();
         EndCard();
@@ -1612,31 +1668,21 @@ private:
     }
 
     void FilesPage() {
-        PageTitle(T("Game files"), T("Your own copy of the game: the USA (NTSC-U) release, as a disc image or extracted."));
+        PageTitle(T("Game files"), T("Your own copy of the game: the USA (NTSC-U) or European (PAL) release, as a disc image or extracted."));
         BeginCard("status");
         if (files_.assets.empty()) {
             Status(kIconWarn, kRed, T("No assets folder found"));
         } else {
-            switch (files_.xbe) {
-                case Release::Match: Status(kIconCheck, kGreen, F("{}  -  USA release, ready", {kXbe})); break;
-                case Release::Patched: Status(kIconCheck, kGreen, F("{}  -  USA release (patched header), ready", {kXbe})); break;
-                case Release::Other: Status(kIconWarn, kRed, F("{}  -  another release, only the USA one works", {kXbe})); break;
-                case Release::Missing:  // no matter beside a disc image
-                    if (files_.isos.empty()) Status(kIconWarn, kMuted, F("{}  -  not extracted", {kXbe}));
-                    break;
-            }
+            if (files_.xbe.release != Release::Missing) CopyStatus(kIconCheck, kXbe, files_.xbe);
+            else if (files_.isos.empty()) Status(kIconWarn, kMuted, F("{}  -  not extracted", {kXbe}));  // none beside an image
             for (const Files::Image& iso : files_.isos) {
                 std::string name = Utf8(iso.path.filename().wstring());
-                switch (iso.release) {
-                    case Release::Match: Status(kIconDisc, kGreen, F("{}  -  USA release, ready", {name})); break;
-                    case Release::Patched: Status(kIconDisc, kGreen, F("{}  -  USA release (patched header), ready", {name})); break;
-                    case Release::Other: Status(kIconWarn, kRed, F("{}  -  another release, only the USA one works", {name})); break;
-                    case Release::Missing: Status(kIconWarn, kRed, F("{}  -  not an Xbox disc image", {name})); break;
-                }
+                if (iso.copy.release == Release::Missing) Status(kIconWarn, kRed, F("{}  -  not an Xbox disc image", {name}));
+                else CopyStatus(kIconDisc, name, iso.copy);
             }
         }
         if (!files_.exe) Status(kIconWarn, kRed, T("Castlevania.exe is not beside the launcher"));
-        if (!files_.assets.empty() && files_.xbe == Release::Missing && files_.isos.empty())
+        if (!files_.assets.empty() && files_.xbe.release == Release::Missing && files_.isos.empty())
             Wrapped(g_small, kMuted, T("Add your disc image (.iso), or extract the disc into the assets folder: default.xbe "
                                        "with its data, movie and sound folders."));
         if (!files_.assets.empty()) Wrapped(g_small, kMuted, Utf8(files_.assets.wstring()).c_str());
@@ -1674,13 +1720,25 @@ private:
         EndCard();
     }
 
+    // a copy of the game: which release it is, and that it plays
+    void CopyStatus(uint32_t icon, const std::string& name, const Copy& copy) {
+        if (copy.release == Release::Other)
+            Status(kIconWarn, kRed, F("{}  -  another release, only the USA and European ones work", {name}));
+        else if (copy.europe())
+            Status(icon, kGreen, copy.release == Release::Match ? F("{}  -  European release, ready", {name})
+                                                                : F("{}  -  European release (patched header), ready", {name}));
+        else
+            Status(icon, kGreen, copy.release == Release::Match ? F("{}  -  USA release, ready", {name})
+                                                                : F("{}  -  USA release (patched header), ready", {name}));
+    }
+
     bool Play() {
         saved_ = Snapshot();
         if (!settings_.Save()) {
             Note(T("Could not write the settings file"));
             return true;
         }
-        fs::path exe = ExeDir() / kGameExe;
+        fs::path exe = files_.Player();
         std::wstring cmd = L"\"" + exe.wstring() + L"\"";
         STARTUPINFOW si{sizeof(si)};
         PROCESS_INFORMATION pi{};
