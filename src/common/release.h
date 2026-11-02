@@ -32,6 +32,11 @@
 #define CV_SET_ROOM CV_PICK(002F6950, 002F7FD0)         // the room a change goes to
 #define CV_SET_FLAG CV_PICK(002F62E0, 002F7960)         // a game flag
 #define CV_CHANGE_ROOM CV_PICK(002F6AD0, 002F8150)      // the room change
+#define CV_STICK_AXIS CV_PICK(00391550, 00393670)       // the pad class's dead zone on a stick axis (hooks.cpp)
+#define CV_PS2_MOTOR CV_PICK(000138F0, 00013990)        // a PS2 motor set (hooks.cpp)
+#define CV_SCREEN_DISTANCE CV_PICK(00012B30, 00012AC0)  // the camera's screen distance set (view.cpp)
+#define CV_FAR_Z CV_PICK(00012B90, 00012B20)            // its far plane set
+#define CV_FOG CV_PICK(00012A90, 00012A20)              // the fog set
 
 namespace cv {
 
@@ -42,6 +47,16 @@ inline constexpr uint32_t kClipScreenX = CV_PICK(0x012FC500, 0x01303E80);  // cl
 inline constexpr uint32_t kViewClipX = CV_PICK(0x012FC5C0, 0x01303F40);    // view clip matrix, x scale
 inline constexpr uint32_t kViewClipXv = CV_PICK(0x012FC640, 0x01303FC0);   // its x scale as a vector
 inline constexpr uint32_t kProjectionXv = CV_PICK(0x012FC660, 0x01303FE0); // the projection's x scale as a vector
+// the camera's parameters and fog (view.cpp): screen distance, y scale, far z, the fog's two coefficients, and the
+// byte that has the matrices made again
+inline constexpr uint32_t kScreenDistance = CV_PICK(0x012FC214, 0x01303B94);
+inline constexpr uint32_t kYScale = CV_PICK(0x012FC21C, 0x01303B9C);
+inline constexpr uint32_t kFarZ = CV_PICK(0x012FC22C, 0x01303BAC);
+inline constexpr uint32_t kFogA = CV_PICK(0x012FC1F8, 0x01303B78);
+inline constexpr uint32_t kFogB = CV_PICK(0x012FC1FC, 0x01303B7C);
+inline constexpr uint32_t kMakeAgain = CV_PICK(0x012FC7B2, 0x01304132);
+// the pad class's rumble: port, left, right, frames (hooks.cpp)
+inline constexpr uint32_t kPadRumble = CV_PICK(0x00391DF0, 0x00393F10);
 // the name codes, three {name, flag} pairs (hooks.cpp)
 inline constexpr uint32_t kNameCodes = CV_PICK(0x548D9C, 0x54C8D4);
 // int8 map, int8 room; where a change goes; the scene change locks (telemetry.cpp, warp.cpp, enemies.cpp)

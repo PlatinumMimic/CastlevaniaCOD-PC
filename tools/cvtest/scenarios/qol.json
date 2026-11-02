@@ -1,0 +1,32 @@
+{
+  "name": "qol",
+  "after": "newgame.json",
+  "note": "The HUD at the screen edges, the camera stick with and without inversion, the field of view and the far view (fog and draw distance 4x) on the drawbridge (5.0), then a fight in 5.12 for the game's rumble (CV_RUMBLE_TRACE). Then the rampart of 5.7 with fog and draw distance 4x: its sky's painted cards (a moon and strips past the room's far plane) keep the room's own fog.",
+  "settings": {"width": 1600, "height": 900},
+  "steps": [
+    {"press": "0:warp=5.0,10f:wait:20f", "note": "the drawbridge"},
+    {"until": "room == 0 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:90f", "shot": "hud-edges"},
+    {"press": "0:set=hud_edges=false,0f:wait:20f", "shot": "hud-middle"},
+    {"press": "0:set=hud_edges=true,0f:wait:10f"},
+    {"press": "0f:rsr:30f", "shot": "cam-right"},
+    {"press": "0f:wait:20f"},
+    {"press": "0:set=invert_camera_x=true,0f:rsr:30f", "shot": "cam-right-inverted"},
+    {"press": "0:set=invert_camera_x=false,0f:wait:10f"},
+    {"press": "0f:rsu:30f", "shot": "cam-up"},
+    {"press": "0f:wait:20f"},
+    {"press": "0:set=invert_camera_y=true,0f:rsu:30f", "shot": "cam-up-inverted"},
+    {"press": "0:set=invert_camera_y=false,0f:wait:10f"},
+    {"press": "0:set=fov=150,0f:wait:30f", "shot": "fov-150"},
+    {"press": "0:set=fov=100,0:set=fog_distance=400,0:set=draw_distance=400,0f:wait:30f", "shot": "far-view"},
+    {"press": "0:set=fog_distance=100,0:set=draw_distance=100,0f:wait:20f", "shot": "game-view"},
+    {"press": "0:warp=5.12,10f:wait:20f"},
+    {"until": "room == 12 and player.active and not loading and not cutscene", "timeout": 30, "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]]},
+    {"press": "0f:wait:30f", "shot": "knights", "expect": ["len(enemies) > 0"]},
+    {"press": "0:fight:15000", "shot": "fight-1"},
+    {"press": "0:heal,0:fight:15000", "shot": "fight-2"},
+    {"press": "0:set=fov=100,0:set=fog_distance=400,0:set=draw_distance=400,0:warp=5.7,10f:wait:20f"},
+    {"until": "room == 7 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:60f", "shot": "rampart-sky"}
+  ]
+}

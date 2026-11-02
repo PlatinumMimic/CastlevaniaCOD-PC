@@ -84,6 +84,15 @@ bool Focused() {
     return a == b;
 }
 
+// a stick under 1/32 of its throw from centre is at rest: 4 of the PS2's 128, a quarter of the game's own dead zone
+void Rest(int16_t& x, int16_t& y) {
+    constexpr float kRest = 1024;
+    if (float(x) * float(x) + float(y) * float(y) < kRest * kRest) x = y = 0;
+}
+
+// a stick axis the other way: -32768 has no positive, so it goes to 32767
+int16_t Flip(int16_t v) { return int16_t(-std::max<int>(v, -32767)); }
+
 // one stick axis from two keys, full deflection
 int16_t Axis(int neg, int pos) {
     int v = (Down(pos) ? 32767 : 0) - (Down(neg) ? 32767 : 0);
@@ -380,8 +389,41 @@ bool MenuOpen();                     // menu.cpp
 void MenuToggle();                   // menu.cpp
 void MenuWindow();                   // menu.cpp
 extern bool g_pause_on_focus_loss;   // menu.cpp
+extern bool g_ps2_stick;             // menu.cpp
+extern bool g_invert_camera_x;       // menu.cpp
+extern bool g_invert_camera_y;       // menu.cpp
 extern uint32_t g_button_layout;     // texpack.cpp
 std::atomic<bool> g_closing{false};  // the window is closing: a paused game lets go
+
+// the game's rumble, a frame at a time (KeyboardRumble)
+struct Motors {
+    uint16_t want[2] = {}, sent[2] = {};  // as the game asks for them, as the controller has them
+    std::chrono::steady_clock::time_point read;  // the game's last read of the pad
+};
+std::mutex g_rumble_m;
+Motors g_motors[4];
+thread_local bool t_rumble_own = false;  // a rumble of RumbleFrame's going out
+const bool kRumbleTrace = std::getenv("CV_RUMBLE_TRACE") != nullptr;
+
+// at the game's read of a pad: the motors as the game left them in the frame before, or stopped
+void RumbleFrame(int port, bool stop) {
+    if (port < 0 || port >= 4) return;
+    uint16_t left, right;
+    {
+        std::lock_guard lock(g_rumble_m);
+        Motors& m = g_motors[port];
+        m.read = std::chrono::steady_clock::now();
+        if (stop) m.want[0] = m.want[1] = 0;
+        if (m.want[0] == m.sent[0] && m.want[1] == m.sent[1]) return;
+        left = m.want[0];
+        right = m.want[1];
+    }
+    static uint32_t n = 0;
+    if (kRumbleTrace && n++ < 400) LOGR("rumble sent %u: port %d, %u / %u", n, port + 1, left, right);
+    t_rumble_own = true;
+    input::Rumble(port, left, right);  // through KeyboardRumble, which takes it as it is
+    t_rumble_own = false;
+}
 
 void KeyboardWindow(void* hwnd) {
     g_hwnd = static_cast<HWND>(hwnd);
@@ -389,11 +431,14 @@ void KeyboardWindow(void* hwnd) {
 }
 
 void KeyboardPad(int port, input::Pad& p) {
+    RumbleFrame(port, false);
     if (port != 0) return;
     // pause on focus loss: the game stops at its pad read until the window is in front again; not in scripted runs,
     // which go on behind other windows
-    if (g_pause_on_focus_loss && Script().empty() && !LiveOn())
+    if (g_pause_on_focus_loss && Script().empty() && !LiveOn() && !Focused()) {
+        RumbleFrame(port, true);  // the motors run until set again: they stop with the game
         while (!Focused() && !g_closing && IsWindow(g_hwnd)) Sleep(50);
+    }
     if (LiveOn()) LiveWait();
     p.connected = true;
     // both sticks clicked in together: the menu from a controller
@@ -415,6 +460,11 @@ void KeyboardPad(int port, input::Pad& p) {
         std::swap(p.analog[kWhite], p.analog[kLT]);
         std::swap(p.analog[kBlack], p.analog[kRT]);
     }
+    // the PS2's sticks (hooks.cpp) reach the game as they are: a stick at rest, a few hundred off centre, is centred
+    if (g_ps2_stick) {
+        Rest(p.lx, p.ly);
+        Rest(p.rx, p.ry);
+    }
     Keyboard(p);
     Scripted(p);
     if (LiveOn()) {
@@ -423,5 +473,34 @@ void KeyboardPad(int port, input::Pad& p) {
         if (l.running) Press(p, l.steps, MsSince(l.start), int64_t(d3d::Swaps() - l.start_frame));
         if (l.running && l.goals) BotPad(p);
     }
+    // the camera turned the other way for a push of the right stick: a controller's, the keyboard's arrows and a test's
+    if (g_invert_camera_x) p.rx = Flip(p.rx);
+    if (g_invert_camera_y) p.ry = Flip(p.ry);
     TelemetryFrame(p);  // the pad as the game gets it, for recorded routes
+}
+
+// A rumble from the game (XInputSetState) before it goes to the controller. The game's pad class stops a vibration
+// whose frames have run out at its read of the pad each frame (sub_003914A0), before the game's vibrations, which last
+// a frame, ask for the motors again (sub_003294A0), and those set one motor and then the other (game/hooks.cpp): a
+// frame went stop, left, right. A console's request was in flight for longer than that, and the controller got one
+// change a frame. Here the motors as the game leaves them each frame go to the controller at its next read of the pad
+// (RumbleFrame), and at once when it has not read one for a while. CV_RUMBLE_TRACE logs the game's requests.
+void KeyboardRumble(int port, uint16_t& left, uint16_t& right) {
+    if (port < 0 || port >= 4) return;
+    std::lock_guard lock(g_rumble_m);
+    Motors& m = g_motors[port];
+    if (kRumbleTrace && !t_rumble_own && (m.want[0] != left || m.want[1] != right)) {
+        static uint32_t n = 0;
+        if (n++ < 400) LOGR("rumble %u: port %d, %u / %u at frame %llu", n, port + 1, left, right,
+                            static_cast<unsigned long long>(d3d::Swaps()));
+    }
+    m.want[0] = left;
+    m.want[1] = right;
+    if (t_rumble_own || std::chrono::steady_clock::now() - m.read > std::chrono::milliseconds(50)) {
+        m.sent[0] = left;
+        m.sent[1] = right;
+        return;
+    }
+    left = m.sent[0];  // the controller's as it is: an unchanged rumble is not sent again
+    right = m.sent[1];
 }

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -26,7 +27,15 @@ bool g_pause_on_focus_loss = true;
 uint32_t g_menu_key = VK_F10;  // virtual key that opens the menu
 bool g_launcher_keep_open = false;  // the launcher's, kept when the game writes the file
 bool g_lament_save = false;  // as with a Lament of Innocence save on the PS2's memory card (hooks.cpp)
+bool g_ps2_stick = true;     // the sticks as the PS2 read them, without the Xbox's dead zone by axis (hooks.cpp)
+bool g_invert_camera_x = false;  // the right stick turns the camera the other way across (keyboard.cpp)
+bool g_invert_camera_y = false;  // and up and down
+uint32_t g_fov = 100;            // percent of the game's field of view in play (game/view.cpp)
+uint32_t g_draw_distance = 100;  // percent of the game's far plane (game/view.cpp)
+uint32_t g_fog_distance = 100;   // percent of the game's fog distance, 0 for none (game/view.cpp)
+bool g_hud_edges = true;         // widescreen: the HUD at the screen's corners rather than the 4:3 middle (widescreen.cpp)
 extern uint32_t g_button_layout;    // texpack.cpp
+bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
 
 namespace {
 
@@ -145,6 +154,39 @@ void GraphicsTab(bool& save) {
     Row("Widescreen", "16:9 with more of the world at the sides; the HUD, menus and movies stay 4:3 in the middle. "
                       "Off shows the game 4:3, as on a 4:3 TV. Needs a 16:9 or wider resolution.");
     save |= ImGui::Checkbox("##wide", &s.widescreen);
+    Row("HUD at the screen edges", "Widescreen: the health and magic bars and the rest of the HUD in the screen's "
+                                   "corners, as on a 4:3 screen, rather than at the corners of the 4:3 middle.");
+    save |= ImGui::Checkbox("##hud", &g_hud_edges);
+    Row("Field of view", "How much of the world the camera takes in: 100% is the game's own, which each room's camera "
+                         "sets; more is wider. Story scenes keep the game's.");
+    {
+        int fov = int(g_fov);
+        char fmt[64] = "%d%% (the game's)";
+        double game = 0, drawn = 0;
+        if (fov != 100 && ViewFov(game, drawn))
+            std::snprintf(fmt, sizeof(fmt), "%%d%%%% (%.0f\xC2\xB0 up and down here, the game's %.0f\xC2\xB0)", drawn, game);
+        else if (fov != 100)
+            std::snprintf(fmt, sizeof(fmt), "%%d%%%%");
+        if (ImGui::SliderInt("##fov", &fov, 100, 200, fmt, ImGuiSliderFlags_AlwaysClamp)) {
+            g_fov = uint32_t(fov);
+            save = true;
+        }
+    }
+    Row("Far view", "The fog and the draw distance both 4x as far out. Off puts both back to the game's.");
+    {
+        bool on = g_draw_distance == 400 && g_fog_distance == 400;
+        if (ImGui::Checkbox("##farview", &on)) {
+            g_draw_distance = g_fog_distance = on ? 400 : 100;
+            save = true;
+        }
+    }
+    Row("Draw distance", "How far the world is drawn. The game's ends where its fog has hidden everything; farther shows "
+                         "more once there is less fog, and may show where a room's scenery ends.");
+    save |= Choice<uint32_t>("##far", g_draw_distance, {100, 150, 200, 400}, {"The game's", "1.5x", "2x", "4x"});
+    Row("Fog", "The fog and the darkness that hides the distance in most rooms: as far out as the game puts it, "
+               "farther, or none.");
+    save |= Choice<uint32_t>("##fog", g_fog_distance, {100, 150, 200, 400, 0},
+                             {"The game's", "1.5x farther", "2x farther", "4x farther", "None"});
     ImGui::EndTable();
 }
 
@@ -165,6 +207,14 @@ void ControlsTab(bool& save) {
         Row("Button layout", "PS2: the PS2's button icons (from an HD texture pack made from the PS2 game) and its "
                              "shoulders: L1 resets the camera, R1 guards, L2 and R2 lock on. From the next start.");
         save |= Choice<uint32_t>("##layout", g_button_layout, {0, 1}, {"Xbox", "PS2"});
+        Row("Stick response", "PS2: Hector walks any way the stick points and walks slowly when it is tilted a "
+                              "little, as on the PS2. Xbox: the Xbox release's, where a stick near up, down, left or "
+                              "right walks straight along it and a walk starts at a third of his speed.");
+        save |= Choice<bool>("##stick", g_ps2_stick, {true, false}, {"PS2", "Xbox"});
+        Row("Invert camera left / right", "The right stick (and the arrow keys) turn the camera the other way across.");
+        save |= ImGui::Checkbox("##invx", &g_invert_camera_x);
+        Row("Invert camera up / down", "The right stick (and the arrow keys) move the camera the other way up and down.");
+        save |= ImGui::Checkbox("##invy", &g_invert_camera_y);
         ImGui::EndTable();
     }
     ImGui::Spacing();
@@ -203,6 +253,11 @@ void Defaults() {
     g_pause_on_focus_loss = true;
     g_button_layout = 0;
     g_lament_save = false;
+    g_ps2_stick = true;
+    g_invert_camera_x = g_invert_camera_y = false;
+    g_fov = 100;
+    g_draw_distance = g_fog_distance = 100;
+    g_hud_edges = true;
     app::ApplyDisplay();
 }
 

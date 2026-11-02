@@ -411,6 +411,12 @@ struct Settings {
     uint32_t texture_pack_size = 2048;  // 0 full size
     uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
     bool lament_save = false;           // the Moai of a Lament of Innocence save (hooks.cpp)
+    bool ps2_stick = true;              // the sticks as the PS2 read them (hooks.cpp)
+    bool invert_camera_x = false, invert_camera_y = false;  // the camera stick the other way (keyboard.cpp)
+    uint32_t fov = 100;                 // percent of the game's field of view in play (game/view.cpp)
+    uint32_t draw_distance = 100;       // percent of the game's far plane (game/view.cpp)
+    uint32_t fog_distance = 100;        // percent of the game's fog distance, 0 none (game/view.cpp)
+    bool hud_edges = true;              // widescreen: the HUD at the screen's corners (widescreen.cpp)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     toml::table rest;
 
@@ -439,6 +445,13 @@ struct Settings {
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
         button_layout = rest["button_layout"].value_or(button_layout);
         lament_save = rest["lament_save"].value_or(lament_save);
+        ps2_stick = rest["ps2_stick"].value_or(ps2_stick);
+        invert_camera_x = rest["invert_camera_x"].value_or(invert_camera_x);
+        invert_camera_y = rest["invert_camera_y"].value_or(invert_camera_y);
+        fov = rest["fov"].value_or(fov);
+        draw_distance = rest["draw_distance"].value_or(draw_distance);
+        fog_distance = rest["fog_distance"].value_or(fog_distance);
+        hud_edges = rest["hud_edges"].value_or(hud_edges);
         gpu = rest["gpu"].value_or(gpu);
     }
 
@@ -460,6 +473,13 @@ struct Settings {
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
         rest.insert_or_assign("button_layout", int64_t(button_layout));
         rest.insert_or_assign("lament_save", lament_save);
+        rest.insert_or_assign("ps2_stick", ps2_stick);
+        rest.insert_or_assign("invert_camera_x", invert_camera_x);
+        rest.insert_or_assign("invert_camera_y", invert_camera_y);
+        rest.insert_or_assign("fov", int64_t(fov));
+        rest.insert_or_assign("draw_distance", int64_t(draw_distance));
+        rest.insert_or_assign("fog_distance", int64_t(fog_distance));
+        rest.insert_or_assign("hud_edges", hud_edges);
         rest.insert_or_assign("gpu", gpu);
         std::ofstream f(File());
         f << rest << "\n";
@@ -775,6 +795,40 @@ bool Segmented(const char* id, T& value, const std::vector<T>& values, const std
     }
     ImGui::SetCursorScreenPos(a);
     ImGui::Dummy({avail, h});
+    ImGui::PopID();
+    return changed;
+}
+
+// a value along a track, the part up to it on the menus' green bar, the value's name on it; dragged, clicked, or
+// stepped with the arrow keys while it has the focus
+bool Slider(const char* id, uint32_t& value, uint32_t lo, uint32_t hi, const std::string& name) {
+    ImGui::PushID(id);
+    float avail = ImGui::GetContentRegionAvail().x, h = S(32);
+    ImVec2 a = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("track", {avail, h});
+    bool hover = ImGui::IsItemHovered(), changed = false;
+    uint32_t v = std::clamp(value, lo, hi);
+    if (ImGui::IsItemActive()) {
+        float t = std::clamp((ImGui::GetIO().MousePos.x - a.x) / avail, 0.0f, 1.0f);
+        v = lo + uint32_t(std::lround(t * float(hi - lo)));
+    }
+    if (ImGui::IsItemFocused()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && v > lo) v--;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && v < hi) v++;
+    }
+    if (v != value) {
+        value = v;
+        changed = true;
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(a, a + ImVec2(avail, h), Rgb(1, 5, 24));
+    dl->AddRect(a, a + ImVec2(avail, h), kLineLo);
+    float t = hi > lo ? float(v - lo) / float(hi - lo) : 0.0f;
+    ImVec2 in{S(3), S(3)};
+    float right = std::max(avail * t, S(18));
+    Bar(dl, a + in, a + ImVec2(right, h) - in, S(7), hover ? kAccentHi : kAccent, kAccentLo, Rgb(0, 60, 14));
+    ImVec2 ts = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, name.c_str());
+    Outlined(dl, g_italic, a + ImVec2((avail - ts.x) * 0.5f, (h - ts.y) * 0.5f), kText, Rgb(0, 50, 12, 220), name.c_str(), 1);
     ImGui::PopID();
     return changed;
 }
@@ -1238,7 +1292,10 @@ private:
                std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
                std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout) +
-               std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language + "|" + std::to_string(s.game_language);
+               std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language + "|" + std::to_string(s.game_language) +
+               "|" + std::to_string(s.ps2_stick) + std::to_string(s.invert_camera_x) + std::to_string(s.invert_camera_y) +
+               std::to_string(s.hud_edges) + "|" + std::to_string(s.fov) + "|" + std::to_string(s.draw_distance) + "|" +
+               std::to_string(s.fog_distance);
     }
 
     void AutoSave() {
@@ -1559,6 +1616,37 @@ private:
         BeginSetting(T("Anisotropic filtering"), T("Sharper textures on floors and walls seen at an angle."));
         Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
         EndSetting();
+        BeginSetting(T("HUD at the screen edges"), T("Widescreen: the health bar and the rest of the HUD in the screen's "
+                                                    "corners rather than at the corners of the 4:3 middle."));
+        ToggleRight("hudedges", settings_.hud_edges);
+        EndSetting();
+        EndCard();
+        BeginCard("view");
+        BeginSetting(T("Field of view"), T("How much of the world the camera takes in: 100% is the game's own, which each "
+                                           "room's camera sets; more is wider. Story scenes keep the game's."), true);
+        {
+            std::string name = std::to_string(settings_.fov) + "%";
+            if (settings_.fov == 100) name += "  -  " + std::string(T("the game's"));
+            Slider("fov", settings_.fov, 100, 200, name);
+        }
+        EndSetting();
+        BeginSetting(T("Far view"), T("The fog and the draw distance both 4x as far out. Off puts both back to the "
+                                      "game's."));
+        {
+            bool was = settings_.draw_distance == 400 && settings_.fog_distance == 400, on = was;
+            ToggleRight("farview", on);
+            if (on != was) settings_.draw_distance = settings_.fog_distance = on ? 400 : 100;
+        }
+        EndSetting();
+        BeginSetting(T("Draw distance"), T("How far the world is drawn. Farther shows more once there is less fog, and may "
+                                           "show where a room's scenery ends."));
+        Segmented<uint32_t>("far", settings_.draw_distance, {100, 150, 200, 400}, {T("Original"), "1.5x", "2x", "4x"});
+        EndSetting();
+        BeginSetting(T("Fog"), T("The fog and darkness that hide the distance in most rooms: as far out as the game puts "
+                                 "it, farther, or none."));
+        Segmented<uint32_t>("fog", settings_.fog_distance, {100, 150, 200, 400, 0},
+                            {T("Original"), "1.5x", "2x", "4x", T("None")});
+        EndSetting();
         EndCard();
         BeginCard("texpack");
         BeginSetting(T("HD texture pack"), T("Texture packs made for PCSX2 replace the game's textures: put a pack's "
@@ -1645,6 +1733,20 @@ private:
             else if (files_.ps2_buttons) Status(kIconCheck, kGreen, T("PS2 icons found in the texture pack"));
             else Status(kIconWarn, kMuted, T("No PS2 icons in the textures folder: the Xbox ones stay, the shoulders change"));
         }
+        EndCard();
+        BeginCard("sticks");
+        BeginSetting(T("Stick response"), T("PS2: Hector walks any way the stick points, from a slow walk up, as on the PS2. "
+                                            "Xbox: the Xbox release's, where a stick near up, down, left or right walks "
+                                            "straight along it."), true);
+        Segmented<bool>("stick", settings_.ps2_stick, {true, false}, {"PS2", "Xbox"});
+        EndSetting();
+        BeginSetting(T("Invert camera left / right"), T("The right stick and the arrow keys turn the camera the other way."));
+        ToggleRight("invx", settings_.invert_camera_x);
+        EndSetting();
+        BeginSetting(T("Invert camera up / down"), T("The right stick and the arrow keys move the camera the other way up "
+                                                     "and down."));
+        ToggleRight("invy", settings_.invert_camera_y);
+        EndSetting();
         EndCard();
         BeginCard("keys");
         // the keys by their names on a keyboard, the controller's buttons (B, Y, Start, Back) by the Xbox's

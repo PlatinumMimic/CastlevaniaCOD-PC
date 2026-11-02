@@ -884,6 +884,122 @@ inline constexpr Row kRows[] = {
       "Не удалось скопировать образ диска (ошибка {}).",
       "Impossible de copier l'image disque (erreur {}).",
       "Disc-Image konnte nicht kopiert werden (Fehler {})."}},
+    // the view and the camera (game/view.cpp, keyboard.cpp, widescreen.cpp)
+    {{"HUD at the screen edges",
+      "HUD nas bordas da tela",
+      "HUD en los bordes de la pantalla",
+      "HUD ai bordi dello schermo",
+      "HUD по краям экрана",
+      "HUD aux bords de l'écran",
+      "HUD an den Bildschirmrändern"}},
+    {{"Widescreen: the health bar and the rest of the HUD in the screen's corners rather than at the corners of the "
+      "4:3 middle.",
+      "Widescreen: a barra de vida e o resto do HUD nos cantos da tela, em vez dos cantos da área 4:3 do meio.",
+      "Panorámico: la barra de vida y el resto del HUD en las esquinas de la pantalla, en lugar de las esquinas de la "
+      "zona 4:3 central.",
+      "Widescreen: la barra della salute e il resto dell'HUD negli angoli dello schermo, invece che negli angoli "
+      "dell'area 4:3 centrale.",
+      "Широкий экран: полоса здоровья и остальной HUD в углах экрана, а не в углах центральной области 4:3.",
+      "Écran large : la barre de vie et le reste du HUD dans les coins de l'écran, plutôt qu'aux coins de la zone 4:3 "
+      "du milieu.",
+      "Breitbild: der Lebensbalken und das übrige HUD in den Ecken des Bildschirms statt in den Ecken der 4:3-Mitte."}},
+    {{"Field of view", "Campo de visão", "Campo de visión", "Campo visivo", "Поле зрения", "Champ de vision", "Sichtfeld"}},
+    {{"How much of the world the camera takes in: 100% is the game's own, which each room's camera sets; more is "
+      "wider. Story scenes keep the game's.",
+      "Quanto do mundo a câmera mostra: 100% é o do próprio jogo, definido pela câmera de cada sala; mais é mais "
+      "amplo. As cenas da história mantêm o do jogo.",
+      "Cuánto del mundo abarca la cámara: 100% es el del propio juego, que fija la cámara de cada sala; más es más "
+      "amplio. Las escenas de la historia conservan el del juego.",
+      "Quanto del mondo inquadra la telecamera: 100% è quello del gioco, impostato dalla telecamera di ogni stanza; di "
+      "più è più ampio. Le scene della storia mantengono quello del gioco.",
+      "Сколько мира охватывает камера: 100% — как в игре, где его задаёт камера каждой комнаты; больше — шире. "
+      "Сюжетные сцены сохраняют игровое значение.",
+      "La part du monde que la caméra embrasse : 100 % est celui du jeu, fixé par la caméra de chaque salle ; plus est "
+      "plus large. Les scènes de l'histoire gardent celui du jeu.",
+      "Wie viel von der Welt die Kamera erfasst: 100 % ist der des Spiels, den die Kamera jedes Raums setzt; mehr ist "
+      "weiter. Story-Szenen behalten den des Spiels."}},
+    {{"the game's", "o do jogo", "el del juego", "quello del gioco", "как в игре", "celui du jeu", "der des Spiels"}},
+    {{"Far view", "Visão distante", "Vista lejana", "Vista lontana", "Дальний обзор", "Vue lointaine", "Fernsicht"}},
+    {{"The fog and the draw distance both 4x as far out. Off puts both back to the game's.",
+      "A névoa e a distância de visão, ambas 4x mais longe. Desligado volta as duas às do jogo.",
+      "La niebla y la distancia de dibujado, ambas 4x más lejos. Desactivado devuelve las dos a las del juego.",
+      "La nebbia e la distanza visiva, entrambe 4x più lontane. Disattivato le riporta entrambe a quelle del gioco.",
+      "Туман и дальность прорисовки — обе в 4 раза дальше. Выключено — обе как в игре.",
+      "Le brouillard et la distance d'affichage, tous deux 4x plus loin. Désactivé les remet tous deux à ceux du jeu.",
+      "Nebel und Sichtweite beide 4x so weit draußen. Aus setzt beide auf die des Spiels zurück."}},
+    {{"Draw distance", "Distância de visão", "Distancia de dibujado", "Distanza visiva", "Дальность прорисовки",
+      "Distance d'affichage", "Sichtweite"}},
+    {{"How far the world is drawn. Farther shows more once there is less fog, and may show where a room's scenery "
+      "ends.",
+      "Até onde o mundo é desenhado. Mais longe mostra mais quando há menos névoa, e pode mostrar onde termina o cenário "
+      "de uma sala.",
+      "Hasta dónde se dibuja el mundo. Más lejos muestra más cuando hay menos niebla, y puede mostrar dónde termina el "
+      "escenario de una sala.",
+      "Fin dove viene disegnato il mondo. Più lontano mostra di più quando c'è meno nebbia, e può mostrare dove finisce "
+      "lo scenario di una stanza.",
+      "Как далеко отрисовывается мир. Дальше — видно больше, когда тумана меньше, но может стать видно, где "
+      "заканчиваются декорации комнаты.",
+      "Jusqu'où le monde est dessiné. Plus loin en montre davantage quand il y a moins de brouillard, et peut montrer "
+      "où s'arrête le décor d'une salle.",
+      "Wie weit die Welt gezeichnet wird. Weiter zeigt mehr, sobald weniger Nebel da ist, und kann zeigen, wo die "
+      "Kulisse eines Raums endet."}},
+    {{"Fog", "Névoa", "Niebla", "Nebbia", "Туман", "Brouillard", "Nebel"}},
+    {{"The fog and darkness that hide the distance in most rooms: as far out as the game puts it, farther, or none.",
+      "A névoa e a escuridão que escondem a distância na maioria das salas: onde o jogo as põe, mais longe, ou nenhuma.",
+      "La niebla y la oscuridad que ocultan la distancia en la mayoría de las salas: donde las pone el juego, más "
+      "lejos, o ninguna.",
+      "La nebbia e il buio che nascondono la distanza nella maggior parte delle stanze: dove li mette il gioco, più "
+      "lontano, o nessuna.",
+      "Туман и темнота, скрывающие даль в большинстве комнат: как в игре, дальше или без них.",
+      "Le brouillard et l'obscurité qui cachent le lointain dans la plupart des salles : là où le jeu les met, plus "
+      "loin, ou aucun.",
+      "Der Nebel und die Dunkelheit, die in den meisten Räumen die Ferne verbergen: so weit draußen wie im Spiel, "
+      "weiter oder gar keine."}},
+    {{"None", "Nenhuma", "Ninguna", "Nessuna", "Нет", "Aucun", "Keiner"}},
+    {{"Stick response", "Resposta do analógico", "Respuesta del stick", "Risposta della levetta", "Отклик стика",
+      "Réponse du stick", "Stick-Verhalten"}},
+    {{"PS2: Hector walks any way the stick points, from a slow walk up, as on the PS2. Xbox: the Xbox release's, "
+      "where a stick near up, down, left or right walks straight along it.",
+      "PS2: Hector anda para onde o analógico aponta, a partir de um passo lento, como no PS2. Xbox: o da versão de "
+      "Xbox, em que o analógico perto de cima, baixo, esquerda ou direita anda reto nessa direção.",
+      "PS2: Hector camina hacia donde apunta el stick, desde un paso lento, como en PS2. Xbox: el de la versión de "
+      "Xbox, donde un stick cerca de arriba, abajo, izquierda o derecha camina recto en esa dirección.",
+      "PS2: Hector cammina dove punta la levetta, a partire da un passo lento, come su PS2. Xbox: quello della versione "
+      "Xbox, dove una levetta vicina a su, giù, sinistra o destra cammina dritta in quella direzione.",
+      "PS2: Гектор идёт туда, куда наклонён стик, начиная с медленного шага, как на PS2. Xbox: как в версии для Xbox, "
+      "где стик рядом с направлением вверх, вниз, влево или вправо ведёт строго по нему.",
+      "PS2 : Hector marche là où pointe le stick, dès un pas lent, comme sur PS2. Xbox : celui de la version Xbox, où un "
+      "stick proche du haut, du bas, de la gauche ou de la droite marche tout droit dans cette direction.",
+      "PS2: Hector geht dorthin, wohin der Stick zeigt, ab einem langsamen Schritt, wie auf der PS2. Xbox: das der "
+      "Xbox-Fassung, bei der ein Stick nahe oben, unten, links oder rechts gerade in diese Richtung geht."}},
+    {{"Invert camera left / right",
+      "Inverter câmera esquerda / direita",
+      "Invertir cámara izquierda / derecha",
+      "Inverti telecamera sinistra / destra",
+      "Инвертировать камеру влево / вправо",
+      "Inverser la caméra gauche / droite",
+      "Kamera links / rechts umkehren"}},
+    {{"The right stick and the arrow keys turn the camera the other way.",
+      "O analógico direito e as setas giram a câmera para o outro lado.",
+      "El stick derecho y las flechas giran la cámara hacia el otro lado.",
+      "La levetta destra e le frecce ruotano la telecamera dall'altra parte.",
+      "Правый стик и стрелки поворачивают камеру в другую сторону.",
+      "Le stick droit et les flèches tournent la caméra dans l'autre sens.",
+      "Der rechte Stick und die Pfeiltasten drehen die Kamera in die andere Richtung."}},
+    {{"Invert camera up / down",
+      "Inverter câmera cima / baixo",
+      "Invertir cámara arriba / abajo",
+      "Inverti telecamera su / giù",
+      "Инвертировать камеру вверх / вниз",
+      "Inverser la caméra haut / bas",
+      "Kamera oben / unten umkehren"}},
+    {{"The right stick and the arrow keys move the camera the other way up and down.",
+      "O analógico direito e as setas movem a câmera para o outro lado, para cima e para baixo.",
+      "El stick derecho y las flechas mueven la cámara al revés, arriba y abajo.",
+      "La levetta destra e le frecce muovono la telecamera al contrario, su e giù.",
+      "Правый стик и стрелки двигают камеру вверх и вниз в обратную сторону.",
+      "Le stick droit et les flèches déplacent la caméra dans l'autre sens, en haut et en bas.",
+      "Der rechte Stick und die Pfeiltasten bewegen die Kamera umgekehrt nach oben und unten."}},
 };
 
 // every row has each language, with as many {} as its English

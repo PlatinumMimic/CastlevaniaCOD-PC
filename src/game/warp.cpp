@@ -22,6 +22,8 @@ X86_EXTERN_FUNC(CV_ORIGINAL(CV_SET_ROOM));
 X86_EXTERN_FUNC(CV_ORIGINAL(CV_SET_FLAG));
 X86_EXTERN_FUNC(CV_ORIGINAL(CV_CHANGE_ROOM));
 
+void ViewFrame(uint8_t* base);  // view.cpp: the field of view, draw distance and fog settings
+
 namespace {
 
 std::atomic<uint32_t> g_warp{0};  // bit 31 set: map in bits 16-23, room 8-15, entry 0-7
@@ -47,8 +49,9 @@ void RequestWarp(int map, int room, int entry) {
     LOGR("warp: asked for map %d room %d entry %d", map, room, entry);
 }
 
-// the camera update, each frame of play: a warp asked for goes here
+// the camera update, each frame of play: a warp asked for goes here, and the view settings changed since
 X86_FUNC(CV_HOOK(CV_CAMERA_UPDATE)) {
+    ViewFrame(base);
     uint32_t w = g_warp.load();
     if (w && ctx.esp >= 0x10000 && mem::IsCommitted(ctx.esp - 256) &&
         Call(ctx, base, CV_ORIGINAL(CV_SCENE_FREE), {kRoomChange})) {

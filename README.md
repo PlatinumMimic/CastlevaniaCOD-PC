@@ -3,6 +3,11 @@
 An unofficial native PC port of the original Xbox version of Castlevania: Curse of Darkness, statically recompiled
 into a 64 bit Windows executable. Rendering runs on Direct3D 12 and sound on XAudio2.
 
+**Thanks to Calm-Consideration41** (PlatinumMimic, who also made the
+[Castlevania PS2 4K texture packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs)) for the
+field of view, draw distance and fog settings, the HUD in the screen's corners in widescreen, the PS2's stick
+response, the inverted camera and the rumble on both motors.
+
 This is a personal, non-commercial fan project. It has nothing to do with Konami, Microsoft or any other company: it
 is not affiliated with, endorsed or sponsored by them, and it is not an official release. See [Legal](#legal).
 
@@ -49,6 +54,13 @@ On top of Pazzi7054's port:
 - **Anisotropic filtering without a pack** - it sharpens the game's own textures too.
 - **PS2 button layout** - the PS2's button icons (from a PS2 HD pack) and shoulder buttons, as an option.
 - **Lament of Innocence bonus** - the Moai the PS2 game gave for a Lament of Innocence save, as an option.
+- **Field of view, draw distance and fog** - a wider view, the world drawn farther and its fog pushed out or gone,
+  with the rampart's painted sky kept as the game shows it. By Calm-Consideration41.
+- **HUD at the screen's corners** - in widescreen the health bar and the rest of the HUD sit in the corners of the
+  screen, not of the 4:3 middle. By Calm-Consideration41.
+- **PS2 stick response, inverted camera and rumble** - Hector walks any way the stick points, as on the PS2, instead
+  of snapping to up, down, left and right; the camera's axes can be inverted apart; and both of the controller's
+  motors rumble as the game drives them. By Calm-Consideration41.
 - **Crazy mode and Trevor from the start** - the name codes `@CRAZY` and `@TREVOR` work without beating the game first.
 - **Launcher** - in the game's own look, with the title logo from your HD pack. It chooses the graphics card and says
   whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
@@ -192,6 +204,10 @@ key or L3 + R3 closes it.
   without stretching. The HUD, text and movies stay 4:3 in the middle; the backdrops of the menus, the map and the
   save screens reach the sides, as does the dimmed panel behind a message. Turn it off in the menu (Graphics) for
   the original 4:3 picture.
+- **HUD at the Screen Edges** - In widescreen the health bar, its numbers, the icon at the bottom left and the
+  message box at the bottom right sit in the screen's corners, as they do on a 4:3 screen, instead of at the corners
+  of the 4:3 middle (on by default; `hud_edges = false` keeps them in the middle). Menus, the map and story scenes
+  stay as they are.
 - **No Overscan Streaks** - The rows a TV's overscan used to hide at the top and bottom of the picture no longer
   smear; the frame fills the screen.
 
@@ -218,6 +234,16 @@ takes effect from the next start; the in-game menu has none.
 - **Anisotropic Filtering** - Up to 16x, on the game's own textures too: they have no mip levels, so a floor or
   wall seen at an angle shimmers in the distance without it; with the HD pack, whose pictures have mip levels,
   it keeps them sharp there instead.
+- **Field of View** - 100% (the game's, which each room's camera sets) to 200%, a wider view as the number goes up;
+  the in-game menu shows the view's angle as you move it. It holds through a room change's fade-in; story scenes
+  keep the game's framing (`fov = 130`).
+- **Draw Distance and Fog** - How far the world is drawn (the game's, 1.5x, 2x or 4x) and how far out its fog and
+  darkness start (the game's, 1.5x, 2x, 4x, or none). **Far View** sets both to 4x (`draw_distance = 400`,
+  `fog_distance = 400`). Rooms the game fogs heavily open up most; a room's far scenery can end where its fog used to
+  hide it. Some skies are painted cards the game placed past a room's far plane, in its fog (the Abandoned Castle's
+  rampart has a moon 45,000 units out, its fog ending at 39,000): pushed out, they showed their edges. That sky's
+  textures keep the room's own fog, so it looks as the game shows it, while the rest of the room is drawn as far as
+  set.
 - **Shader Cache** - Shaders compiled while playing are kept in `cache\shaders` beside the game, so later sessions
   do not stutter the first time an effect is drawn.
 
@@ -238,6 +264,18 @@ Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
   the camera and R1 guarding, L2 and R2 locking on (the launcher's or the in-game menu's Controls page;
   `button_layout = 1`; in game, from the next start). The PS2 icons come from an HD texture pack made from the PS2
   game (HD Texture Packs, above), and the launcher says whether yours has them; without one the Xbox icons stay.
+- **Stick Response** - PS2 (the default), or Xbox. The Xbox release cuts each stick axis to 0 by itself under a
+  third of its throw, before the game makes the stick a direction, so near up, down, left or right Hector walks
+  straight along them (within 20 degrees at full tilt, 42 at half), and a walk starts at a third of his speed. The
+  PS2 setting lets the axes through as the PS2 did, and the game's own round dead zone counts: he walks any way the
+  stick points, from a slow walk up (the in-game menu's Controls page; `ps2_stick = false` for the Xbox's).
+- **Invert Camera** - Left / right and up / down apart: the right stick (and the arrow keys) move the camera the other
+  way (`invert_camera_x`, `invert_camera_y`).
+- **Rumble** - As on the PS2: the game drives a PS2 controller's two motors, the large one at 256 speeds and the
+  small one on or off. The Xbox release made both of the controller's motors one value from either, so the small
+  motor's "on" (1 of 255) that the game sends right after the large one's speed left nearly nothing; on the console
+  the large one's still got out first, as its requests were slower. Here the large motor drives the left (heavy)
+  motor and the small one the right, and the controller gets the motors as each frame leaves them.
 
 ### Keyboard
 The keyboard plays as player 1 while the window is in front:
@@ -558,6 +596,8 @@ The source in this repository is released under the [GNU General Public License 
 - [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482, the recompiler and runtime this is built on.
 - [Castlevania-COD-Recomp](https://github.com/Neguchads/Castlevania-COD-Recomp) by Neguchads, for its findings in the
   game: Hector's shadow on the 4X multisample grid, and the addresses of the camera, maps, rooms and enemies.
+- Calm-Consideration41 (PlatinumMimic) for the field of view, draw distance and fog settings, the HUD at the screen's
+  corners, the PS2 stick response, the inverted camera and the rumble.
 - The HD texture packs' makers: Panda_Venom and Stan21
   ([HD Remaster](https://gbatemp.net/threads/castlevania-curse-of-darkness-usa-hd-remaster.619688/)), VictorKratos
   ([VK Curse of Darkness](https://drive.usercontent.google.com/download?id=1rEeBsGLc93pQerT_7j-MwzT-otxhGZl-&authuser=0))

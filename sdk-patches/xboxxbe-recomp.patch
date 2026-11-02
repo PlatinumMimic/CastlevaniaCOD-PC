@@ -351,6 +351,49 @@ index 075b3b7..d06321e 100644
  }
  
  // Output for every frame: the desktop mode lookup reads the registry, so it runs again only when the resolution
+diff --git a/runtime/core/input.cpp b/runtime/core/input.cpp
+index bb7f3a9..0522aa9 100644
+--- a/runtime/core/input.cpp
++++ b/runtime/core/input.cpp
+@@ -27,7 +27,18 @@ void AddPad(SDL_JoystickID id) {
+     if (slot == std::end(g_pads)) return;
+     *slot = SDL_OpenGamepad(id);
+     const char* name = *slot ? SDL_GetGamepadName(*slot) : SDL_GetError();
+-    LOGI("input: controller %d %s: %s", int(slot - g_pads) + 1, *slot ? "plugged in" : "failed to open", name ? name : "");
++    if (!*slot) {
++        LOGW("input: controller %d failed to open: %s", int(slot - g_pads) + 1, name ? name : "");
++        return;
++    }
++    // what a controller is and whether it says it can rumble, in every log: a controller that does not rumble is
++    // first looked for here
++    SDL_PropertiesID props = SDL_GetGamepadProperties(*slot);
++    SDL_JoystickConnectionState link = SDL_GetGamepadConnectionState(*slot);
++    LOGR("input: controller %d plugged in: %s (%s, %s), rumble %s", int(slot - g_pads) + 1, name ? name : "",
++         SDL_GetGamepadStringForType(SDL_GetGamepadType(*slot)) ? SDL_GetGamepadStringForType(SDL_GetGamepadType(*slot)) : "?",
++         link == SDL_JOYSTICK_CONNECTION_WIRED ? "wired" : link == SDL_JOYSTICK_CONNECTION_WIRELESS ? "wireless" : "connection unknown",
++         SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? "yes" : "no");
+ }
+ 
+ void RemovePad(SDL_JoystickID id) {
+@@ -130,7 +141,17 @@ uint16_t HeldOnAnyController() {
+ void Rumble(int port, uint16_t left, uint16_t right) {
+     if (app::kGame.rumble) app::kGame.rumble(port, left, right);
+     std::lock_guard lock(g_lock);
+-    if (port >= 0 && port < 4 && g_pads[port]) SDL_RumbleGamepad(g_pads[port], left, right, 0);
++    if (port < 0 || port >= 4 || !g_pads[port]) return;
++    // the first time the game rumbles, and each failure, logged: a rumble that does not reach the controller
++    static bool first = true;
++    if (first && (left || right)) {
++        first = false;
++        LOGR("input: the game's first rumble, %u / %u, to controller %d", left, right, port + 1);
++    }
++    if (!SDL_RumbleGamepad(g_pads[port], left, right, 0)) {
++        static int failures = 0;
++        if (failures++ < 5) LOGW("input: rumble on controller %d failed: %s", port + 1, SDL_GetError());
++    }
+ }
+ 
+ }  // namespace input
 diff --git a/runtime/core/log.cpp b/runtime/core/log.cpp
 index 7e6507d..d3c271d 100644
 --- a/runtime/core/log.cpp

@@ -4,6 +4,7 @@
 
 void KeyboardWindow(void* hwnd);              // keyboard.cpp
 void KeyboardPad(int port, input::Pad& pad);  // keyboard.cpp
+void KeyboardRumble(int port, uint16_t& left, uint16_t& right);  // keyboard.cpp
 bool MenuMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result);  // menu.cpp
 void MenuUi(double fps);                      // menu.cpp
 extern bool g_fps_counter;                    // menu.cpp
@@ -14,6 +15,13 @@ extern bool g_texture_pack;                   // texpack.cpp
 extern uint32_t g_texture_pack_size;          // texpack.cpp
 extern uint32_t g_button_layout;              // texpack.cpp
 extern bool g_lament_save;                    // menu.cpp, read by hooks.cpp
+extern bool g_ps2_stick;                      // menu.cpp, read by hooks.cpp and keyboard.cpp
+extern bool g_invert_camera_x;                // menu.cpp, read by keyboard.cpp
+extern bool g_invert_camera_y;                // menu.cpp, read by keyboard.cpp
+extern uint32_t g_fov;                        // menu.cpp, read by game/view.cpp: percent of the game's
+extern uint32_t g_draw_distance;              // menu.cpp, read by game/view.cpp
+extern uint32_t g_fog_distance;               // menu.cpp, read by game/view.cpp
+extern bool g_hud_edges;                      // menu.cpp, read by widescreen.cpp
 void GameInit();                              // setup.cpp
 extern const app::GameInfo::Release kReleases[];  // each release's xbe and executable, written by CMake
 extern const unsigned kReleaseCount;
@@ -47,7 +55,14 @@ const app::GameInfo app::kGame = {
                 {"texture_pack_size", nullptr, &g_texture_pack_size},
                 {"button_layout", nullptr, &g_button_layout},
                 {"lament_save", &g_lament_save, nullptr},
-                {"game_language", nullptr, &g_game_language}},
+                {"game_language", nullptr, &g_game_language},
+                {"ps2_stick", &g_ps2_stick, nullptr},
+                {"invert_camera_x", &g_invert_camera_x, nullptr},
+                {"invert_camera_y", &g_invert_camera_y, nullptr},
+                {"fov", nullptr, &g_fov},
+                {"draw_distance", nullptr, &g_draw_distance},
+                {"fog_distance", nullptr, &g_fog_distance},
+                {"hud_edges", &g_hud_edges, nullptr}},
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
     .init = GameInit,                     // after the settings load, before the window and boot: game files, game code, renderer extension
@@ -56,6 +71,6 @@ const app::GameInfo app::kGame = {
     .message = MenuMessage,               // window messages first; true takes one: F10 for the menu
     .ui = MenuUi,                         // ImGui drawing each frame: the settings menu and FPS counter
     .pad = KeyboardPad,                   // changes a polled pad: keyboard play, CV_PAD_SCRIPT, pause, menu
-    .rumble = nullptr,                    // changes a rumble before it is set
+    .rumble = KeyboardRumble,             // changes a rumble before it is set: CV_RUMBLE_TRACE
     .language = Language,                 // the console's language the game reads
 };
