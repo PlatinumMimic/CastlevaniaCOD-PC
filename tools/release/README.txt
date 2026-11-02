@@ -28,6 +28,8 @@ fine: the game puts the original header back.
 
 CastlevaniaLauncher.exe has every setting (display, widescreen, render scale, controls) and
 checks your game files. In game, F10 or clicking both sticks in (L3 + R3) opens the settings.
+The launcher's language (English, German, Spanish, French, Italian, Brazilian Portuguese or
+Russian) is chosen at the bottom of its sidebar.
 
 Name a new game @CRAZY for Crazy mode or @TREVOR to play as Trevor Belmont; here these work
 without beating the game first. The @ is on the last row of the name screen's letters.

@@ -49,6 +49,8 @@ On top of Pazzi7054's port:
 - **Crazy mode and Trevor from the start** - the name codes `@CRAZY` and `@TREVOR` work without beating the game first.
 - **Launcher** - in the game's own look, with the title logo from your HD pack. It chooses the graphics card and says
   whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
+- **Launcher in seven languages** - English, Deutsch, Español, Français, Italiano, Português (Brasil) and Русский,
+  from a dropdown.
 - **Program icon** - the game's crest, made from your copy when you build.
 - **Newer recompiler** - Xbox XBE Recomp moved up to its commit `91146ff`, this fork's changes kept as a patch.
 - **Requirements written out** - what a PC needs to play, down to which graphics can run it.
@@ -161,6 +163,12 @@ for the game's serif. Its home page has the title logo from your HD texture pack
 of its icon, and under **Play** the pack's row: how many pictures the `textures` folder has, with the switch for them,
 or a button that opens the folder when it has none. The files are looked at again whenever the launcher comes back to
 the front, so a pack copied in meanwhile shows.
+
+The launcher speaks English (the default), German, Spanish, French, Italian, Brazilian Portuguese and Russian: the
+dropdown with the globe at the bottom of its sidebar switches it at once (`launcher_language` in `castlevania.toml`:
+`en`, `de`, `es`, `fr`, `it`, `pt-BR` or `ru`; **Reset to defaults** keeps it). The game itself and its in-game
+settings menu stay in English. Every phrase is in `src/launcher/words.h`, a row per English phrase with its
+translations; a phrase the launcher shows without a row there does not compile, nor does a row that lacks a language.
 
 ### Settings Menu
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be

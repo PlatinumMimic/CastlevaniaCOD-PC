@@ -40,6 +40,7 @@
 #include <toml++/toml.hpp>
 
 #include "kernel/disc.h"
+#include "words.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 extern const char kImageSha1[];  // the xbe the game exe was recompiled from, written by CMake
@@ -48,6 +49,8 @@ extern const unsigned char kImageCertificate[92];  // its certificate's title na
 namespace {
 
 namespace fs = std::filesystem;
+using words::F;
+using words::T;
 
 constexpr wchar_t kGameExe[] = L"Castlevania.exe";
 constexpr char kSettings[] = "castlevania.toml";
@@ -154,6 +157,13 @@ std::string Utf8(const std::wstring& w) {
     return s;
 }
 
+std::wstring Wide(const std::string& s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(size_t(std::max(n, 1)) - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+    return w;
+}
+
 void Open(const fs::path& p) { ShellExecuteW(nullptr, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
 
 // The graphics the game draws with, as the SDK picks them (runtime/gpu/d3d12.cpp): the card the settings name (gpu)
@@ -228,11 +238,6 @@ Release Check(const std::vector<uint8_t>& xbe) {
     memcpy(&copy[cert - base + 0x0C], kImageCertificate, 80);
     memcpy(&copy[cert - base + 0x9C], kImageCertificate + 80, 12);
     return Sha1(copy) == kImageSha1 ? Release::Patched : Release::Other;
-}
-
-// "1 picture", "3844 pictures"
-std::string Pictures(size_t n) {
-    return std::to_string(n) + (n == 1 ? " picture" : " pictures");
 }
 
 // what the game will find
@@ -331,11 +336,11 @@ struct Import {
             std::error_code ec;
             fs::create_directories(to.parent_path(), ec);
             if (CreateHardLinkW(to.c_str(), from.c_str(), nullptr)) {
-                result = "Linked " + Utf8(to.filename().wstring()) + " into assets.";
+                result = F("Linked {} into assets.", {Utf8(to.filename().wstring())});
             } else if (CopyFileExW(from.c_str(), to.c_str(), Progress, this, nullptr, COPY_FILE_FAIL_IF_EXISTS)) {
-                result = "Copied " + Utf8(to.filename().wstring()) + " into assets.";
+                result = F("Copied {} into assets.", {Utf8(to.filename().wstring())});
             } else {
-                result = "Could not copy the disc image (error " + std::to_string(GetLastError()) + ").";
+                result = F("Could not copy the disc image (error {}).", {std::to_string(GetLastError())});
             }
             running = false;
         });
@@ -357,7 +362,8 @@ struct Settings {
     bool fps_counter = false;
     bool pause_on_focus_loss = true;
     uint32_t menu_key = VK_F10;
-    bool keep_open = false;  // the launcher's own
+    bool keep_open = false;        // the launcher's own
+    std::string language = "en";   // the launcher's own too, a code of words.h
     bool texture_pack = true;
     uint32_t texture_pack_size = 2048;  // 0 full size
     uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
@@ -384,6 +390,7 @@ struct Settings {
         pause_on_focus_loss = rest["pause_on_focus_loss"].value_or(pause_on_focus_loss);
         menu_key = rest["menu_key"].value_or(menu_key);
         keep_open = rest["launcher_keep_open"].value_or(keep_open);
+        language = rest["launcher_language"].value_or(language);
         texture_pack = rest["texture_pack"].value_or(texture_pack);
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
         button_layout = rest["button_layout"].value_or(button_layout);
@@ -403,6 +410,7 @@ struct Settings {
         rest.insert_or_assign("pause_on_focus_loss", pause_on_focus_loss);
         rest.insert_or_assign("menu_key", int64_t(menu_key));
         rest.insert_or_assign("launcher_keep_open", keep_open);
+        rest.insert_or_assign("launcher_language", language);
         rest.insert_or_assign("texture_pack", texture_pack);
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
         rest.insert_or_assign("button_layout", int64_t(button_layout));
@@ -417,6 +425,7 @@ struct Settings {
         Settings d;
         d.rest = std::move(rest);
         d.keep_open = keep_open;
+        d.language = language;
         *this = std::move(d);
     }
 };
@@ -446,7 +455,7 @@ std::string ResName(Res r) {
         DEVMODEW dm{};
         dm.dmSize = sizeof(dm);
         EnumDisplaySettingsW(nullptr, ENUM_REGISTRY_SETTINGS, &dm);
-        return "Desktop (" + std::to_string(dm.dmPelsWidth) + "x" + std::to_string(dm.dmPelsHeight) + ")";
+        return F("Desktop ({})", {std::to_string(dm.dmPelsWidth) + "x" + std::to_string(dm.dmPelsHeight)});
     }
     return std::to_string(r.w) + "x" + std::to_string(r.h);
 }
@@ -455,7 +464,7 @@ std::string KeyName(uint32_t vk) {
     wchar_t name[64] = {};
     LONG scan = LONG(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)) << 16;
     if ((vk >= VK_PRIOR && vk <= VK_DOWN) || vk == VK_INSERT || vk == VK_DELETE) scan |= 1 << 24;
-    if (!GetKeyNameTextW(scan, name, 64)) return "Key " + std::to_string(vk);
+    if (!GetKeyNameTextW(scan, name, 64)) return F("Key {}", {std::to_string(vk)});
     return Utf8(name);
 }
 
@@ -494,11 +503,14 @@ ImVec4 V(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 ImVec2 operator+(ImVec2 a, ImVec2 b) { return {a.x + b.x, a.y + b.y}; }
 ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
 
-// Segoe Fluent / MDL2 icons, for status lines
+// Segoe Fluent / MDL2 icons, for status lines and the language
 enum : uint32_t {
-    kIconCheck = 0xE73E, kIconWarn = 0xE7BA, kIconDisc = 0xE958,
+    kIconCheck = 0xE73E, kIconGlobe = 0xE774, kIconWarn = 0xE7BA, kIconDisc = 0xE958,
 };
-const ImWchar kIconRanges[] = {0xE73E, 0xE73E, 0xE7BA, 0xE7BA, 0xE958, 0xE958, 0};
+const ImWchar kIconRanges[] = {0xE73E, 0xE73E, 0xE774, 0xE774, 0xE7BA, 0xE7BA, 0xE958, 0xE958, 0};
+// the letters of the launcher's languages: Latin with the accents of Portuguese, Spanish and Italian, Cyrillic, and
+// dashes, quotes and the ellipsis
+const ImWchar kTextRanges[] = {0x0020, 0x00FF, 0x0400, 0x045F, 0x2013, 0x2026, 0};
 
 std::string Icon(uint32_t cp) {
     char s[5] = {};
@@ -550,11 +562,13 @@ float Hash01(int i) {
 }
 
 // text with a dark edge around it, as the game letters its menus
-void Outlined(ImDrawList* dl, ImFont* f, ImVec2 p, ImU32 col, ImU32 edge, const char* s, float px = 1.5f) {
+void Outlined(ImDrawList* dl, ImFont* f, ImVec2 p, ImU32 col, ImU32 edge, const char* s, float px = 1.5f,
+              float size = 0) {
+    size = size ? size : f->FontSize;
     for (int dy = -1; dy <= 1; dy++)
         for (int dx = -1; dx <= 1; dx++)
-            if (dx || dy) dl->AddText(f, f->FontSize, p + ImVec2(S(px) * dx, S(px) * dy), edge, s);
-    dl->AddText(f, f->FontSize, p, col, s);
+            if (dx || dy) dl->AddText(f, size, p + ImVec2(S(px) * dx, S(px) * dy), edge, s);
+    dl->AddText(f, size, p, col, s);
 }
 
 // text in the logo's gold, lit from above, its edge dark
@@ -700,11 +714,17 @@ bool Segmented(const char* id, T& value, const std::vector<T>& values, const std
                 Fade(Rgb(0, 60, 14), t));
         else if (hover)
             dl->AddRectFilled(p + in, p + ImVec2(w, h) - in, Rgb(255, 255, 255, 14));
+        // a name longer than its part, as some languages' are, a little smaller
         ImFont* f = on ? g_italic : g_semi;
-        ImVec2 ts = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0, names[i].c_str());
+        float size = f->FontSize, room = w - S(14);
+        ImVec2 ts = f->CalcTextSizeA(size, FLT_MAX, 0, names[i].c_str());
+        if (ts.x > room) {
+            size *= std::max(0.72f, room / ts.x);
+            ts = f->CalcTextSizeA(size, FLT_MAX, 0, names[i].c_str());
+        }
         ImVec2 tp = p + ImVec2((w - ts.x) * 0.5f, (h - ts.y) * 0.5f);
-        if (on) Outlined(dl, f, tp, kText, Rgb(0, 50, 12, 220), names[i].c_str(), 1);
-        else dl->AddText(f, f->FontSize, tp, hover ? kText : kMuted, names[i].c_str());
+        if (on) Outlined(dl, f, tp, kText, Rgb(0, 50, 12, 220), names[i].c_str(), 1, size);
+        else dl->AddText(f, size, tp, hover ? kText : kMuted, names[i].c_str());
         ImGui::PopID();
     }
     ImGui::SetCursorScreenPos(a);
@@ -975,9 +995,10 @@ void Fonts() {
     std::string bold = path({"palab.ttf", "georgiab.ttf", "seguisb.ttf"});
     std::string italic = path({"palabi.ttf", "georgiaz.ttf", "seguisb.ttf"});
     std::string icons = path({"SegoeIcons.ttf", "segmdl2.ttf"});
-    auto load = [&](const std::string& file, float size, bool with_icons) -> ImFont* {
+    // the title's fonts write only its own words, in Latin letters: the rest every language's
+    auto load = [&](const std::string& file, float size, bool with_icons, const ImWchar* ranges = kTextRanges) -> ImFont* {
         if (file.empty()) return io.Fonts->AddFontDefault();
-        ImFont* f = io.Fonts->AddFontFromFileTTF(file.c_str(), size * g_scale);
+        ImFont* f = io.Fonts->AddFontFromFileTTF(file.c_str(), size * g_scale, nullptr, ranges);
         if (with_icons && !icons.empty()) {
             ImFontConfig cfg;
             cfg.MergeMode = true;
@@ -991,8 +1012,8 @@ void Fonts() {
     g_semi = load(bold, 16.5f, true);
     g_italic = load(italic, 18, false);
     g_head = load(italic, 30, false);
-    g_hero = load(italic, 58, false);
-    g_heroSub = load(italic, 28, false);
+    g_hero = load(italic, 58, false, nullptr);
+    g_heroSub = load(italic, 28, false, nullptr);
     g_button = load(italic, 26, false);
 }
 
@@ -1121,6 +1142,7 @@ public:
 
     // false: the launcher closes
     bool Frame() {
+        ShowLanguage();
         if (g_activated) {
             g_activated = false;
             rescan_ = true;
@@ -1170,14 +1192,23 @@ private:
                std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
                std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout) +
-               std::to_string(s.lament_save) + "|" + s.gpu;
+               std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language;
     }
 
     void AutoSave() {
         std::string now = Snapshot();
         if (now == saved_) return;
         saved_ = now;
-        Note(settings_.Save() ? "Settings saved" : "Could not write the settings file");
+        ShowLanguage();  // a language just chosen: the note saying so in it
+        Note(settings_.Save() ? T("Settings saved") : T("Could not write the settings file"));
+    }
+
+    // the words and the window's title in the language set
+    void ShowLanguage() {
+        if (settings_.language == shown_language_) return;
+        shown_language_ = settings_.language;
+        words::Set(shown_language_);
+        SetWindowTextW(g_hwnd, Wide(T("Castlevania: Curse of Darkness - Launcher")).c_str());
     }
 
     void Note(const std::string& s) {
@@ -1208,34 +1239,56 @@ private:
         dl->AddText(g_small, g_small->FontSize, {tx + S(2), p.y + S(27)}, Rgb(226, 78, 70), "Curse of Darkness");
         ImGui::Dummy({0, cs + S(22)});
 
-        static const char* kPages[] = {"Home", "Display", "Graphics", "Game", "Controls", "Game files"};
+        static const words::Key kPages[] = {"Home", "Display", "Graphics", "Game", "Controls", "Game files"};
         for (int i = 0; i < 6; i++) {
             if (i == 1) {
                 ImGui::Dummy({0, S(4)});
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(30));
-                Label("SETTINGS");
+                Label(T("SETTINGS"));
             }
             if (i == 5) ImGui::Dummy({0, S(6)});
-            if (NavItem(kPages[i], page_ == i)) page_ = i;
+            if (NavItem(T(kPages[i]), page_ == i)) page_ = i;
         }
 
-        // at the bottom: the save note and a reset
-        float bottom = ImGui::GetWindowHeight() - S(96);
-        if (ImGui::GetCursorPosY() < bottom) ImGui::SetCursorPosY(bottom);
+        // at the bottom: the language, the save note (two lines at most, a language's can be long) and a reset
+        float x = ImGui::GetCursorPosX(), line = g_small->FontSize;
+        float reset = ImGui::GetWindowHeight() - S(20) - S(36);
+        float language = reset - S(4) - 2 * line - S(14) - ImGui::GetFrameHeight();
+        if (ImGui::GetCursorPosY() < language) ImGui::SetCursorPosY(language);
+        LanguageChoice();
         float age = float(ImGui::GetTime() - status_time_);
         if (!status_.empty() && age < 4) {
-            float alpha = std::clamp(4 - age, 0.0f, 1.0f);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(16));
+            float alpha = std::clamp(4 - age, 0.0f, 1.0f), wrap = ImGui::GetContentRegionAvail().x - S(16);
+            float h = g_small->CalcTextSizeA(line, FLT_MAX, wrap, status_.c_str()).y;
+            ImGui::SetCursorPos({x + S(16), reset - S(4) - h});
+            ImGui::PushTextWrapPos(x + S(16) + wrap);
             Text(g_small, Fade(kMuted, alpha), status_.c_str());
-        } else {
-            ImGui::Dummy({0, g_small->FontSize});
+            ImGui::PopTextWrapPos();
         }
-        if (Button("Reset to defaults", {-1, S(36)}, Kind::Ghost)) {
+        ImGui::SetCursorPos({x, reset});
+        if (Button(T("Reset to defaults"), {-1, S(36)}, Kind::Ghost)) {
             settings_.Defaults();
-            Note("Defaults restored");
+            Note(T("Defaults restored"));
         }
         ImGui::EndChild();
         ImGui::PopStyleVar();
+    }
+
+    // the launcher's language, each by its name in itself (ShowLanguage puts it on)
+    void LanguageChoice() {
+        int cur = words::Current();
+        std::string preview = Icon(kIconGlobe) + "  " + words::kLanguages[cur].name;
+        ImGui::PushFont(g_body);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##language", preview.c_str())) {
+            for (int i : words::kMenu) {
+                if (ImGui::Selectable(words::kLanguages[i].name, i == cur)) settings_.language = words::kLanguages[i].code;
+                if (i == cur) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopFont();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Language"));
     }
 
     bool HomePage() {
@@ -1268,24 +1321,24 @@ private:
             below = sp.y + g_heroSub->FontSize;
         }
         ImGui::SetCursorScreenPos({at.x + S(2), below + S(10)});
-        Label("ORIGINAL XBOX  |  NATIVE PC PORT");
+        Label(T("ORIGINAL XBOX  |  NATIVE PC PORT"));
 
         ImGui::SetCursorScreenPos(a + ImVec2(S(30), h - S(26) - S(54)));
         bool keep = true, ready = files_.Playable();
         ImGui::BeginDisabled(!ready || import_.running);
-        if (Button("Play", {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
+        if (Button(T("Play"), {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
         ImGui::EndDisabled();
         if (!ready) {
             ImGui::SameLine(0, S(22));
-            if (Button("Set up game files", {0, S(54)}, Kind::Secondary)) page_ = 5;
+            if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = 5;
         }
         // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
         ImVec2 end = ImGui::GetItemRectMax();
         ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
-        if (!UsedGpu().d3d12) Status(kIconWarn, kRed, "No Direct3D 12");
-        else if (ready) Status(kIconCheck, kGreen, "Ready to play");
-        else if (!files_.exe) Status(kIconWarn, kRed, "Castlevania.exe is missing");
-        else Status(kIconWarn, kAmber, "Game files needed");
+        if (!UsedGpu().d3d12) Status(kIconWarn, kRed, T("No Direct3D 12"));
+        else if (ready) Status(kIconCheck, kGreen, T("Ready to play"));
+        else if (!files_.exe) Status(kIconWarn, kRed, T("Castlevania.exe is missing"));
+        else Status(kIconWarn, kAmber, T("Game files needed"));
         ImGui::SetCursorScreenPos(a + ImVec2(0, h + S(20)));
         if (!UsedGpu().d3d12) {
             BeginCard("gpu");
@@ -1298,18 +1351,19 @@ private:
         BeginCard("pack", S(12));
         float row = S(38), y = ImGui::GetCursorPosY(), mid = y + (row - g_semi->FontSize) * 0.5f;
         ImGui::SetCursorPosY(mid);
-        Text(g_semi, kText, "HD texture pack");
+        Text(g_semi, kText, T("HD texture pack"));
         ImGui::SameLine(0, S(26));
         ImGui::SetCursorPosY(mid);
-        if (!files_.pictures) Status(kIconWarn, kMuted, "None in the textures folder (optional)");
-        else if (settings_.texture_pack) Status(kIconCheck, kGreen, Pictures(files_.pictures) + " found, in use");
-        else Status(kIconCheck, kMuted, Pictures(files_.pictures) + " found, off: the game's own textures");
+        std::string pictures = words::Pictures(files_.pictures);
+        if (!files_.pictures) Status(kIconWarn, kMuted, T("None in the textures folder (optional)"));
+        else if (settings_.texture_pack) Status(kIconCheck, kGreen, F("{} found, in use", {pictures}));
+        else Status(kIconCheck, kMuted, F("{} found, off: the game's own textures", {pictures}));
         ImGui::SameLine();
         if (files_.pictures) {
             ImGui::SetCursorPos({ImGui::GetContentRegionMax().x - S(46), y + (row - S(22)) * 0.5f});
             Toggle("homepack", settings_.texture_pack);
         } else {
-            const char* open = "Open textures folder";
+            const char* open = T("Open textures folder");
             float bw = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, open).x + S(40) + row * 0.6f;
             ImGui::SetCursorPos({ImGui::GetContentRegionMax().x - bw, y});
             if (Button(open, {bw, row}, Kind::Secondary)) OpenTextures();
@@ -1319,19 +1373,21 @@ private:
         EndCard();
 
         // what is set, at a glance; each opens its page
-        Label("CURRENT SETUP");
+        Label(T("CURRENT SETUP"));
         ImGui::Dummy({0, S(2)});
         Res r{settings_.width, settings_.height};
-        std::string res = r.w ? std::to_string(r.w) + " x " + std::to_string(r.h) : "Desktop";
-        std::string mode = settings_.display_mode == "fullscreen" ? "Fullscreen" : settings_.display_mode == "windowed" ? "Windowed" : "Borderless";
+        std::string res = r.w ? std::to_string(r.w) + " x " + std::to_string(r.h) : T("Desktop");
+        std::string mode = settings_.display_mode == "fullscreen" ? T("Fullscreen")
+                           : settings_.display_mode == "windowed" ? T("Windowed")
+                                                                  : T("Borderless");
         struct Tile {
             const char* label;
             std::string value;
             int page;
-        } tiles[] = {{"Display", mode + "  |  " + res, 1},
-                     {"Widescreen", settings_.widescreen ? "On (16:9, Hor+)" : "Off (4:3)", 2},
-                     {"Render scale", std::to_string(settings_.render_percent) + "%", 2},
-                     {"Menu key", KeyName(settings_.menu_key) + "  |  L3 + R3", 3}};
+        } tiles[] = {{T("Display"), mode + "  |  " + res, 1},
+                     {T("Widescreen"), settings_.widescreen ? T("On (16:9, Hor+)") : T("Off (4:3)"), 2},
+                     {T("Render scale"), std::to_string(settings_.render_percent) + "%", 2},
+                     {T("Menu key"), KeyName(settings_.menu_key) + "  |  L3 + R3", 3}};
         float gap = S(12), tw = (ImGui::GetContentRegionAvail().x - gap) / 2, th = S(68);
         for (int i = 0; i < 4; i++) {
             if (i % 2) ImGui::SameLine(0, gap);
@@ -1346,7 +1402,7 @@ private:
             Cursor(dl, {p.x + tw - S(38) + S(6) * hv, p.y + th * 0.5f}, S(18), 0.3f + 0.7f * hv);
         }
         ImGui::Dummy({0, S(8)});
-        std::string tip = "In game, press " + KeyName(settings_.menu_key) + " or click both sticks (L3 + R3) for these settings.";
+        std::string tip = F("In game, press {} or click both sticks (L3 + R3) for these settings.", {KeyName(settings_.menu_key)});
         Wrapped(g_small, kMuted, tip.c_str());
         return keep;
     }
@@ -1363,31 +1419,31 @@ private:
     void GpuStatus() {
         const Gpu& gpu = UsedGpu();
         if (!settings_.gpu.empty() && &gpu == &auto_gpu_)
-            Status(kIconWarn, kAmber, settings_.gpu + "  -  not here with Direct3D 12, the game takes the fastest");
-        std::string name = gpu.name.empty() ? "This PC's graphics" : gpu.name;
+            Status(kIconWarn, kAmber, F("{}  -  not here with Direct3D 12, the game takes the fastest", {settings_.gpu}));
+        std::string name = gpu.name.empty() ? T("This PC's graphics") : gpu.name;
         if (gpu.d3d12 && gpu.software) {
-            Status(kIconWarn, kAmber, name + "  -  Direct3D 12 on the processor only");
-            Wrapped(g_small, kMuted, "No graphics driver is installed, so Windows draws on the processor, far too slowly "
-                                     "for the game. Install the driver from NVIDIA, AMD or Intel.");
+            Status(kIconWarn, kAmber, F("{}  -  Direct3D 12 on the processor only", {name}));
+            Wrapped(g_small, kMuted, T("No graphics driver is installed, so Windows draws on the processor, far too slowly "
+                                       "for the game. Install the driver from NVIDIA, AMD or Intel."));
         } else if (gpu.d3d12) {
-            Status(kIconCheck, kGreen, name + "  -  Direct3D 12, ready");
+            Status(kIconCheck, kGreen, F("{}  -  Direct3D 12, ready", {name}));
         } else {
-            Status(kIconWarn, kRed, name + "  -  no Direct3D 12");
-            Wrapped(g_small, kMuted, "The game draws with Direct3D 12, which every Windows 10 and 11 has, but only "
-                                     "graphics with a driver for it can run. Install the newest driver from NVIDIA, AMD "
-                                     "or Intel. Graphics older than NVIDIA's GeForce 600 series, AMD's Radeon HD 7700 or "
-                                     "Intel's HD 4200 (2012 and 2013) have none, and the game cannot start on them.");
+            Status(kIconWarn, kRed, F("{}  -  no Direct3D 12", {name}));
+            Wrapped(g_small, kMuted, T("The game draws with Direct3D 12, which every Windows 10 and 11 has, but only "
+                                       "graphics with a driver for it can run. Install the newest driver from NVIDIA, AMD "
+                                       "or Intel. Graphics older than NVIDIA's GeForce 600 series, AMD's Radeon HD 7700 or "
+                                       "Intel's HD 4200 (2012 and 2013) have none, and the game cannot start on them."));
         }
     }
 
     void DisplayPage() {
-        PageTitle("Display", "How the game window fills your screen.");
+        PageTitle(T("Display"), T("How the game window fills your screen."));
         BeginCard("display");
-        BeginSetting("Display mode", "Borderless fills the monitor without changing its mode and switches away instantly.", true);
+        BeginSetting(T("Display mode"), T("Borderless fills the monitor without changing its mode and switches away instantly."), true);
         Segmented<std::string>("mode", settings_.display_mode, {"fullscreen", "borderless", "windowed"},
-                               {"Fullscreen", "Borderless", "Windowed"});
+                               {T("Fullscreen"), T("Borderless"), T("Windowed")});
         EndSetting();
-        BeginSetting("Resolution", "The output size. Fullscreen switches the monitor to it; borderless always fills the monitor.");
+        BeginSetting(T("Resolution"), T("The output size. Fullscreen switches the monitor to it; borderless always fills the monitor."));
         {
             size_t cur = 0;
             for (size_t i = 0; i < modes_.size(); i++)
@@ -1403,20 +1459,20 @@ private:
             }
         }
         EndSetting();
-        BeginSetting("V-Sync", "Off can tear and lowers input latency a little. The game runs at 60 FPS either way.");
+        BeginSetting("V-Sync", T("Off can tear and lowers input latency a little. The game runs at 60 FPS either way."));
         ToggleRight("vsync", settings_.vsync);
         EndSetting();
         EndCard();
     }
 
     void GraphicsPage() {
-        PageTitle("Graphics", "Picture quality and shape.");
+        PageTitle(T("Graphics"), T("Picture quality and shape."));
         BeginCard("gpu");
-        BeginSetting("Graphics card", "The one the game draws with, from its next start. Automatic takes the fastest: on "
-                                      "a laptop the dedicated GPU, not the one in the processor.", true);
+        BeginSetting(T("Graphics card"), T("The one the game draws with, from its next start. Automatic takes the fastest: on "
+                                           "a laptop the dedicated GPU, not the one in the processor."), true);
         {
             std::vector<std::string> values{""};
-            std::vector<std::string> names{"Automatic"};  // which one, the line below says
+            std::vector<std::string> names{T("Automatic")};  // which one, the line below says
             for (const Gpu& g : gpus_)
                 if (g.d3d12 && std::find(values.begin(), values.end(), g.name) == values.end()) {
                     values.push_back(g.name);
@@ -1424,7 +1480,7 @@ private:
                 }
             if (std::find(values.begin(), values.end(), settings_.gpu) == values.end()) {  // chosen, gone since
                 values.push_back(settings_.gpu);
-                names.push_back(settings_.gpu + "  (not found)");
+                names.push_back(F("{}  (not found)", {settings_.gpu}));
             }
             Combo<std::string>("##gpu", settings_.gpu, values, names);
         }
@@ -1432,13 +1488,13 @@ private:
         GpuStatus();
         EndCard();
         BeginCard("presets");
-        BeginSetting("Quality preset", "Sets render scale and texture filtering together.", true);
+        BeginSetting(T("Quality preset"), T("Sets render scale and texture filtering together."), true);
         int preset = settings_.render_percent == 75 && settings_.aniso == 0      ? 0
                      : settings_.render_percent == 100 && settings_.aniso == 0   ? 1
                      : settings_.render_percent == 150 && settings_.aniso == 8   ? 2
                      : settings_.render_percent == 200 && settings_.aniso == 16  ? 3
                                                                                  : -1;
-        if (Segmented<int>("preset", preset, {0, 1, 2, 3}, {"Low", "Original", "High", "Ultra"})) {
+        if (Segmented<int>("preset", preset, {0, 1, 2, 3}, {T("Low"), T("Original"), T("High"), T("Ultra")})) {
             static const uint32_t kScale[] = {75, 100, 150, 200}, kAniso[] = {0, 0, 8, 16};
             settings_.render_percent = kScale[preset];
             settings_.aniso = kAniso[preset];
@@ -1446,34 +1502,34 @@ private:
         EndSetting();
         EndCard();
         BeginCard("graphics");
-        BeginSetting("Widescreen", "16:9 with more of the world at the sides, nothing stretched. The HUD, menus and "
-                                   "movies stay 4:3 in the middle. Needs a 16:9 or wider resolution.", true);
+        BeginSetting(T("Widescreen"), T("16:9 with more of the world at the sides, nothing stretched. The HUD, menus and "
+                                        "movies stay 4:3 in the middle. Needs a 16:9 or wider resolution."), true);
         ToggleRight("wide", settings_.widescreen);
         EndSetting();
-        BeginSetting("Render scale", "Of the output height. Above 100% supersamples for a sharper picture; below is "
-                                     "faster on weak GPUs.");
+        BeginSetting(T("Render scale"), T("Of the output height. Above 100% supersamples for a sharper picture; below is "
+                                          "faster on weak GPUs."));
         Segmented<uint32_t>("scale", settings_.render_percent, {50, 75, 100, 150, 200}, {"50%", "75%", "100%", "150%", "200%"});
         EndSetting();
-        BeginSetting("Anisotropic filtering", "Sharper textures on floors and walls seen at an angle.");
-        Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
+        BeginSetting(T("Anisotropic filtering"), T("Sharper textures on floors and walls seen at an angle."));
+        Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
         EndSetting();
         EndCard();
         BeginCard("texpack");
-        BeginSetting("HD texture pack", "Texture packs made for PCSX2 replace the game's textures: put a pack's "
-                                        "replacement pictures in the textures folder.", true);
+        BeginSetting(T("HD texture pack"), T("Texture packs made for PCSX2 replace the game's textures: put a pack's "
+                                             "replacement pictures in the textures folder."), true);
         ToggleRight("texpack", settings_.texture_pack);
         EndSetting();
-        BeginSetting("Texture size", "The largest side a picture is loaded at. Larger is sharper and needs more video "
-                                     "memory and loading time.");
-        Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", "Full"});
+        BeginSetting(T("Texture size"), T("The largest side a picture is loaded at. Larger is sharper and needs more video "
+                                          "memory and loading time."));
+        Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", T("Full")});
         EndSetting();
         ImGui::Dummy({0, S(2)});
-        if (files_.pictures) Status(kIconCheck, kGreen, Pictures(files_.pictures) + " in the textures folder");
-        else Status(kIconWarn, kMuted, "No pack in the textures folder");
+        if (files_.pictures) Status(kIconCheck, kGreen, F("{} in the textures folder", {words::Pictures(files_.pictures)}));
+        else Status(kIconWarn, kMuted, T("No pack in the textures folder"));
         ImGui::Dummy({0, S(4)});
-        if (Button("Open textures folder", {0, 0}, Kind::Secondary)) OpenTextures();
+        if (Button(T("Open textures folder"), {0, 0}, Kind::Secondary)) OpenTextures();
         ImGui::SameLine();
-        if (Button("Check again", {0, 0}, Kind::Secondary)) rescan_ = true;
+        if (Button(T("Check again"), {0, 0}, Kind::Secondary)) rescan_ = true;
         EndCard();
     }
 
@@ -1487,61 +1543,60 @@ private:
     }
 
     void GamePage() {
-        PageTitle("Game", "In-game overlay and behaviour.");
+        PageTitle(T("Game"), T("In-game overlay and behaviour."));
         BeginCard("game");
-        BeginSetting("FPS counter", "Shows the frame rate in the corner.", true);
+        BeginSetting(T("FPS counter"), T("Shows the frame rate in the corner."), true);
         ToggleRight("fps", settings_.fps_counter);
         EndSetting();
-        BeginSetting("Pause on focus loss", "Stops the game while another window is in front.");
+        BeginSetting(T("Pause on focus loss"), T("Stops the game while another window is in front."));
         ToggleRight("pause", settings_.pause_on_focus_loss);
         EndSetting();
-        BeginSetting("Lament of Innocence save", "As the PS2 game with a Lament of Innocence save on the memory "
-                                                 "card: a Moai at the far end of the room behind the first "
-                                                 "courtyard, beside the potion, for the item list.");
+        BeginSetting(T("Lament of Innocence save"), T("As the PS2 game with a Lament of Innocence save on the memory "
+                                                      "card: a Moai at the far end of the room behind the first "
+                                                      "courtyard, beside the potion, for the item list."));
         ToggleRight("lament", settings_.lament_save);
         EndSetting();
-        BeginSetting("Settings menu key", "Opens the in-game settings. Pick another if F10 does nothing on your keyboard "
-                                          "(laptops often need Fn for it). L3 + R3 on a controller always works.");
+        BeginSetting(T("Settings menu key"), T("Opens the in-game settings. Pick another if F10 does nothing on your keyboard "
+                                               "(laptops often need Fn for it). L3 + R3 on a controller always works."));
         static const std::vector<uint32_t> keys = {VK_F10, VK_F1, VK_F2, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9,
                                                    VK_F11, VK_F12, VK_INSERT, VK_HOME, VK_END, VK_PRIOR, VK_NEXT,
                                                    VK_PAUSE, VK_SCROLL, VK_OEM_3};
-        static std::vector<std::string> names = [] {
-            std::vector<std::string> n;
-            for (uint32_t k : keys) n.push_back(KeyName(k));
-            return n;
-        }();
+        // a key Windows does not name gets one of the language's
+        std::vector<std::string> names;
+        for (uint32_t k : keys) names.push_back(KeyName(k));
         Combo<uint32_t>("##key", settings_.menu_key, keys, names);
         EndSetting();
         EndCard();
         BeginCard("launcher");
-        BeginSetting("Keep launcher open", "Leave this window open while the game runs.", true);
+        BeginSetting(T("Keep launcher open"), T("Leave this window open while the game runs."), true);
         ToggleRight("keep", settings_.keep_open);
         EndSetting();
         EndCard();
     }
 
     void ControlsPage() {
-        PageTitle("Controls", "Xbox, PlayStation and Switch controllers play as player 1, with rumble. The keyboard "
-                              "plays alongside.");
+        PageTitle(T("Controls"), T("Xbox, PlayStation and Switch controllers play as player 1, with rumble. The keyboard "
+                                   "plays alongside."));
         BeginCard("layout");
-        BeginSetting("Button layout", "PS2 shows the PS2's button icons and gives a controller the PS2's shoulders: L1 "
-                                      "resets the camera, R1 guards, L2 and R2 lock on. The keyboard keeps its keys.", true);
+        BeginSetting(T("Button layout"), T("PS2 shows the PS2's button icons and gives a controller the PS2's shoulders: L1 "
+                                           "resets the camera, R1 guards, L2 and R2 lock on. The keyboard keeps its keys."), true);
         Segmented<uint32_t>("layout", settings_.button_layout, {0, 1}, {"Xbox", "PS2"});
         EndSetting();
         if (settings_.button_layout == 1) {
             ImGui::Dummy({0, S(2)});
             // the icons are the PS2 sheet of an HD pack made from the PS2 game (texpack.cpp)
-            if (!settings_.texture_pack) Status(kIconWarn, kMuted, "The PS2 icons need the HD texture pack on (Graphics)");
-            else if (files_.ps2_buttons) Status(kIconCheck, kGreen, "PS2 icons found in the texture pack");
-            else Status(kIconWarn, kMuted, "No PS2 icons in the textures folder: the Xbox ones stay, the shoulders change");
+            if (!settings_.texture_pack) Status(kIconWarn, kMuted, T("The PS2 icons need the HD texture pack on (Graphics)"));
+            else if (files_.ps2_buttons) Status(kIconCheck, kGreen, T("PS2 icons found in the texture pack"));
+            else Status(kIconWarn, kMuted, T("No PS2 icons in the textures folder: the Xbox ones stay, the shoulders change"));
         }
         EndCard();
         BeginCard("keys");
+        // the keys by their names on a keyboard, the controller's buttons (B, Y, Start, Back) by the Xbox's
         std::string menu = KeyName(settings_.menu_key);
         const char* kKeys[][2] = {
-            {"W A S D", "Move"},  {"Arrows", "Camera"},     {"K / Space", "Jump (A)"}, {"J", "Attack (X)"},
-            {"L", "B"},           {"I", "Y"},               {"Q / E", "Triggers"},     {"Z / C", "White / Black"},
-            {"Enter", "Start"},   {"Backspace", "Back"},    {"Num 8 2 4 6", "D-pad"},  {menu.c_str(), "Settings menu"},
+            {"W A S D", T("Move")},       {T("Arrows"), T("Camera")}, {T("K / Space"), T("Jump (A)")}, {"J", T("Attack (X)")},
+            {"L", "B"},                   {"I", "Y"},                 {"Q / E", T("Triggers")},        {"Z / C", T("White / Black")},
+            {T("Enter"), "Start"},        {T("Backspace"), "Back"},   {"Num 8 2 4 6", T("D-pad")},     {menu.c_str(), T("Settings menu")},
         };
         if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_SizingStretchProp)) {
             for (auto& k : kKeys) {
@@ -1557,41 +1612,41 @@ private:
     }
 
     void FilesPage() {
-        PageTitle("Game files", "Your own copy of the game: the USA (NTSC-U) release, as a disc image or extracted.");
+        PageTitle(T("Game files"), T("Your own copy of the game: the USA (NTSC-U) release, as a disc image or extracted."));
         BeginCard("status");
         if (files_.assets.empty()) {
-            Status(kIconWarn, kRed, "No assets folder found");
+            Status(kIconWarn, kRed, T("No assets folder found"));
         } else {
             switch (files_.xbe) {
-                case Release::Match: Status(kIconCheck, kGreen, "default.xbe  -  USA release, ready"); break;
-                case Release::Patched: Status(kIconCheck, kGreen, "default.xbe  -  USA release (patched header), ready"); break;
-                case Release::Other: Status(kIconWarn, kRed, "default.xbe  -  another release, only the USA one works"); break;
+                case Release::Match: Status(kIconCheck, kGreen, F("{}  -  USA release, ready", {kXbe})); break;
+                case Release::Patched: Status(kIconCheck, kGreen, F("{}  -  USA release (patched header), ready", {kXbe})); break;
+                case Release::Other: Status(kIconWarn, kRed, F("{}  -  another release, only the USA one works", {kXbe})); break;
                 case Release::Missing:  // no matter beside a disc image
-                    if (files_.isos.empty()) Status(kIconWarn, kMuted, "default.xbe  -  not extracted");
+                    if (files_.isos.empty()) Status(kIconWarn, kMuted, F("{}  -  not extracted", {kXbe}));
                     break;
             }
             for (const Files::Image& iso : files_.isos) {
                 std::string name = Utf8(iso.path.filename().wstring());
                 switch (iso.release) {
-                    case Release::Match: Status(kIconDisc, kGreen, name + "  -  USA release, ready"); break;
-                    case Release::Patched: Status(kIconDisc, kGreen, name + "  -  USA release (patched header), ready"); break;
-                    case Release::Other: Status(kIconWarn, kRed, name + "  -  another release, only the USA one works"); break;
-                    case Release::Missing: Status(kIconWarn, kRed, name + "  -  not an Xbox disc image"); break;
+                    case Release::Match: Status(kIconDisc, kGreen, F("{}  -  USA release, ready", {name})); break;
+                    case Release::Patched: Status(kIconDisc, kGreen, F("{}  -  USA release (patched header), ready", {name})); break;
+                    case Release::Other: Status(kIconWarn, kRed, F("{}  -  another release, only the USA one works", {name})); break;
+                    case Release::Missing: Status(kIconWarn, kRed, F("{}  -  not an Xbox disc image", {name})); break;
                 }
             }
         }
-        if (!files_.exe) Status(kIconWarn, kRed, "Castlevania.exe is not beside the launcher");
+        if (!files_.exe) Status(kIconWarn, kRed, T("Castlevania.exe is not beside the launcher"));
         if (!files_.assets.empty() && files_.xbe == Release::Missing && files_.isos.empty())
-            Wrapped(g_small, kMuted, "Add your disc image (.iso), or extract the disc into the assets folder: default.xbe "
-                                     "with its data, movie and sound folders.");
+            Wrapped(g_small, kMuted, T("Add your disc image (.iso), or extract the disc into the assets folder: default.xbe "
+                                       "with its data, movie and sound folders."));
         if (!files_.assets.empty()) Wrapped(g_small, kMuted, Utf8(files_.assets.wstring()).c_str());
         ImGui::Dummy({0, S(6)});
         if (import_.running) {
-            ImGui::ProgressBar(import_.progress, {-FLT_MIN, S(36)}, "Copying disc image...");
+            ImGui::ProgressBar(import_.progress, {-FLT_MIN, S(36)}, T("Copying disc image..."));
         } else {
-            if (Button("Add disc image", {0, 0}, Kind::Primary)) AddImage();
+            if (Button(T("Add disc image"), {0, 0}, Kind::Primary)) AddImage();
             ImGui::SameLine();
-            if (Button("Open folder", {0, 0}, Kind::Secondary)) {
+            if (Button(T("Open folder"), {0, 0}, Kind::Secondary)) {
                 fs::path a = files_.assets.empty() ? ExeDir() / "assets" : files_.assets;
                 std::error_code ec;
                 fs::create_directories(a, ec);
@@ -1599,20 +1654,20 @@ private:
                 rescan_ = true;
             }
             ImGui::SameLine();
-            if (Button("Check again", {0, 0}, Kind::Secondary)) rescan_ = true;
+            if (Button(T("Check again"), {0, 0}, Kind::Secondary)) rescan_ = true;
         }
         EndCard();
         BeginCard("folders");
-        Text(g_semi, kText, "Saves and logs");
-        Wrapped(g_small, kMuted, "Saves are kept beside the game in hdd\\E\\UDATA\\4b4e002d.");
+        Text(g_semi, kText, T("Saves and logs"));
+        Wrapped(g_small, kMuted, T("Saves are kept beside the game in hdd\\E\\UDATA\\4b4e002d."));
         ImGui::Dummy({0, S(4)});
-        if (Button("Open saves", {0, 0}, Kind::Secondary)) {
+        if (Button(T("Open saves"), {0, 0}, Kind::Secondary)) {
             fs::path s = ExeDir() / kSaves;
             std::error_code ec;
             Open(fs::exists(s, ec) ? s : ExeDir());
         }
         ImGui::SameLine();
-        if (Button("Open logs", {0, 0}, Kind::Secondary)) {
+        if (Button(T("Open logs"), {0, 0}, Kind::Secondary)) {
             std::error_code ec;
             Open(fs::exists(ExeDir() / "logs", ec) ? ExeDir() / "logs" : ExeDir());
         }
@@ -1622,7 +1677,7 @@ private:
     bool Play() {
         saved_ = Snapshot();
         if (!settings_.Save()) {
-            Note("Could not write the settings file");
+            Note(T("Could not write the settings file"));
             return true;
         }
         fs::path exe = ExeDir() / kGameExe;
@@ -1630,25 +1685,29 @@ private:
         STARTUPINFOW si{sizeof(si)};
         PROCESS_INFORMATION pi{};
         if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, ExeDir().c_str(), &si, &pi)) {
-            Note("Could not start the game (error " + std::to_string(GetLastError()) + ")");
+            Note(F("Could not start the game (error {})", {std::to_string(GetLastError())}));
             return true;
         }
         // the game may bring its window to the front
         AllowSetForegroundWindow(pi.dwProcessId);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
-        Note("Game started");
+        Note(T("Game started"));
         return settings_.keep_open;
     }
 
     void AddImage() {
         wchar_t file[MAX_PATH] = {};
+        // pairs of a name and its pattern, each ended by a NUL, the list by another (c_str's)
+        std::wstring filter = Wide(T("Xbox disc image (*.iso)")) + L'\0' + L"*.iso" + L'\0' + Wide(T("All files")) + L'\0' +
+                              L"*.*" + L'\0';
+        std::wstring title = Wide(T("Your Castlevania: Curse of Darkness disc image"));
         OPENFILENAMEW ofn{sizeof(ofn)};
         ofn.hwndOwner = g_hwnd;
-        ofn.lpstrFilter = L"Xbox disc image (*.iso)\0*.iso\0All files\0*.*\0";
+        ofn.lpstrFilter = filter.c_str();
         ofn.lpstrFile = file;
         ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrTitle = L"Your Castlevania: Curse of Darkness disc image";
+        ofn.lpstrTitle = title.c_str();
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
         if (!GetOpenFileNameW(&ofn)) return;
         fs::path from = file;
@@ -1656,7 +1715,7 @@ private:
         fs::path to = assets / from.filename();
         std::error_code ec;
         if (fs::equivalent(from.parent_path(), assets, ec)) {
-            Note("That image is already in the assets folder");
+            Note(T("That image is already in the assets folder"));
             rescan_ = true;
             return;
         }
@@ -1681,7 +1740,7 @@ private:
     fs::path logo_file_;
     Import import_;
     std::vector<Res> modes_;
-    std::string status_, saved_;
+    std::string status_, saved_, shown_language_;
     double status_time_ = -100;
     bool rescan_ = false;
     int page_ = 0;
@@ -1693,6 +1752,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC, for the pack's logo
     float scale = float(GetDpiForSystem()) / 96.0f;
+    {
+        Settings settings;  // the language, for the window's title and an error before the launcher is up
+        settings.Load();
+        words::Set(settings.language);
+    }
 
     WNDCLASSEXW wc{sizeof(wc)};
     wc.style = CS_CLASSDC;
@@ -1706,7 +1770,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     RECT r{0, 0, LONG(1060 * scale), LONG(690 * scale)};
     AdjustWindowRectExForDpi(&r, style, FALSE, 0, GetDpiForSystem());
     int w = r.right - r.left, h = r.bottom - r.top;
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Castlevania: Curse of Darkness - Launcher", style,
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, Wide(T("Castlevania: Curse of Darkness - Launcher")).c_str(), style,
                              (GetSystemMetrics(SM_CXSCREEN) - w) / 2, (GetSystemMetrics(SM_CYSCREEN) - h) / 2, w, h,
                              nullptr, nullptr, inst, nullptr);
     BOOL dark = TRUE;
@@ -1717,7 +1781,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     DwmSetWindowAttribute(g_hwnd, 36 /* DWMWA_TEXT_COLOR */, &words, sizeof(words));
     DwmSetWindowAttribute(g_hwnd, 34 /* DWMWA_BORDER_COLOR */, &edge, sizeof(edge));
     if (!CreateDevice(g_hwnd)) {
-        MessageBoxW(nullptr, L"Direct3D 11 is not available.", L"Castlevania Launcher", MB_ICONERROR);
+        MessageBoxW(nullptr, Wide(T("Direct3D 11 is not available.")).c_str(), L"Castlevania Launcher", MB_ICONERROR);
         return 1;
     }
     ShowWindow(g_hwnd, show);
