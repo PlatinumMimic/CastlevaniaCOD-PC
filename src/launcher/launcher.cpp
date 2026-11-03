@@ -454,7 +454,8 @@ struct Import {
 // Frame generation's libraries (the SDK's runtime/gpu/framegen.h), which this game's download does not carry: the
 // player's own copy, downloaded from the vendor's official GitHub release into the game's folder with their licences.
 // AMD FSR 3: its signed DLLs beside the game, the loader, frame generation and the upscaler (the game's
-// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G files in streamline\.
+// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G and DLSS files in streamline\ (frame generation, and
+// the game's anti-aliasing and upscaling).
 constexpr const wchar_t* kFsrRaw = L"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/";
 constexpr const char* kFsrLicence = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/v2.3.0/Kits/FidelityFX/docs/license.md";
 constexpr const wchar_t* kDlssZip = L"https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip";
@@ -462,7 +463,7 @@ constexpr const char* kDlssLicence = "https://github.com/NVIDIA-RTX/Streamline/b
 const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll",
                                     L"amd_fidelityfx_upscaler_dx12.dll"};
 const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
-                                     L"sl.pcl.dll", L"nvngx_dlssg.dll"};
+                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
 
 // all of a kind's files there, beside the game (FSR) or in its streamline folder (DLSS)
 bool HaveFrameGen(const fs::path& game, uint32_t kind) {
@@ -1848,7 +1849,7 @@ private:
             Wrapped(g_small, kMuted, fsr ? T("From AMD's own release on GitHub. The files are AMD's, under AMD's licence, "
                                              "which is saved with them; they are not part of this game's download.")
                                          : T("From NVIDIA's own Streamline release on GitHub (about 280 MB, of which the game "
-                                             "keeps 11). The files are NVIDIA's, under NVIDIA's licences, which are saved "
+                                             "keeps 70). The files are NVIDIA's, under NVIDIA's licences, which are saved "
                                              "with them; they are not part of this game's download."));
             ImGui::Dummy({0, S(4)});
             ImGui::BeginDisabled(fg_download_.running);

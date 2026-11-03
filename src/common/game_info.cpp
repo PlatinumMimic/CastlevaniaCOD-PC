@@ -25,6 +25,7 @@ extern bool g_hud_edges;                      // menu.cpp, read by widescreen.cp
 extern bool g_menu_spread;                    // widescreen.cpp
 extern uint32_t g_surface_depth;              // menu.cpp, read by the SDK's renderer (gpu::g_surface_depth)
 extern uint32_t g_antialias;                  // menu.cpp, read by the SDK's renderer (gpu::g_antialias)
+extern uint32_t g_upscale;                    // menu.cpp, read by the SDK's renderer (gpu::g_upscale)
 void GameInit();                              // setup.cpp
 
 // what the runtime asks of the game; strings must be set, hooks may stay null
@@ -55,7 +56,8 @@ const app::GameInfo app::kGame = {
                 {"hud_edges", &g_hud_edges, nullptr},
                 {"menu_spread", &g_menu_spread, nullptr},
                 {"surface_depth", nullptr, &g_surface_depth},
-                {"antialiasing", nullptr, &g_antialias}},
+                {"antialiasing", nullptr, &g_antialias},
+                {"upscaling", nullptr, &g_upscale}},
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
     .init = GameInit,                     // after the settings load, before the window and boot: game files, game code, renderer extension

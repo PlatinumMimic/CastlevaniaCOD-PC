@@ -37,8 +37,10 @@ uint32_t g_fog_distance = 100;   // percent of the game's fog distance, 0 for no
 bool g_hud_edges = true;         // widescreen: the HUD at the screen's corners rather than the 4:3 middle (widescreen.cpp)
 // surfaces with an HD texture pack's material maps seen into: 0 off, 1 low, 2 high (the SDK's gpu::g_surface_depth)
 uint32_t g_surface_depth = 2;
-// the frame's 3D anti-aliased before its UI: 0 off, 1 AMD FSR (the SDK's gpu::g_antialias)
+// the frame's 3D anti-aliased before its UI: 0 off, 1 AMD FSR, 2 NVIDIA DLSS (the SDK's gpu::g_antialias)
 uint32_t g_antialias = 1;
+// and drawn below the frame's size, made up to it: 0 native, 1 quality, 2 balanced, 3 performance (gpu::g_upscale)
+uint32_t g_upscale = 0;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern uint32_t g_button_layout;    // texpack.cpp
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
@@ -205,10 +207,38 @@ void GraphicsTab(bool& save) {
                              {"50%", "75%", "100%", "150%", "200%"});
     Row("Anisotropic filtering", "Sharper textures at an angle.");
     save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
-    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by AMD FSR (any graphics "
-                         "card), with its sharpening after. Needs AMD's amd_fidelityfx_upscaler_dx12.dll beside the "
-                         "game: the launcher's frame generation download brings it.");
-    save |= Choice<uint32_t>("##aa", g_antialias, {0, 1}, {"Off", "AMD FSR"});
+    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames: AMD FSR on any graphics card, "
+                         "NVIDIA DLSS on a GeForce RTX (from the next start once chosen). Their files come from AMD and "
+                         "NVIDIA: the launcher's Graphics page downloads them with frame generation's.");
+    {
+        static const uint32_t started = g_antialias;  // as this run started: DLSS needs it then
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##aa", g_antialias, {0, 1, 2}, {"Off", "AMD FSR", "NVIDIA DLSS"});
+        uint32_t running = gpu::g_antialias_running.load(std::memory_order_relaxed);
+        ImGui::SameLine();
+        if (g_antialias == 2 && running != 2 && started != 2)
+            ImGui::TextDisabled("from the next start, AMD FSR until then");
+        else if (g_antialias && running != g_antialias)
+            ImGui::TextDisabled(running ? "AMD FSR in its place (logs\\castlevania.log)" : "not running (logs\\castlevania.log)");
+    }
+    Row("Upscaling", "The 3D world drawn below the screen's resolution and rebuilt to it by the anti-aliasing above, "
+                     "for a higher frame rate on a slower graphics card: Quality draws two thirds of it across, "
+                     "Performance half. The HUD, menus and text stay at the screen's resolution. Native draws it "
+                     "whole.");
+    {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##up", g_upscale, {0, 1, 2, 3}, {"Native", "Quality", "Balanced", "Performance"});
+        ImGui::SameLine();
+        uint32_t drawn = gpu::g_antialias_drawn.load(std::memory_order_relaxed);
+        uint32_t out = gpu::g_antialias_output.load(std::memory_order_relaxed);
+        if (!g_antialias) {
+            ImGui::TextDisabled("needs anti-aliasing");
+        } else if (g_upscale && drawn && drawn != out) {
+            char text[64];
+            std::snprintf(text, sizeof(text), "3D at %ux%u of %ux%u", drawn >> 16, drawn & 0xFFFF, out >> 16, out & 0xFFFF);
+            ImGui::TextDisabled("%s", text);
+        }
+    }
     Row("Frame generation", "A frame made between each two the game draws, for twice the frame rate on a 120 Hz or "
                             "faster screen: AMD FSR 3 on any graphics card, NVIDIA DLSS on a GeForce RTX 40 or 50. Their "
                             "files come from AMD and NVIDIA: the launcher's Graphics page downloads them. From the next "
@@ -389,6 +419,7 @@ void Defaults() {
     g_menu_spread = true;
     g_surface_depth = 2;
     g_antialias = 1;
+    g_upscale = 0;
     app::ApplyDisplay();
 }
 
@@ -492,10 +523,16 @@ bool MenuMessage(void*, uint32_t msg, uintptr_t wp, intptr_t, intptr_t* result) 
 
 void SettingsWatch();  // keyboard.cpp
 
+// the settings the SDK's renderer reads: each frame, and before it starts (GameInit), as DLSS is chosen then
+void MenuToRenderer() {
+    gpu::g_surface_depth.store(std::min<uint32_t>(g_surface_depth, 2), std::memory_order_relaxed);
+    gpu::g_antialias.store(std::min<uint32_t>(g_antialias, 2), std::memory_order_relaxed);
+    gpu::g_upscale.store(std::min<uint32_t>(g_upscale, 3), std::memory_order_relaxed);
+}
+
 void MenuUi(double fps) {
     SettingsWatch();
-    gpu::g_surface_depth.store(std::min<uint32_t>(g_surface_depth, 2), std::memory_order_relaxed);
-    gpu::g_antialias.store(std::min<uint32_t>(g_antialias, 1), std::memory_order_relaxed);
+    MenuToRenderer();
     if (!g_scaled) return;
     PollKeys();
     ImGuiIO& io = ImGui::GetIO();
