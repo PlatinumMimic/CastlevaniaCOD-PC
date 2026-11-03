@@ -21,8 +21,9 @@
 // picture by the same hashes, "<texture>:<palette>:<region>:<TEX0 bits>", with how strongly each shades it. They load
 // with the picture, at its size cap, and the renderer shades the picture's colour with them (the SDK's
 // gpu/shaders.cpp, material). texture_pack_materials = false leaves them out. surface_depth (menu.cpp) sees into them
-// too (parallax): their occlusion map, dark in their crevices and along a wall's mortar, read as how deep each point
-// lies, by the material's family (or the manifest's parallax_strength).
+// too (parallax), as deep as the material's family has it (or the manifest's parallax_strength): its height map
+// ("height" beside "normal" and "orm", grey, white the top) is how deep each point lies, or where it has none, its
+// occlusion map, dark in their crevices and along a wall's mortar.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -276,9 +278,9 @@ private:
     size_t i_ = 0;
 };
 
-// a manifest's material: its two maps and how they shade (gpu::Material::params)
+// a manifest's material: its two maps, its height map if it has one, and how they shade (gpu::Material::params)
 struct MaterialEntry {
-    fs::path normal, orm;
+    fs::path normal, orm, height;
     float params[3][4];
 };
 
@@ -386,7 +388,8 @@ private:
             return;
         }
         const Json* list = root.Get("materials");
-        size_t listed = list && list->kind == Json::kArray ? list->items.size() : 0, matched = 0, missing = 0;
+        size_t listed = list && list->kind == Json::kArray ? list->items.size() : 0, matched = 0, missing = 0,
+               heights = 0;
         for (size_t n = 0; n < listed; n++) {
             const Json& m = list->items[n];
             unsigned long long t = 0, p = 0;
@@ -401,7 +404,7 @@ private:
                 std::error_code ec;
                 return inside && fs::is_regular_file(path, ec) ? path : fs::path();
             };
-            MaterialEntry e{map("normal"), map("orm"), {}};
+            MaterialEntry e{map("normal"), map("orm"), map("height"), {}};
             if (e.normal.empty() || e.orm.empty()) {
                 missing++;
                 continue;
@@ -413,8 +416,9 @@ private:
             float light[3] = {-0.35f, -0.45f, 0.82f};
             if (const Json* l = q.Get("light_direction"); l && l->kind == Json::kArray && l->items.size() == 3)
                 for (int i = 0; i < 3; i++) light[i] = float(l->items[size_t(i)].number);
-            // how deep it reads under parallax (surface_depth, the occlusion map as the depth): masonry, rock and
-            // plaster fully; wood and iron less; leaves and grass, whose maps are veins and blades, not at all
+            // how deep it reads under parallax (surface_depth: its height map, or the occlusion map as the depth):
+            // masonry, rock and plaster fully; wood and iron less; leaves and grass, whose maps are veins and blades,
+            // not at all
             std::string family = m.Str("material_family");
             float parallax = family == "vegetation" ? 0.0f : family == "iron" ? 0.5f : family == "wood" ? 0.6f : 1.0f;
             float params[3][4] = {
@@ -429,11 +433,13 @@ private:
             if (it == index_.end()) continue;
             if (material_of_[it->second] < 0) {
                 material_of_[it->second] = int(materials_.size());
+                heights += !e.height.empty();
                 materials_.push_back(std::move(e));
                 matched++;
             }
         }
-        LOGR("texpack: %zu materials in %s, %zu for pictures of the pack%s", listed, file.string().c_str(), matched,
+        LOGR("texpack: %zu materials in %s, %zu for pictures of the pack, %zu of them with height maps%s", listed,
+             file.string().c_str(), matched, heights,
              missing ? (", " + std::to_string(missing) + " without both maps").c_str() : "");
     }
 
@@ -678,6 +684,15 @@ private:
                 bool ok = LoadPicture(wic.Get(), e.normal, false, m->normal) && LoadPicture(wic.Get(), e.orm, false, m->orm);
                 if (ok) {
                     std::memcpy(m->params, e.params, sizeof(m->params));
+                    // the height map into the ORM map's alpha, each level from its own (the ORM map's colours are
+                    // averaged unweighted, its alpha 255 as they were); the parallax's share made negative says so
+                    if (!e.height.empty()) {
+                        if (AddHeight(wic.Get(), e.height, m->orm))
+                            m->params[2][3] = -std::abs(m->params[2][3]);
+                        else
+                            LOGW("texpack: %s does not load at its ORM map's size; its occlusion is read as the depth",
+                                 e.height.filename().string().c_str());
+                    }
                     r->material = std::move(m);
                     static std::atomic<int> logged{0};
                     if (logged.fetch_add(1) < 8)
@@ -724,6 +739,27 @@ private:
         auto r = std::make_shared<gpu::Replacement>();
         if (!LoadPicture(wic, file, true, *r)) return nullptr;
         return r;
+    }
+
+    // a height map (grey, 1 the top) into the alpha of orm's levels: its own levels from the one at orm's size (a
+    // larger map's halves; the levels are made with orm's alpha 255, so their colours were averaged unweighted)
+    static bool AddHeight(IWICImagingFactory* wic, const fs::path& file, gpu::Picture& orm) {
+        gpu::Picture h;
+        if (!LoadPicture(wic, file, false, h)) return false;
+        size_t first = 0;
+        while (first < h.levels.size() && (std::max(h.width >> first, 1u) > orm.width ||
+                                           std::max(h.height >> first, 1u) > orm.height))
+            first++;
+        if (first >= h.levels.size() || std::max(h.width >> first, 1u) != orm.width ||
+            std::max(h.height >> first, 1u) != orm.height || h.levels.size() - first < orm.levels.size())
+            return false;
+        for (size_t l = 0; l < orm.levels.size(); l++) {
+            std::vector<uint8_t>& o = orm.levels[l];
+            const std::vector<uint8_t>& g = h.levels[first + l];
+            if (g.size() != o.size()) return false;
+            for (size_t i = 3; i < o.size(); i += 4) o[i] = g[i - 1];  // its red, a grey's
+        }
+        return true;
     }
 
     // a picture as BGRA levels; ps2_alpha: its alpha is the PS2's (128 opaque), a material map's is not

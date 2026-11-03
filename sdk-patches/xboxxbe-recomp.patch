@@ -3622,7 +3622,7 @@ index fe65837..cef95be 100644
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
 diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
-index ce6acda..4557d99 100644
+index ce6acda..bfb2e9d 100644
 --- a/runtime/gpu/ext.h
 +++ b/runtime/gpu/ext.h
 @@ -17,6 +17,7 @@
@@ -3633,7 +3633,7 @@ index ce6acda..4557d99 100644
  
  namespace gpu {
  
-@@ -60,6 +61,39 @@ public:
+@@ -60,6 +61,40 @@ public:
      virtual uint64_t Presents() const = 0;
  };
  
@@ -3646,10 +3646,11 @@ index ce6acda..4557d99 100644
 +// fixed light, with its occlusion, roughness and metalness
 +struct Material {
 +    Picture normal;  // tangent space, x right, y down the picture
-+    Picture orm;     // occlusion, roughness, metalness in red, green, blue
++    Picture orm;     // occlusion, roughness, metalness in red, green, blue; alpha its height map's, 1 the top
 +    // 1, normal strength, response strength, specular strength; the light's direction (x right, y down, z toward the
 +    // viewer), 0; occlusion strength, roughness bias, metalness scale, and how deep the surface reads (parallax: 0 to
-+    // 1 of the depth g_surface_depth gives, its occlusion map read as the depth)
++    // 1 of the depth g_surface_depth gives, negative where orm's alpha is a height map, else its occlusion is read as
++    // the depth)
 +    float params[3][4] = {};
 +};
 +struct Replacement : Picture {
@@ -3673,7 +3674,7 @@ index ce6acda..4557d99 100644
  class Extension {
  public:
      virtual ~Extension() = default;
-@@ -74,19 +108,44 @@ public:
+@@ -74,19 +109,44 @@ public:
      virtual void MakeTarget(const Surface&, bool /*depth*/, uint32_t /*gw*/, uint32_t /*gh*/, float& /*scale*/, DXGI_FORMAT& /*fmt*/) {}
      virtual void BeginDraw(const State&) {}
      virtual void EndDraw() {}
@@ -4876,7 +4877,7 @@ index 0000000..24d3f74
 +
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 6d263d6..04be33a 100644
+index 6d263d6..33398c9 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
 @@ -32,8 +32,13 @@ struct VOut {
@@ -5163,7 +5164,7 @@ index 6d263d6..04be33a 100644
      o.d1 = saturate(oD1);
      o.b0 = o.d0;
      o.b1 = o.d1;
-@@ -857,21 +980,186 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -857,21 +980,191 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      o.tc2 = oT2;
      o.tc3 = oT3;
      o.fogamt = fogfactor(abs(cp.z));
@@ -5185,12 +5186,17 @@ index 6d263d6..04be33a 100644
 +// metalness give; flat relief leaves the colour as it was
 +const char* kMaterialHlsl = R"(Texture2D mtn : register(t4);
 +Texture2D mto : register(t5);
-+// parallax: the view ray marched into the surface, its occlusion map read as how deep each point lies (crevices, a
-+// wall's mortar: deepest at the maps' floor of 0.56), and the coordinates moved to where the ray meets it. mtl[1].w
-+// the deepest point's depth as a part of the picture (0: off), times the material's own, mtl[2].w; mtl[0].x the most
-+// layers, taken edge-on. dx, dy: the coordinates' steps across a pixel, as they are without it
++// how deep a point of the surface lies, 0 the top to 1 the deepest: its height map's (the ORM map's alpha, 1 the top)
++// where the material has one, else its occlusion read as depth (crevices, a wall's mortar: deepest at the maps' floor
++// of 0.56)
++float sinking(float4 orm, bool height) { return height ? 1 - orm.a : saturate((1 - orm.r) * 2.27); }
++// parallax: the view ray marched into the surface, how deep each point lies (sinking), and the coordinates moved to
++// where the ray meets it. mtl[1].w the deepest point's depth as a part of the picture (0: off), times the material's
++// own, |mtl[2].w|, negative where it has a height map; mtl[0].x the most layers, taken edge-on. dx, dy: the
++// coordinates' steps across a pixel, as they are without it
 +float2 parallax(float2 uv, float2 dx, float2 dy, float4 pos, SamplerState sm) {
-+    float depth = mtl[1].w * mtl[2].w;
++    float depth = mtl[1].w * abs(mtl[2].w);
++    bool height = mtl[2].w < 0;
 +    float2 ndc = pos.xy / mtl[3].zw * 2 - 1;
 +    float3 p = float3(ndc * mtl[3].xy * pos.w, -pos.w);
 +    float3 dpdx = ddx(p), dpdy = ddy(p);
@@ -5221,12 +5227,12 @@ index 6d263d6..04be33a 100644
 +    mto.GetDimensions(mw, mh);
 +    float2 fx = dx * float2(mw, mh), fy = dy * float2(mw, mh);
 +    float lod = 0.25 * log2(max(dot(fx, fx) * dot(fy, fy), 1e-12)) - motion.y;
-+    float ray = 0, here = saturate((1 - mto.SampleLevel(sm, at, lod).r) * 2.27), before = here;
++    float ray = 0, here = sinking(mto.SampleLevel(sm, at, lod), height), before = here;
 +    [loop] for (int k = 0; k < layers && ray < here; k++) {
 +        before = here;
 +        at += duv;
 +        ray += layer;
-+        here = saturate((1 - mto.SampleLevel(sm, at, lod).r) * 2.27);
++        here = sinking(mto.SampleLevel(sm, at, lod), height);
 +    }
 +    if (ray <= 0) return uv;
 +    // between the last two layers, where the ray went under the surface
@@ -5352,7 +5358,7 @@ index 6d263d6..04be33a 100644
      s += "    float4 tc0 = i.tc0, tc1 = i.tc1, tc2 = i.tc2, tc3 = i.tc3;\n";
      s += k.two_sided ? "    float4 v0 = front ? i.d0 : i.b0, v1 = front ? i.d1 : i.b1;\n" : "    float4 v0 = i.d0, v1 = i.d1;\n";
      s += "    if (misc.w == 0) v1 = float4(0, 0, 0, 1);\n";
-@@ -899,6 +1187,7 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -899,6 +1192,7 @@ std::string PixelHlsl(const PixelKey& k) {
              ps.code += wc + wa + "}\n";
          }
          body += ps.code;
@@ -5360,7 +5366,7 @@ index 6d263d6..04be33a 100644
          if (k.final_abcd || k.final_efg) {
              ps.stage = 8;
              uint32_t fl = k.final_efg & 0xFF;
-@@ -922,13 +1211,16 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -922,13 +1216,16 @@ std::string PixelHlsl(const PixelKey& k) {
              const uint32_t* f = k.ff[i];
              if (f[0] <= 1) break;
              const TexInfo& t = k.tex[i];
@@ -5378,7 +5384,7 @@ index 6d263d6..04be33a 100644
              else if (t.kind == kTex2D) body += F("float4 t%d = tex%d.Sample(smp%d, %s);\n", i, i, i, uv.c_str());
              else if (t.kind == kTexCube && !(cube = Hooks().Cube(t, i, F("tc%d.xyz", i))).empty()) body += F("float4 t%d = %s;\n", i, cube.c_str());
              else if (t.kind) body += F("float4 t%d = tex%d.Sample(smp%d, tc%d.xyz);\n", i, i, i, i);
-@@ -940,11 +1232,17 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -940,11 +1237,17 @@ std::string PixelHlsl(const PixelKey& k) {
              std::string a = f[4] <= 1 ? std::string("cur.a") : FfOp(f[4], FfArg(f[5], i, true), FfArg(f[6], i, true), FfArg(f[7], i, true), i, true);
              body += F("{ float3 c3 = saturate(%s); float c1 = saturate(%s); %s = float4(c3, c1); }\n", rgb.c_str(), a.c_str(), dst);
          }
