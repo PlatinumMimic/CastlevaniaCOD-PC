@@ -77,6 +77,9 @@ PKG=/work/pkg/CastlevaniaCOD-PC
 rm -rf /work/pkg && mkdir -p $PKG/assets $PKG/textures $PKG/lib $PKG/fonts
 cp $B/Castlevania $B/CastlevaniaEU $B/CastlevaniaLauncher $PKG/
 for l in libvkd3d.so.1 libvkd3d-shader.so.1 libvkd3d-utils.so.1; do cp -L /work/vkd3d/lib/$l $PKG/lib/; done
+# each library finds the others beside it: their RUNPATH was the build's folder, and a RUNPATH keeps the loader from
+# using the executable's $ORIGIN/lib for a library's own libraries (the launcher needs libvkd3d.so.1 alone)
+patchelf --set-rpath '$ORIGIN' $PKG/lib/*.so.1
 # the compiler folder without its work folder, where the recompiled code is made
 (cd $B/compiler && tar cf - --exclude=./work .) | (cd $PKG && mkdir compiler && tar xf - -C compiler)
 cp /work/llvm/clang /work/llvm/ld.lld $PKG/compiler/

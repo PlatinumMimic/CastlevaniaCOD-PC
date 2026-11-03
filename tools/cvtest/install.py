@@ -21,6 +21,7 @@ The install is deleted after a run that passed, unless --keep.
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -197,6 +198,11 @@ def check_package_linux(pkg):
         if glibcxx and glibcxx > GLIBCXX_MAX:
             errors.append(f"{f.relative_to(pkg)} wants libstdc++ {'.'.join(map(str, glibcxx))}, newer than "
                           f"{'.'.join(map(str, GLIBCXX_MAX))}")
+        # the loader's own search, the libraries' libraries too (a library's RUNPATH hides the executable's RPATH)
+        ldd = subprocess.run(["ldd", str(f)], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+        for line in ldd.stdout.splitlines():
+            if "not found" in line:
+                errors.append(f"{f.relative_to(pkg)}: {line.strip()}")
     return {"step": "package", "label": f"package: {seen} programs and libraries load, glibc 2.35 and GCC 12's "
                                         f"libstdc++ at most",
             "ok": not errors, "errors": errors, "warnings": []}
