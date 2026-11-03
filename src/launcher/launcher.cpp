@@ -42,6 +42,7 @@ extern char** environ;
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -452,18 +453,30 @@ struct Files {
         std::sort(isos.begin(), isos.end(), [](const Image& a, const Image& b) { return a.path < b.path; });
     }
     static bool Good(const Copy& c) { return c.release == Release::Match || c.release == Release::Patched; }
-    // The executable that plays the game found, as each executable picks its game (the SDK's game_files.cpp): a copy
-    // of the USA release anywhere first, the extracted files before a disc image; empty with none, or without it.
-    fs::path Player() const {
+    // the releases a copy here plays, with their executables there: kReleases' order, the USA one first
+    std::vector<int> Releases() const {
+        std::vector<int> list;
         for (unsigned which = 0; which < kReleaseCount; which++) {
             bool found = (Good(xbe) && xbe.which == int(which)) ||
                          std::any_of(isos.begin(), isos.end(), [&](const Image& i) { return Good(i.copy) && i.copy.which == int(which); });
             std::error_code ec;
-            if (found && fs::exists(ReleaseExe(int(which)), ec)) return ReleaseExe(int(which));
+            if (found && fs::exists(ReleaseExe(int(which)), ec)) list.push_back(int(which));
         }
-        return {};
+        return list;
     }
-    bool Playable() const { return !Player().empty(); }
+    // The release Play starts: the one chosen (Settings::release, by its executable's name) when there is a copy of it,
+    // else the one each executable picks (the SDK's game_files.cpp), the USA release first; -1 with none.
+    int Played(const std::string& chosen) const {
+        std::vector<int> list = Releases();
+        for (int which : list)
+            if (chosen == kReleases[which].exe) return which;
+        return list.empty() ? -1 : list[0];
+    }
+    fs::path Player(const std::string& chosen) const {
+        int which = Played(chosen);
+        return which < 0 ? fs::path() : ReleaseExe(which);
+    }
+    bool Playable() const { return !Releases().empty(); }
 };
 
 // a disc image into assets: a hard link on the same drive, a copy with progress otherwise
@@ -586,6 +599,7 @@ struct Settings {
     uint32_t fog_distance = 100;        // percent of the game's fog distance, 0 none (game/view.cpp)
     bool hud_edges = true;              // widescreen: the HUD at the screen's corners (widescreen.cpp)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
+    std::string release;                // the release played, by its executable's name, when there are more (the SDK's)
     toml::table rest;
 
     fs::path File() const { return ExeDir() / kSettings; }
@@ -621,6 +635,7 @@ struct Settings {
         fog_distance = rest["fog_distance"].value_or(fog_distance);
         hud_edges = rest["hud_edges"].value_or(hud_edges);
         gpu = rest["gpu"].value_or(gpu);
+        release = rest["release"].value_or(release);
     }
 
     bool Save() {
@@ -649,6 +664,7 @@ struct Settings {
         rest.insert_or_assign("fog_distance", int64_t(fog_distance));
         rest.insert_or_assign("hud_edges", hud_edges);
         rest.insert_or_assign("gpu", gpu);
+        rest.insert_or_assign("release", release);
         std::ofstream f(File());
         f << rest << "\n";
         return bool(f);
@@ -660,6 +676,7 @@ struct Settings {
         d.keep_open = keep_open;
         d.language = language;
         d.game_language = game_language;
+        d.release = release;  // which game, not how it plays
         *this = std::move(d);
     }
 };
@@ -1340,6 +1357,35 @@ void Fonts() {
     g_button = load(italic, 26, false);
 }
 
+// CV_LAUNCHER_STATE=<file>, for tests (tools/cvtest/launcher_test.py): where the marked controls are, each one's
+// rectangle in the window's pixels, and the page shown; JSON, written again when it changes
+struct Marks {
+    std::string file;
+    std::string frame, written;
+    Marks() {
+        if (const char* f = std::getenv("CV_LAUNCHER_STATE")) file = f;
+    }
+    // the control just drawn
+    void Mark(const std::string& name) {
+        if (file.empty()) return;
+        ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        char rect[96];
+        std::snprintf(rect, sizeof(rect), "[%d, %d, %d, %d]", int(a.x), int(a.y), int(b.x), int(b.y));
+        frame += (frame.empty() ? "\"" : ", \"") + name + "\": " + rect;
+    }
+    void Write(int page) {
+        if (file.empty()) return;
+        std::string json = "{\"page\": " + std::to_string(page) + ", \"controls\": {" + frame + "}}\n";
+        frame.clear();
+        if (json == written) return;
+        written = json;
+        std::error_code ec;
+        std::ofstream(file + ".tmp") << json;
+        fs::rename(file + ".tmp", file, ec);
+    }
+};
+Marks g_marks;
+
 // --check-fonts: every letter of every phrase in every language, as each font that writes them has it (a font without
 // a language's letters, or kTextRanges without them, shows ? for them); the title's fonts write only Latin words.
 // Prints what is missing, and is 0 with nothing missing.
@@ -1610,6 +1656,7 @@ public:
         ImGui::PopStyleVar();
         ImGui::End();
         AutoSave();
+        g_marks.Write(page_);
         return keep;
     }
 
@@ -1625,7 +1672,7 @@ private:
                std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language + "|" + std::to_string(s.game_language) +
                "|" + std::to_string(s.ps2_stick) + std::to_string(s.invert_camera_x) + std::to_string(s.invert_camera_y) +
                std::to_string(s.hud_edges) + "|" + std::to_string(s.fov) + "|" + std::to_string(s.draw_distance) + "|" +
-               std::to_string(s.fog_distance);
+               std::to_string(s.fog_distance) + "|" + s.release;
     }
 
     void AutoSave() {
@@ -1728,6 +1775,27 @@ private:
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Language"));
     }
 
+    // which release Play starts, when the game files have more than one: a list beside Play, its middle at left_mid
+    void ReleaseChoice(ImVec2 left_mid) {
+        auto name = [](int which) { return which == 0 ? T("USA release") : T("European release"); };
+        int cur = files_.Played(settings_.release);
+        ImGui::PushFont(g_body);
+        ImGui::SetCursorScreenPos({left_mid.x, left_mid.y - ImGui::GetFrameHeight() * 0.5f});
+        ImGui::SetNextItemWidth(S(200));
+        bool open = ImGui::BeginCombo("##release", name(cur));
+        g_marks.Mark("release");
+        if (open) {
+            for (int which : files_.Releases()) {
+                if (ImGui::Selectable(name(which), which == cur)) settings_.release = kReleases[which].exe;
+                g_marks.Mark(std::string("release.") + kReleases[which].exe);
+                if (which == cur) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopFont();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("The release Play starts, of those in your game files"));
+    }
+
     bool HomePage() {
         // the title screen: night and fog, the crest faint behind, the logo
         float w = ImGui::GetContentRegionAvail().x, h = S(322);
@@ -1764,14 +1832,18 @@ private:
         bool keep = true, ready = files_.Playable();
         ImGui::BeginDisabled(!ready || import_.running);
         if (Button(T("Play"), {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
+        g_marks.Mark("play");
         ImGui::EndDisabled();
+        float buttons_mid = ImGui::GetItemRectMax().y - S(54) * 0.5f;  // for what is beside them
         if (!ready) {
             ImGui::SameLine(0, S(22));
             if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = 5;
+        } else if (files_.Releases().size() > 1) {
+            ReleaseChoice({ImGui::GetItemRectMax().x + S(22), buttons_mid});
         }
         // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
         ImVec2 end = ImGui::GetItemRectMax();
-        ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
+        ImGui::SetCursorScreenPos({end.x + S(20), buttons_mid - g_semi->FontSize * 0.5f});
         if (!UsedGpu().d3d12) Status(kIconWarn, kRed, T(CV_WIN_LINUX("No Direct3D 12", "No Vulkan")));
         else if (ready) Status(kIconCheck, kGreen, T("Ready to play"));
         else if (!files_.exe) Status(kIconWarn, kRed, T(CV_WIN_LINUX("Castlevania.exe is missing", "Castlevania is missing")));
@@ -2189,7 +2261,7 @@ private:
             Note(T("Could not write the settings file"));
             return true;
         }
-        fs::path exe = files_.Player();
+        fs::path exe = files_.Player(settings_.release);
 #ifndef _WIN32
         std::string path = exe.string(), dir = ExeDir().string();
         char* argv[] = {path.data(), nullptr};

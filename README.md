@@ -197,8 +197,11 @@ you (a hard link on the same drive, otherwise a copy), and has every setting: th
 fastest, or any with Direct3D 12: on a laptop the one in the processor saves battery), display mode, resolution,
 v-sync, widescreen, render scale, anisotropic filtering with quick presets, the HD texture pack, FPS counter, pause on
 focus loss, the settings menu key, the button layout and the European release's language. Changes are saved as you
-make them; **Play** starts the game, with the executable of the release it found. Saves and logs are a click away. `--page
-controls` (or home, display, graphics, game, files) opens it on that page. It looks like the game's menus: navy with fog
+make them; **Play** starts the game, with the executable of the release it found. With copies of both releases in
+`assets`, a list beside **Play** chooses which one it starts (`release = "CastlevaniaEU"` or `"Castlevania"` in
+`castlevania.toml`, which `Castlevania` and `CastlevaniaEU` started by themselves follow too, handing the game to the
+other's executable; without it each plays its own release, the USA one by default). Saves and logs are a click away.
+`--page controls` (or home, display, graphics, game, files) opens it on that page. It looks like the game's menus: navy with fog
 and a teal band, page names on orange banners, the chosen option on a green bar, boxes framed in light blue, Palatino
 for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold), the crest
 of its icon, and under **Play** the pack's row: how many pictures the `textures` folder has, with the switch for them,
@@ -610,6 +613,12 @@ Changes this game needed beyond the generated config:
 - `trevor.json` and `crazy.json` type `@TREVOR` and `@CRAZY` on the name screen of a game never beaten and play into
   the first courtyard: the game's mode (`mode`, 2 and 1, with the save's `name`) and Trevor's hearts and sub-weapons
   in the shots. `newgame.json` checks that a plain name gives mode 0.
+- `python -I tools\cvtest\launcher_test.py <release .zip or .tar.xz, or a build folder> <USA disc> <European disc>`
+  installs a release as `install.py` does, with one disc and then both, and drives the launcher by window messages (on
+  Linux, on a virtual display) where it says its controls are (`CV_LAUNCHER_STATE`): with one disc no list beside
+  **Play**; with both the list, the European release chosen and saved, **Play** starting `CastlevaniaEU`, which
+  finds its disc; the home page in Russian; and each executable started by itself following `release`, or playing
+  its own release without one. A game started is ended once its log says which disc it plays.
 - `python -I tools\cvtest\install.py out\release\CastlevaniaCOD-PC-1.0.0.zip <your .iso, or an extracted disc>`
   installs a release as a player would and plays it: the zip extracted into a new folder in TEMP (outside the
   repository, where the game could find this PC's `assets` or `textures`), the game linked into its `assets`, every

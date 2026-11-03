@@ -293,20 +293,23 @@ index 15f8ab1..5379649 100644
  SRC="$SRC $(ls "$H"/*.cpp) ${EXTRA[*]}"
  for x in "${EXCL[@]}"; do SRC=$(echo $SRC | tr ' ' '\n' | grep -Ev -- "$x"); done
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index e1c1254..2505cec 100644
+index e1c1254..8e2b5cc 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
-@@ -26,7 +26,9 @@ struct Settings {
+@@ -26,7 +26,12 @@ struct Settings {
      bool custom_textures = true;     // images in textures\replacement\ beside the exe replace the game's
      bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
      uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
 +    bool widescreen = true;          // false: 4:3 on a wide output too
      std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
 +    std::string gpu;                       // the graphics card drawn with, by its name; empty: the fastest
++    // the release played when assets hold more than one (a launcher's choice), by its executable's name in
++    // GameInfo::releases: another executable's is handed its copy (game_files.cpp); empty: this executable's own first
++    std::string release;
  };
  
  Settings& Get();
-@@ -39,12 +41,28 @@ struct Mode {
+@@ -39,12 +44,28 @@ struct Mode {
      uint32_t width, height;
  };
  Mode Desktop();
@@ -336,7 +339,7 @@ index e1c1254..2505cec 100644
  // the game in assets (game_files.cpp): its folder and this executable's xbe, from the extracted files or a disc
  // image (.iso), which it mounts as D:; false after telling the player what is missing
  struct GameFiles {
-@@ -86,6 +104,14 @@ struct GameInfo {
+@@ -86,6 +107,14 @@ struct GameInfo {
      const wchar_t* splash;       // .bmp or .png beside the exe
      const wchar_t* missing;      // message when neither the game files nor a disc image are found
      std::vector<std::pair<const char*, const char*>> images;  // xbe file name, executable name
@@ -351,7 +354,7 @@ index e1c1254..2505cec 100644
      std::vector<Option> options;
      // the settings file's toml::table, for what options cannot hold
      void (*load)(const void* table);
-@@ -98,6 +124,9 @@ struct GameInfo {
+@@ -98,6 +127,9 @@ struct GameInfo {
      void (*ui)(double fps);        // each frame inside the ImGui frame, UiLock held
      void (*pad)(int port, input::Pad& pad);  // a polled pad before the game gets it
      void (*rumble)(int port, uint16_t& left, uint16_t& right);
@@ -414,7 +417,7 @@ index 0582ed9..08f503e 100644
  }  // namespace app
 +#endif
 diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
-index 4570d3b..5945172 100644
+index 4570d3b..43e9eec 100644
 --- a/runtime/app/game_files.cpp
 +++ b/runtime/app/game_files.cpp
 @@ -7,8 +7,16 @@
@@ -443,7 +446,7 @@ index 4570d3b..5945172 100644
  
  namespace app {
  
-@@ -26,6 +36,85 @@ namespace {
+@@ -26,6 +36,101 @@ namespace {
  
  namespace fs = std::filesystem;
  
@@ -473,6 +476,22 @@ index 4570d3b..5945172 100644
 +            fs::exists(ExeDir() / ExeFile(release.exe), ec))
 +            return &release;
 +    }
++    return nullptr;
++}
++
++// The release the settings choose (Settings::release), when it is another executable's: started by hand, or by a
++// shortcut to this executable, the game plays the release chosen. Not once handed over, which a choice of this
++// executable's release also skips.
++const GameInfo::Release* ChosenRelease() {
++#ifdef _WIN32
++    if (std::wcsstr(GetCommandLineW(), L"--handed-over")) return nullptr;
++#else
++    for (int i = 1; i < Argc(); i++)
++        if (!std::strcmp(Argv()[i], "--handed-over")) return nullptr;
++#endif
++    const std::string& exe = Get().release;
++    for (const GameInfo::Release& release : kGame.releases)
++        if (!exe.empty() && exe == release.exe) return std::strcmp(release.sha1, kImageSha1) ? &release : nullptr;
 +    return nullptr;
 +}
 +
@@ -529,11 +548,25 @@ index 4570d3b..5945172 100644
  // assets beside the exe or in any folder above it (the build output)
  fs::path FindAssets() {
      auto dir = ExeDir();
-@@ -73,19 +162,28 @@ bool FindGame(GameFiles& game) {
+@@ -73,19 +178,42 @@ bool FindGame(GameFiles& game) {
          }
      std::sort(isos.begin(), isos.end());
  
 -    // the first copy with this xbe wins, the extracted files before any image; another release is kept to offer
++    // a copy of the release the settings choose, another executable's: that executable plays it
++    if (const GameInfo::Release* chosen = ChosenRelease()) {
++        auto of_chosen = [&](const std::vector<uint8_t>& xbe) { return OtherRelease(xbe, Sha1(xbe)) == chosen; };
++        std::vector<uint8_t> xbe;
++        bool found = !assets.empty() && ReadHostFile(assets / IMAGE_XBE, xbe) && of_chosen(xbe);
++        for (size_t i = 0; i < isos.size() && !found; i++) {
++            kernel::Disc disc;
++            std::string error;
++            found = disc.Open(isos[i], error) && disc.Load(IMAGE_XBE, xbe) && of_chosen(xbe);
++        }
++        LOGR("Game: the settings choose %s, %s", chosen->exe, found ? "a copy of it is here" : "with no copy here");
++        if (found) RunRelease(*chosen);  // returns only when it could not start
++    }
++
 +    // the first copy with this xbe wins, the extracted files before any image; else the first of a release another
 +    // executable was made from runs there; another release is kept to offer
      GameFiles other;
@@ -561,7 +594,7 @@ index 4570d3b..5945172 100644
          if (other_name.empty()) {
              other = {assets, std::move(xbe)};
              other_disc = std::move(disc);
-@@ -110,6 +208,7 @@ bool FindGame(GameFiles& game) {
+@@ -110,6 +238,7 @@ bool FindGame(GameFiles& game) {
          if (consider(iso, std::move(xbe), std::move(disc))) return true;
      }
  
@@ -628,7 +661,7 @@ index e36f7ac..84e4636 100644
  }
 +#endif
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..bd9220f 100644
+index 075b3b7..c2a776b 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
 @@ -6,6 +6,9 @@
@@ -641,28 +674,30 @@ index 075b3b7..bd9220f 100644
  
  #include <algorithm>
  #include <atomic>
-@@ -53,7 +56,9 @@ void Load() {
+@@ -53,7 +56,10 @@ void Load() {
      s.custom_textures = t["custom_textures"].value_or(s.custom_textures);
      s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
      s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
 +    s.widescreen = t["widescreen"].value_or(s.widescreen);
      s.join_ip = t["join_ip"].value_or(s.join_ip);
 +    s.gpu = t["gpu"].value_or(s.gpu);
++    s.release = t["release"].value_or(s.release);
      for (const Option& o : kGame.options) {
          if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
          else *o.value = t[o.key].value_or(*o.value);
-@@ -75,7 +80,9 @@ toml::table Table() {
+@@ -75,7 +81,10 @@ toml::table Table() {
                    {"custom_textures", s.custom_textures},
                    {"dump_textures", s.dump_textures},
                    {"texture_dump_format", int64_t(s.texture_dump_format)},
 -                  {"join_ip", s.join_ip}};
 +                  {"widescreen", s.widescreen},
 +                  {"join_ip", s.join_ip},
-+                  {"gpu", s.gpu}};
++                  {"gpu", s.gpu},
++                  {"release", s.release}};
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
-@@ -86,9 +93,16 @@ toml::table Table() {
+@@ -86,9 +95,16 @@ toml::table Table() {
  
  }  // namespace
  
@@ -680,7 +715,7 @@ index 075b3b7..bd9220f 100644
  }
  
  void LogSettings() {
-@@ -100,6 +114,31 @@ void LogSettings() {
+@@ -100,6 +116,31 @@ void LogSettings() {
          if (!line.empty()) LOGR("  %s", line.c_str());
  }
  
@@ -712,7 +747,7 @@ index 075b3b7..bd9220f 100644
  Mode Desktop() {
      HMONITOR mon = MonitorFromWindow(static_cast<HWND>(Window()), MONITOR_DEFAULTTOPRIMARY);
      MONITORINFOEXW mi{};
-@@ -110,6 +149,7 @@ Mode Desktop() {
+@@ -110,6 +151,7 @@ Mode Desktop() {
          return {dm.dmPelsWidth, dm.dmPelsHeight};
      return {uint32_t(GetSystemMetrics(SM_CXSCREEN)), uint32_t(GetSystemMetrics(SM_CYSCREEN))};
  }
@@ -720,7 +755,7 @@ index 075b3b7..bd9220f 100644
  
  Mode Output() {
      const Settings& s = Get();
-@@ -127,7 +167,7 @@ bool Widescreen() {
+@@ -127,7 +169,7 @@ bool Widescreen() {
          Mode m = Output();
          wide = m.width * 2 >= m.height * 3;  // 3:2 or wider
      }
@@ -729,7 +764,7 @@ index 075b3b7..bd9220f 100644
  }
  
  // Output for every frame: the desktop mode lookup reads the registry, so it runs again only when the resolution
-@@ -136,14 +176,22 @@ Mode CachedOutput() {
+@@ -136,14 +178,22 @@ Mode CachedOutput() {
      struct Key {
          uint32_t width;
          uint32_t height;
