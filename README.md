@@ -350,8 +350,9 @@ Windows 10 and 11. Playing needs no internet connection, the first start neither
 - **GPU** with a Vulkan driver: your distribution's Mesa drivers for AMD and Intel, or NVIDIA's own. The same graphics
   as on Windows run it (NVIDIA GeForce 600 series, AMD Radeon HD 7700, Intel HD 4200 and newer).
 - **CPU** with SSE4.2 and POPCNT (x86-64-v2), as on Windows.
-- **Disk**: about 0.5 GB for the release (its compiler folder is most of it, and the ready page can delete it), and
-  0.2 GB more once the first start has built the game code, besides your game.
+- **Disk**: about 0.4 GB for the release (its compiler folder is most of it), and 0.2 GB more once the first start
+  has built the game code (it wants 1 GB free to start; its ready page can delete the compiler folder afterwards),
+  besides your game.
 - The C++ runtime (`libstdc++.so.6` of GCC 12 or later) and `libz.so.1`, which every desktop Linux has.
 
 ### To Build
