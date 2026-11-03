@@ -441,6 +441,8 @@ libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libvulkan-dev spirv-header
 and later: both executables and the launcher without the game code, vkd3d's libraries in `lib`, the `compiler` folder
 with LLVM's own Linux Clang and LLD, and the fonts. It checks that nothing of the game went into the package, as
 `release.bat` does. `tools/cvtest/install.py` tests the archive as a player would install it, from Linux or WSL.
+WSL's own Mesa has Vulkan on the processor only (llvmpipe, a few frames per second); Mesa built with
+`-Dvulkan-drivers=microsoft-experimental` (dozen) draws on the PC's graphics card, picked with `VK_DRIVER_FILES`.
 
 The Linux build is the Windows one's code: `runtime/linux` in the SDK has the Win32, D3D12 and DXGI names the shared
 sources use (over vkd3d's headers), a swap chain of Vulkan images the renderer draws into and a blit presents, the
@@ -622,9 +624,10 @@ Changes this game needed beyond the generated config:
 
 ## Known Issues
 - Only the first areas have been tested so far, in both releases.
-- Linux has been tested in WSL (Ubuntu 26.04) only, where Vulkan draws on the processor (llvmpipe): there the game
-  plays the new game test from the title to the first courtyard in both releases, at 6 to 8 frames per second. It has
-  not been tried on a real graphics card yet.
+- Linux has been tested in WSL (Ubuntu 26.04) only, on an NVIDIA GeForce RTX 3060 and an Intel Iris Xe through
+  Mesa's dozen (Vulkan on Windows' Direct3D 12), on X11 and Wayland: both releases install, build their game code and
+  play the new game, widescreen and room tests at 60 frames per second on the RTX 3060, with the same pictures as on
+  Windows. It has not been tried on a Linux PC's own graphics drivers yet.
 - With the fog pushed out or off, or Far View on, some rooms' skies show the edges of the painted cards they are
   made of. The Abandoned Castle's rampart keeps its sky as the game shows it; a fix for the other rooms is being
   worked on.
