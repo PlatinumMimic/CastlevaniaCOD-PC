@@ -1,0 +1,8 @@
+{
+  "name": "gpu",
+  "note": "The graphics card the game draws with: --set gpu=<name> (a card the launcher lists, CastlevaniaLauncher --list-gpus) draws with that one, none named with the fastest (the SDK's gpu setting); the log says which.",
+  "steps": [
+    {"press": "0:wait:4000", "shot": "start",
+     "expect": ["any(settings.gpu in l for l in found(runlog, 'D3D12 adapter: ')) if settings.gpu else found(runlog, 'D3D12 adapter: ')"]}
+  ]
+}

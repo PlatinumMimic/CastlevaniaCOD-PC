@@ -1,0 +1,10 @@
+{
+  "name": "shadercache-cold",
+  "after": "newgame.json",
+  "perf": true,
+  "shader_cache": "suite",
+  "note": "The disk shader cache, first of two runs (tools/cvtest/suite.py empties out/test/shader-cache/suite before it): a new game compiles its shaders and keeps them. shadercache-warm.json then compiles none.",
+  "steps": [
+    {"press": "0f:wait:60f", "expect": ["total(runlog, r'(\\d+) shaders compiled') >= 10"]}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "shadercache-warm",
+  "after": "newgame.json",
+  "perf": true,
+  "shader_cache": "suite",
+  "note": "The disk shader cache, second of two runs, after shadercache-cold.json: the same new game reads every shader from the cache and compiles none, so no effect stutters the first time it is drawn.",
+  "steps": [
+    {"press": "0f:wait:60f", "expect": ["total(runlog, r'(\\d+) shaders compiled') == 0", "total(runlog, r'compiled (\\d+) kept') >= 10"]}
+  ]
+}

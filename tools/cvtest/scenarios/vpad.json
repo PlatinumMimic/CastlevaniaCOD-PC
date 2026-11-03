@@ -1,0 +1,24 @@
+{
+  "name": "vpad",
+  "after": "newgame.json",
+  "env": {"XBE_VIRTUAL_PAD": "1"},
+  "note": "A controller, as SDL reads one (the SDK's virtual controller, XBE_VIRTUAL_PAD: src/common/keyboard.cpp hands it every press of the run, the new game's too): its buttons and sticks as the game gets them, with --set button_layout=1 the PS2 layout's shoulders and triggers swapped (from the start, as the setting takes), both sticks clicked for the settings menu, unplugged and plugged in again, and the game's rumble on both of its motors in a fight.",
+  "steps": [
+    {"press": "0f:wait:10f", "expect": ["vpad.attached", "vpad.open", "found(runlog, 'controller 1 plugged in: Virtual test controller')"]},
+    {"press": "0f:x:20f", "note": "X (an attack)", "expect": ["'x' in pad.held.split('+')"]},
+    {"press": "0f:wait:60f", "note": "the attack's animation over before the walk"},
+    {"press": "0f:white:20f", "note": "white; with the PS2 layout the controller's L1 is the Xbox's left trigger", "expect": ["('lt' if settings.button_layout == 1 else 'white') in pad.held.split('+')"]},
+    {"press": "0f:black:20f", "expect": ["('rt' if settings.button_layout == 1 else 'black') in pad.held.split('+')"]},
+    {"press": "0f:lt:20f", "note": "the left trigger; with the PS2 layout L2 is the Xbox's white", "expect": ["('white' if settings.button_layout == 1 else 'lt') in pad.held.split('+')"]},
+    {"press": "0f:lsd:40f", "shot": "walk", "note": "away from the fountain the new game walked up to", "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 > 200"]},
+    {"press": "0f:l3+r3:5f,10f:wait:20f", "shot": "menu", "expect": ["settings_menu"]},
+    {"press": "0f:l3+r3:5f,10f:wait:20f", "expect": ["not settings_menu"]},
+    {"press": "0:unplug,30f:wait", "expect": ["not vpad.attached", "not vpad.open"]},
+    {"press": "0f:lsu:40f", "note": "nothing to walk with", "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 < 5"]},
+    {"press": "0:plug,30f:wait", "expect": ["vpad.attached", "vpad.open"]},
+    {"press": "0f:lsu:40f", "shot": "walk-again", "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 > 200"]},
+    {"press": "0:warp=5.12,10f:wait:20f"},
+    {"until": "room == 12 and player.active and not loading and not cutscene", "timeout": 30, "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]]},
+    {"press": "0:heal,0:fight:15000", "shot": "fight", "expect": ["vpad.rumbles > 0", "vpad.peak[0] > 0", "vpad.peak[1] > 0"]}
+  ]
+}

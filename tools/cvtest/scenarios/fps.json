@@ -1,0 +1,9 @@
+{
+  "name": "fps",
+  "after": "newgame.json",
+  "note": "The frame rate: held at 60 by the cap (fps_cap 60, the default), and well above it with --set fps_cap=0 --set vsync=false (the game is not tied to the display's refresh).",
+  "steps": [
+    {"press": "0f:wait:300f", "shot": "stand",
+     "expect": ["(step.fps > 90) if settings.fps_cap == 0 else (54 < step.fps < 63)"]}
+  ]
+}

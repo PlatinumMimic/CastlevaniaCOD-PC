@@ -1,0 +1,23 @@
+{
+  "name": "menu",
+  "after": "newgame.json",
+  "settings": {"launcher_language": "ru", "suite_kept": "yes"},
+  "note": "The in-game settings menu (src/common/menu.cpp), opened as from a controller (both sticks clicked) and clicked where it says its controls are: a switch, a drop-down opened and a choice taken, each saved at once with the keys the game does not know kept (the launcher's language), Reset to defaults, Close; and the FPS counter it shows in the corner.",
+  "steps": [
+    {"press": "0f:l3+r3:5f,10f:wait:20f", "shot": "open", "expect": ["settings_menu", "'tab.Display' in menu_controls"]},
+    {"click": "tab.Game", "press": "0f:wait:10f", "expect": ["'fpsc' in menu_controls"]},
+    {"click": "fpsc", "press": "0f:wait:10f", "expect": ["saved.fps_counter == True"]},
+    {"click": "tab.Graphics", "press": "0f:wait:10f", "expect": ["'aniso' in menu_controls"]},
+    {"click": "aniso", "press": "0f:wait:10f", "shot": "list", "expect": ["'aniso.4x' in menu_controls"]},
+    {"click": "aniso.4x", "press": "0f:wait:10f", "expect": ["saved.anisotropic_filtering == 4", "'aniso.4x' not in menu_controls"]},
+    {"click": "Close", "press": "0f:wait:20f", "shot": "fps-counter",
+     "measure": {"corner": [0.005, 0.005, 0.09, 0.045]},
+     "expect": ["not settings_menu", "saved.launcher_language == 'ru'", "saved.suite_kept == 'yes'"]},
+    {"press": "0f:l3+r3:5f,10f:wait:20f", "expect": ["settings_menu"]},
+    {"click": "Reset to defaults", "press": "0f:wait:10f",
+     "expect": ["saved.fps_counter == False", "saved.anisotropic_filtering == 0", "saved.launcher_language == 'ru'", "saved.suite_kept == 'yes'"]},
+    {"click": "Close", "press": "0f:wait:20f", "shot": "no-counter",
+     "measure": {"corner": [0.005, 0.005, 0.09, 0.045]},
+     "expect": ["not settings_menu", "screen.edges.corner < 0.6 * shots['fps-counter'].edges.corner"]}
+  ]
+}

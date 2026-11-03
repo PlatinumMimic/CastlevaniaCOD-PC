@@ -92,16 +92,30 @@ def codex_exec(pngs, prompt, schema, model=LUNA, effort="medium", timeout=600):
     {"seconds", "tokens", "model"}. The user's Codex config is left out (its plugins and hooks), its sign-in is not;
     the model runs in a read-only sandbox in an empty folder and is told to run nothing."""
     exe = shutil.which("codex")
+    # WSL without a Linux Codex CLI: Windows's, through WSL's interop, its files in a folder Windows reads (out/test)
+    # and their paths as Windows writes them
+    wsl = not exe and sys.platform.startswith("linux") and shutil.which("codex.exe") and shutil.which("wslpath")
+    if wsl:
+        exe = shutil.which("codex.exe")
     if not exe:
         raise RuntimeError("no codex on PATH (the Codex CLI)")
-    with tempfile.TemporaryDirectory() as tmp:
+
+    def host(path):
+        if not wsl:
+            return str(path)
+        return subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True).stdout.strip()
+
+    temp_root = Path(__file__).resolve().parents[2] / "out" / "test" if wsl else None
+    if temp_root:
+        temp_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=temp_root) as tmp:
         (Path(tmp) / "schema.json").write_text(json.dumps(schema))
         last = Path(tmp) / "last.json"
         cmd = [exe, "exec", "-m", model, "-c", f'model_reasoning_effort="{effort}"', "--ignore-user-config",
-               "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", tmp,
-               "--output-schema", str(Path(tmp) / "schema.json"), "-o", str(last), "--color", "never"]
+               "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", host(tmp),
+               "--output-schema", host(Path(tmp) / "schema.json"), "-o", host(last), "--color", "never"]
         for p in pngs:
-            cmd += ["-i", str(Path(p).resolve())]
+            cmd += ["-i", host(Path(p).resolve())]
         start = time.time()
         r = subprocess.run(cmd + ["-"], input=prompt, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout)

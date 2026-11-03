@@ -1,0 +1,8 @@
+{
+  "name": "rooms",
+  "after": "newgame.json",
+  "note": "The short sweep: a few rooms of most maps warped to, a shot each. Catches a room that crashes, hangs, logs errors or draws one flat colour, in minutes rather than sweep.json's hours.",
+  "steps": [
+    {"sweep": {"rooms": ["2.2", "2.8", "3.11", "4.8", "4.20", "5.14", "6.1", "8.3", "10.2", "12.1"]}}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "display",
+  "after": "wayland.json",
+  "save": "first-save",
+  "platforms": ["linux"],
+  "note": "Linux, run with CV_WAYLAND=1 on the run's own headless Weston (1280x720; an X display of the tests' has no window manager to make a window fullscreen): the display modes changed live as the settings menu changes them, by the window's size the game draws into (telemetry window_size): borderless and fullscreen fill the display, windowed is back to 960x540. On Windows they would take the PC's own screen.",
+  "steps": [
+    {"press": "0f:wait:10f", "expect": ["window_size[0] == 960 and window_size[1] == 540"]},
+    {"press": "0:set=display_mode=borderless,60f:wait", "expect": ["window_size[0] == 1280 and window_size[1] == 720"]},
+    {"press": "0:set=display_mode=fullscreen,60f:wait", "expect": ["window_size[0] == 1280 and window_size[1] == 720"]},
+    {"press": "0:set=display_mode=windowed,60f:wait", "expect": ["window_size[0] == 960 and window_size[1] == 540", "player.active"]}
+  ]
+}

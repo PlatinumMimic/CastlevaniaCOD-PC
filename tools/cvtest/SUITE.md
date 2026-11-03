@@ -1,0 +1,77 @@
+# The regression suite
+
+Every feature of this port and the tests that cover it. `tools/cvtest/suite.py` runs them all, one after another,
+on the platform it runs on; a release is made only from a commit both platforms passed in full
+(`suite.py --check`). A feature added gets its test here and in `suite.py` with it.
+
+    python -I tools\cvtest\suite.py --linux       Windows, then Linux in WSL (about two hours each)
+    python3 -I tools/cvtest/suite.py              Linux alone
+    python -I tools\cvtest\suite.py --quick       the shorter list, during work
+    python -I tools\cvtest\suite.py --check       both platforms passed on this commit, with these packages
+
+This PC's discs and WSL setup are in `out/test/suite.json` (see `suite.py`). Tests marked *Linux* run only there:
+on Windows they would take the PC's own screen or keyboard.
+
+## The game
+
+| Feature | Tests (suite names) | What they check |
+|---|---|---|
+| Boot, a new game, movies, play | `newgame`, `newgame-eu` | title, name, save, movies skipped, the first courtyard: HP, no menu, 50+ FPS, sound played, the window at the size set, walking, the pause menu |
+| Sound | `newgame` (and every scenario after it) | the output played 20 s by the courtyard, 5 s of it with sound (telemetry `audio`) |
+| Rooms load and draw | `rooms`, `rooms-eu`, `warp` | ten rooms of most maps warped to: no crash, hang, log error or flat colour; the warp to other rooms and maps |
+| Fights, the bot, recorded routes | `bot`, `route`, `first-save` | the knights of 5.12 beaten (EXP, a level), a recording played back to the first save room and saved there |
+| Saves, both releases | `save-usa`, `load-save-eu`, `save-eu`, `load-save-usa` | a save made by each release continues in the other |
+| Crazy mode and Trevor from the start | `crazy`, `trevor` | the name codes typed on a game never beaten: the mode, the save's name |
+| Lament of Innocence bonus | `moai-on`, `moai-off` | the Moai floats at the far end of 5.0 with `lament_save`, not without (asked of the judge) |
+| The European release in five languages | `language-eu-en`, `-de`, `-fr`, `-es`, `-it`, `language-usa` | the title menu in the language set (asked of the judge); the USA release English whatever is set |
+| Hector's shadow (4X multisampling) | `shadow` | the floor beside his legs at the start of 5.2 about half as bright as farther away |
+| Widescreen menus and boxes | `widescreen`, `widescreen-eu` | the map screen and the pause menu drawn to the screen's right edge (a 4:3 picture leaves it black); the boxes of the first-save route kept as pictures |
+| HUD at the screen's corners | `qol`, `lockon`, `lockon-eu` | the HUD moved to the edge with `hud_edges`, not without; the lock-on marker (drawn from the HUD's sheet) stays on the enemy |
+| Field of view, draw distance, fog, the rampart's sky | `qol` | the field of view drawn wider at 150%, far plane and fog 4x with far view and back (telemetry `view`), the sky's cards in the room's own fog |
+| Inverted camera | `qol` | the right stick turns the camera the other way |
+| Rumble on both motors | `qol`, `vpad` | the game's requests in a fight (`CV_RUMBLE_TRACE`), and both motors reaching an SDL controller |
+| PS2 stick response | `stick` | a small tilt walks on PS2 and not on Xbox; a tilt near right walks straight right on Xbox only |
+| PS2 button layout | `buttons-xbox`, `buttons-ps2`, `vpad-ps2` | the icons (asked of the judge); a controller's shoulders and triggers swapped |
+| Controllers (SDL) | `vpad`, `vpad-ps2` | a virtual controller read as a real one: buttons, sticks, the settings menu by both sticks, unplugged and plugged in again, rumble |
+| Keyboard play | `keyboard` (*Linux*) | each key as its controller button, WASD and the arrows as the sticks, Enter and the pause menu |
+| HD texture packs | `texpack`, `texpack-off`, `texpack-1024`, `filters-pack` | the pack indexed (.dds), three in four of the pack's kind of textures drawn with its pictures; none with it off; the size limit taken; sharper with it |
+| Render scale, anisotropic filtering | `filters-pack`, `filters-nopack` | 50% and 200% soften and sharpen, filtering sharpens, with the pack and without |
+| Shaders kept on disk | `shadercache-cold`, `shadercache-warm` | a second run compiles no shader |
+| Frame rate | `fps`, `fps-uncapped` | held at 60; well above it with the cap and v-sync off |
+| Graphics card choice | `gpu-1`, `gpu-2`, ... | each card the launcher lists draws the game when named in `gpu` |
+| The in-game settings menu (F10, L3 + R3) | `menu`, `vpad`, `display` (*Linux*) | opened by both sticks and by F10; a switch, a drop-down opened and a choice taken, each saved with the launcher's keys kept; Reset to defaults; Close; the FPS counter in the corner |
+| Display modes | `display` (*Linux*) | borderless and fullscreen fill the display, windowed is back to its size |
+| Linux on Wayland | `wayland` (*Linux*) | a new game on a headless Weston through SDL's Wayland video |
+
+## The launcher
+
+| Feature | Tests | What they check |
+|---|---|---|
+| Seven languages, every page | `launcher`, `install-*` | every letter of every phrase in its fonts (`--check-fonts`); each of the six pages opens with its controls in each language |
+| Every setting | `launcher` | the display mode, widescreen, render scale, filtering, the FPS counter and the button layout clicked and saved as the game reads them; Reset to defaults puts them back, the language and the release kept |
+| Both releases, the release played | `launcher` | no list with one disc; with both the list beside Play, the European release chosen and saved, Play starting it; each game executable following the setting |
+| The HD pack's row and switch | `launcher` | none in the textures folder; three pictures found and in use; switched off |
+| Game files, which copies play | `launcher` | each copy's verdict: the USA xiso with its patched header, the European disc, another release's, a file that is no Xbox disc |
+| Graphics that run the game | `launcher` | without them (`CV_NO_D3D12=1`) the home page says "No Direct3D 12" (Linux: "No Vulkan") |
+| The graphics cards | `gpu-*` | the cards it lists (`--list-gpus`) are the ones the game takes |
+
+## Copies of the game, the packages
+
+| Feature | Tests | What they check |
+|---|---|---|
+| Any copy of the USA disc | `discs` | an xiso (its certificate patched, put back), the same as an XGD2 whole disc dump, the extracted files |
+| The European release by Castlevania | `discs`, `install-eu` | its disc handed to CastlevaniaEU, which plays it |
+| Another release refused | `discs` | another release's xbe (a fan translation's): the message box says so; no copy: it asks for the game |
+| The release as a player installs it | `install-usa`, `install-eu` | the package alone (no game files in it, every program and library loading from it or the system, glibc 2.35 at most on Linux), the first start building the game code, a new game played |
+
+## Checked by hand
+
+What no test here reaches, to try before a release when it changed:
+
+- A real controller over USB and Bluetooth (an Xbox, a DualSense, a Switch Pro), plugged in while playing, its rumble.
+- Fullscreen and borderless on Windows (the tests take the PC's screen only on Linux), with a monitor of another size.
+- Pause on focus loss (off in every scripted run, which goes on behind other windows).
+- The launcher's file dialog (Add disc image) and the buttons that open the saves, logs and textures folders.
+- SmartScreen and a browser's download warning for a new release (the README's steps).
+- A dev build's program icon, made from the game's copy (packages have none).
+- Linux on a PC's own graphics drivers (the tests run in WSL through Mesa's dozen) and on a Steam Deck.

@@ -1,7 +1,7 @@
 """The launcher and the game executables with the game files of more than one release, as a player has them.
 
 usage: python -I tools/cvtest/launcher_test.py <release .zip or .tar.xz, or a build folder> <USA disc> <European disc>
-       [--keep]
+       [--other <another release's disc>] [--keep]
 A build folder's programs (and its DLLs, fonts and lib folders) are copied into the test's install, without the rest.
 
 The release is installed as install.py installs it (outside this repository, in TEMP or /tmp; on Linux the launcher
@@ -11,6 +11,13 @@ and the game on a virtual X display of their own), with each disc linked into it
   - both discs: the list is beside Play; choosing the European release saves release = "CastlevaniaEU", and Play
     starts CastlevaniaEU, which finds the European disc
   - Russian: the home page in Russian, a picture of it for the report
+  - every page in every language: each opens (--page) with its controls, a picture of each for the report
+  - settings: the display mode, widescreen, render scale, filtering, the FPS counter and the button layout clicked
+    and saved as the game reads them; Reset to defaults puts them back, the language and the release kept
+  - the HD texture pack's row: none in the textures folder, then three pictures found and in use, switched off
+  - the Game files page: each copy's verdict (the USA release's patched xiso, the European one, another release's
+    with --other, a file that is no Xbox disc)
+  - no graphics that run the game (CV_NO_D3D12=1): the home page says so
   - the game executables follow the setting (the SDK's Settings::release): Castlevania with the European release
     chosen hands the game to CastlevaniaEU, CastlevaniaEU with the USA one chosen to Castlevania, and with none chosen
     Castlevania plays the USA disc itself
@@ -102,44 +109,52 @@ def wait(what, timeout, poll=0.25):
 
 
 class Launcher:
-    def __init__(self, pkg, env, out):
+    def __init__(self, pkg, env, out, args=(), more_env=None):
         self.pkg, self.out = pkg, out
         self.state = pkg / "launcher-state.json"
         self.state.unlink(missing_ok=True)
-        env = dict(env, CV_LAUNCHER_STATE=str(self.state))
+        env = dict(env, CV_LAUNCHER_STATE=str(self.state), **(more_env or {}))
         if LINUX:
             env["DISPLAY"] = cvtest.display()
-        self.proc = subprocess.Popen([str(pkg / ("CastlevaniaLauncher" + EXE))], cwd=pkg, env=env,
+        self.proc = subprocess.Popen([str(pkg / ("CastlevaniaLauncher" + EXE)), *args], cwd=pkg, env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.win = wait(lambda: cvtest.find_window(self.proc.pid), 30)
-        self.controls = wait(lambda: self.read().get("controls", {}).get("play") and self.read()["controls"], 30) or {}
+        # up once it says where its controls are: the page asked for (home has Play), drawn with them
+        pages = ["home", "display", "graphics", "game", "controls", "files"]
+        page = pages.index(args[list(args).index("--page") + 1]) if "--page" in args else 0
+        self.controls = wait(lambda: self.read().get("page") == page and len(self.read().get("controls", {})) > 3
+                             and (page or self.read()["controls"].get("play")) and self.read()["controls"], 30) or {}
 
     def read(self):
         try:
-            return json.loads(self.state.read_text())
+            return json.loads(self.state.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
     def control(self, name, timeout=5):
         return wait(lambda: self.read().get("controls", {}).get(name), timeout)
 
+    def statuses(self):
+        return [k[len("status:"):] for k in self.read().get("controls", {}) if k.startswith("status:")]
+
+    def set_by_click(self, name, done, tries=3):
+        """a control clicked until done() (a setting saved), the page it is on first"""
+        return self.click_until(name, done, tries)
+
     def click(self, name):
-        rect = self.control(name)
-        if not rect:
+        """the control clicked by the launcher itself (<state>.click, its TestClick: an ImGui activation), whatever
+        window has the focus; once the launcher took it"""
+        if not self.control(name):
             return False
-        x, y = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
-        if LINUX:
-            subprocess.run(["xdotool", "mousemove", "--window", str(self.win), str(x), str(y), "click", "1"],
-                           capture_output=True, env=dict(os.environ, DISPLAY=cvtest.display()))
-        else:  # the three at once: a mouse leave (the real pointer is elsewhere) comes after them, not between
-            lp = (y << 16) | (x & 0xFFFF)
-            for msg, wp in ((0x0200, 0), (0x0201, 1), (0x0202, 0)):  # WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP
-                cvtest.user32.PostMessageW(self.win, msg, wp, lp)
-        return True
+        req = Path(str(self.state) + ".click")
+        tmp = Path(str(req) + ".tmp")
+        tmp.write_text(name + "\n", encoding="utf-8")
+        os.replace(tmp, req)
+        return bool(wait(lambda: not req.exists(), 5))
 
     def click_until(self, name, done, tries=3):
-        """a click the launcher may miss: on Windows, ImGui closes a list when its window loses the focus (to another
-        window clicked meanwhile), so it is clicked again, up to tries times, until done()"""
+        """a click until done(), up to tries times (a list the click opened may close by itself first: on Windows
+        ImGui closes one when its window loses the focus)"""
         for _ in range(tries):
             if self.click(name) and wait(done, 4):
                 return True
@@ -218,21 +233,16 @@ def game_follows(pkg, env, start, chosen, expect):
     return result(label, errors)
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if len(args) != 3:
-        print(__doc__)
-        return 2
-    release, usa, eu = (Path(a).resolve() for a in args)
-    DISCS.update({USA: usa.name, EU: eu.name})
-    out = cvtest.REPO / "out" / "test" / f"launcher-{time.strftime('%Y%m%d-%H%M%S')}"
-    out.mkdir(parents=True)
-    root = (Path("/tmp") if LINUX else Path(tempfile.gettempdir()).resolve()) / f"cvtest-launcher-{time.strftime('%Y%m%d-%H%M%S')}"
+def setup(release, kind):
+    """the release installed as a player installs it, in TEMP or /tmp (cvtest-<kind>-<time>): its folder there, the
+    package's folder in it, the environment of a desktop session alone, and how a copy of the game goes into its
+    assets (a hard link or copy on Windows, a symbolic link on Linux); None where the game would find this PC's"""
+    root = (Path("/tmp") if LINUX else Path(tempfile.gettempdir()).resolve()) / f"cvtest-{kind}-{time.strftime('%Y%m%d-%H%M%S')}"
     if not LINUX:  # the game looks for assets up to six folders above it: none of this PC's on the way
         for up in list(root.parents)[:6]:
             if (up / "assets").is_dir():
                 print(f"{up / 'assets'} would be found by the installed game; set TEMP to another folder")
-                return 2
+                return None
     if release.is_dir():  # a build's programs, and what they load
         dest = root / "CastlevaniaCOD-PC"
         (dest / "assets").mkdir(parents=True)
@@ -250,6 +260,7 @@ def main():
             tf.extractall(root, filter="tar")
     pkg = next(p.parent for p in root.rglob("CastlevaniaLauncher" + EXE) if p.is_file())
     print(f"installed into {pkg}")
+    (pkg / "assets").mkdir(exist_ok=True)
     if LINUX:
         env = {k: os.environ[k] for k in ("HOME", "USER", "LANG", "XDG_RUNTIME_DIR", "VK_DRIVER_FILES",
                                           "VK_ICD_FILENAMES", "GALLIUM_DRIVER") if k in os.environ}
@@ -265,6 +276,22 @@ def main():
         def link(disc):
             install.put_game(disc, pkg / "assets")
 
+    return root, pkg, env, link
+
+
+def main():
+    args = [a for i, a in enumerate(sys.argv[1:], 1) if not a.startswith("--") and sys.argv[i - 1] != "--other"]
+    if len(args) != 3:
+        print(__doc__)
+        return 2
+    release, usa, eu = (Path(a).resolve() for a in args)
+    DISCS.update({USA: usa.name, EU: eu.name})
+    out = cvtest.REPO / "out" / "test" / f"launcher-{time.strftime('%Y%m%d-%H%M%S')}"
+    out.mkdir(parents=True)
+    installed = setup(release, "launcher")
+    if not installed:
+        return 2
+    root, pkg, env, link = installed
     results = [install.check_fonts(pkg / ("CastlevaniaLauncher" + EXE), env)]
 
     # one disc: Play, no list
@@ -325,6 +352,108 @@ def main():
     la.close()
     set_settings(pkg, launcher_language="en")
     results.append(result("Russian: the home page (russian.png)", [] if ok else ["no picture of the launcher"]))
+
+    # every page in every language
+    pages = ["home", "display", "graphics", "game", "controls", "files"]
+    errors = []
+    for code in ("en", "de", "es", "fr", "it", "pt-BR", "ru"):
+        set_settings(pkg, launcher_language=code)
+        for i, page in enumerate(pages):
+            la = Launcher(pkg, env, out, ["--page", page])
+            shown = wait(lambda: la.read().get("page") == i and len(la.read().get("controls", {})) > 3, 10)
+            if not shown:
+                errors.append(f"{code}: the {page} page did not open with its controls")
+            if not la.shot(f"page-{code}-{page}"):
+                errors.append(f"{code}: no picture of the {page} page")
+            la.close()
+    set_settings(pkg, launcher_language="en")
+    results.append(result("every page in every language opens with its controls (page-<language>-<page>.png)", errors))
+
+    # the settings it writes, and Reset to defaults
+    set_settings(pkg, release=EU)
+    errors = []
+    checks = [("display", "mode.1", "display_mode", "borderless"), ("display", "mode.2", "display_mode", "windowed"),
+              ("graphics", "wide", "widescreen", False), ("graphics", "scale.0", "render_percent", 50),
+              ("graphics", "aniso.3", "anisotropic_filtering", 8), ("game", "fps", "fps_counter", True),
+              ("controls", "layout.1", "button_layout", 1)]
+    la = None
+    for page, control, key, value in checks:
+        if not la or la.read().get("page") != pages.index(page):
+            if la:
+                la.close()
+            la = Launcher(pkg, env, out, ["--page", page])
+        if not la.set_by_click(control, lambda: settings(pkg).get(key) == value):
+            errors.append(f"{control} on {page}: {key} is {settings(pkg).get(key)!r}, not {value!r}")
+    if not la.set_by_click("Reset to defaults", lambda: settings(pkg).get("render_percent") == 100):
+        errors.append("Reset to defaults did not put render_percent back")
+    s = settings(pkg)
+    for key, value in (("display_mode", "borderless"), ("widescreen", True), ("render_percent", 100),
+                       ("anisotropic_filtering", 0), ("fps_counter", False), ("button_layout", 0),
+                       ("launcher_language", "en"), ("release", EU)):
+        if s.get(key) != value:
+            errors.append(f"after Reset to defaults {key} is {s.get(key)!r}, not {value!r}")
+    la.close()
+    set_settings(pkg, display_mode="windowed", width=960, height=540, release="")
+    results.append(result("settings clicked are saved as the game reads them; Reset to defaults keeps the language and release",
+                          errors))
+
+    # the HD texture pack's row
+    errors = []
+    textures = pkg / "textures"
+    textures.mkdir(exist_ok=True)
+    for f in textures.glob("*.png"):
+        f.unlink()
+    la = Launcher(pkg, env, out)
+    if not wait(lambda: "None in the textures folder (optional)" in la.statuses(), 5):
+        errors.append(f"without pictures: {la.statuses()}")
+    la.close()
+    for i in range(3):
+        (textures / f"{i:016x}-{i:016x}-00000013.png").write_bytes(b"")
+    set_settings(pkg, texture_pack=True)
+    la = Launcher(pkg, env, out)
+    if not wait(lambda: "3 pictures found, in use" in la.statuses(), 5):
+        errors.append(f"three pictures: {la.statuses()}")
+    la.shot("pack-in-use")
+    if not la.set_by_click("homepack", lambda: settings(pkg).get("texture_pack") is False):
+        errors.append("the switch did not turn the pack off")
+    elif not wait(lambda: "3 pictures found, off: the game's own textures" in la.statuses(), 5):
+        errors.append(f"switched off: {la.statuses()}")
+    la.close()
+    for f in textures.glob("*.png"):
+        f.unlink()
+    set_settings(pkg, texture_pack=True)
+    results.append(result("the HD texture pack's row: none, three found and in use, switched off", errors))
+
+    # the Game files page's verdicts
+    errors = []
+    junk = pkg / "assets" / "not a disc.iso"
+    junk.write_bytes(bytes(4096))
+    other = Path(sys.argv[sys.argv.index("--other") + 1]).resolve() if "--other" in sys.argv else None
+    if other:
+        link(other)
+    la = Launcher(pkg, env, out, ["--page", "files"])
+    want = [f"{usa.name}  -  USA release (patched header), ready", f"{eu.name}  -  European release, ready",
+            f"{junk.name}  -  not an Xbox disc image"]
+    if other:
+        want.append(f"{other.name}  -  another release, only the USA and European ones work")
+    wait(lambda: all(w in la.statuses() for w in want), 10)
+    for w in want:
+        if w not in la.statuses():
+            errors.append(f"no \"{w}\" (it says {la.statuses()})")
+    la.shot("files")
+    la.close()
+    junk.unlink()
+    if other:
+        (pkg / "assets" / other.name).unlink()
+    results.append(result("the Game files page: each copy's verdict (files.png)", errors))
+
+    # no graphics that run the game
+    la = Launcher(pkg, env, out, more_env={"CV_NO_D3D12": "1"})
+    warning = "No Vulkan" if LINUX else "No Direct3D 12"
+    seen = wait(lambda: warning in la.statuses(), 5)
+    la.shot("no-d3d12")
+    la.close()
+    results.append(result(f"CV_NO_D3D12=1: the home page says \"{warning}\"", [] if seen else [f"it says {la.statuses()}"]))
 
     # the game executables follow the setting
     results.append(game_follows(pkg, env, USA, EU, EU))

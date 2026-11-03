@@ -1,4 +1,4 @@
-"""Gameplay tests: runs the built game in a test folder of its own (its own settings and saves, the play folder is not
+r"""Gameplay tests: runs the built game in a test folder of its own (its own settings and saves, the play folder is not
 touched), plays a scenario turn by turn through CV_PAD_LIVE (src/common/keyboard.cpp) and checks every step.
 
 usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/release] [--keep] [--judge[=<model>]]
@@ -12,6 +12,11 @@ A scenario is JSON:
    "after": "<scenario>.json",            optional: that scenario's steps first (a path beside this one)
    "save": "<name>",                      optional: start from the saves a step kept with save_as
    "settings": {"display_mode": ...},     optional: castlevania.toml lines (windowed 960x540 by default)
+   "env": {"CV_RUMBLE_TRACE": "1", ...},  optional: the game's environment besides (XBE_VIRTUAL_PAD=1: the presses go
+                                          to a virtual controller the game reads through SDL, src/common/keyboard.cpp)
+   "platforms": ["linux"],                optional: where it runs (windows, linux); elsewhere it is skipped
+   "needs": ["textures"],                 optional: skipped without an HD texture pack in the textures folder the
+                                          game finds (this repository's)
    "dump": "<va>:<bytes>,...",            optional: guest memory saved after every command (game/live/mem-<n>-<va>.bin)
    "telemetry": <frames>,                 optional: the state every that many frames, game/telemetry.jsonl
    "perf": true,                          optional: the SDK's timings (XBE_PERF, a log line set each second): a
@@ -49,6 +54,14 @@ and may have
   "measure": {"<name>": [x0, y0, x1, y1]} the edge strength (sharpness) of those parts of the screenshot, as
                                           fractions of the window: screen.edges.<name>, the mean brightness step
                                           between neighbouring pixels (render scale and texture filtering move it)
+  "luma": {"<name>": [x0, y0, x1, y1]}    the mean brightness (0 to 255) of those parts: screen.luma.<name>
+  "click": "<control>" or [...]          clicks the in-game settings menu's controls first, by their names as it
+                                          says where they are (CV_MENU_STATE, src/common/menu.cpp): made by the
+                                          game as ImGui input (the live entry click=<control>), whatever window
+                                          has the focus, a few frames apart; then the step's press plays
+  "keys": "<key>[+<key>...]"              Linux: holds those keys (X11 names: F10, k, space, Left) while the step's
+                                          press plays (the game reads the keyboard's state, which on Windows only a
+                                          real key sets)
   "ask": {"question": "...",              asks a Codex model (judge.py, gpt-6-luna) about the screenshot:
           "choices": {"<name>": "...", ...}}   screen.ask.answer is the choice's name, screen.ask.why its reason
   "note": "..."                           shown in the report
@@ -57,11 +70,17 @@ player.active, player.pos (x, y, z), player.yaw, player.hp, camera.heading, menu
 before the step, screen has mean, std and flat (one colour) and, with a judge, judge.scene, judge.defect,
 judge.hector and judge.by (the model; judge.first has Jev's answers a review replaced), step has fps, seconds and
 saved (the game wrote a save during it), settings the run's settings (--set changes them), shots["<shot>"] the
-screen of an earlier step with that shot (shots["a"].edges.floor < screen.edges.floor). A field the game did
-not report is None.
+screen of an earlier step with that shot (shots["a"].edges.floor < screen.edges.floor), log the game's log lines
+of the step (any("Rumble" in l for l in log)) and runlog those of the run so far, found(lines, pattern) the
+lines a regular expression matches and total(lines, pattern) the sum of its first group's numbers over them
+(total(runlog, r"(\d+) shaders compiled")), saved the settings file as the game left it (saved.display_mode),
+window the game window's size (window.w, window.h), menu_controls the names of the settings menu's controls as it
+last drew them (a drop-down's choices while it is open: "aniso.4x" in menu_controls) and release "usa" or "eu". A
+field the game did not report is None.
 
 Each step also fails when the game exits, a command does not finish in time, or the log has a new error or guest
-trap. The report (report.md, results.json, a screenshot per step) goes to out/test/<scenario>-<time>/.
+trap. On Linux CV_WAYLAND=1 plays on a headless Weston of the run's own instead of its X display (SDL's Wayland
+video): the steps go by the game state and log, as there are no screenshots there. The report (report.md, results.json, a screenshot per step) goes to out/test/<scenario>-<time>/.
 
 --record starts the game as for play (the play folder's settings, keyboard and controllers; a fresh new game, or
 the saves of --save) with its state recorded (CV_TELEMETRY, src/common/telemetry.cpp). Once the game is closed the
@@ -217,6 +236,16 @@ if not LINUX:
     def press_enter(hwnd):
         user32.PostMessageW(hwnd, 0x0100, 0x0D, 0)  # WM_KEYDOWN VK_RETURN
 
+    def click_at(hwnd, x, y):
+        """a left click in the client area, by window messages (never the real pointer); the three at once, so a
+        mouse leave (the real pointer is elsewhere) comes after them"""
+        lp = (y << 16) | (x & 0xFFFF)
+        for msg, wp in ((0x0200, 0), (0x0201, 1), (0x0202, 0)):  # WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP
+            user32.PostMessageW(hwnd, msg, wp, lp)
+
+    def keys(hwnd, names, down):
+        return "keys need Linux: the game reads the keyboard's state, which on Windows only a real key sets"
+
     def close_window(proc, hwnd):
         if hwnd:
             user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
@@ -262,8 +291,33 @@ else:
                     grew = True
         return out
 
+    WESTON = None
+    WAYLAND = os.environ.get("CV_WAYLAND", "") not in ("", "0")
+
+    def wayland():
+        """CV_WAYLAND: a headless Weston of the run's own, started once (its socket in a runtime folder of its
+        own), stopped with this process: the environment the game takes it by"""
+        global WESTON
+        import atexit
+        import tempfile
+        if WESTON is None:
+            run = tempfile.mkdtemp(prefix="cvtest-wl-")
+            os.chmod(run, 0o700)
+            WESTON = (subprocess.Popen(["weston", "--backend=headless", "--renderer=pixman", "--width=1280",
+                                        "--height=720", "--socket=cvtest", "--idle-time=0"],
+                                       env=dict(os.environ, XDG_RUNTIME_DIR=run), stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL), run)
+            atexit.register(WESTON[0].terminate)
+            for _ in range(100):
+                if Path(run, "cvtest").exists():
+                    break
+                time.sleep(0.1)
+        return {"XDG_RUNTIME_DIR": WESTON[1], "WAYLAND_DISPLAY": "cvtest", "SDL_VIDEO_DRIVER": "wayland"}
+
     def windows(pid):
         """the mapped top level windows of the process and of those it started"""
+        if WAYLAND:  # none to find: the game is up once its log says so (Game.__init__)
+            return []
         found = []
         for p in sorted(family(pid)):
             r = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(p)], capture_output=True, text=True)
@@ -289,6 +343,8 @@ else:
 
     def capture(win):
         """the window as drawn: width, height, BGRA rows"""
+        if WAYLAND:
+            return None
         w, h = geometry(win)
         if w <= 0 or h <= 0:
             return None
@@ -299,6 +355,20 @@ else:
 
     def press_enter(win):
         subprocess.run(["xdotool", "windowfocus", "--sync", str(win), "key", "Return"], capture_output=True)
+
+    def click_at(win, x, y):
+        """a left click in the window, with the run's own display's pointer; the window given the focus first (ImGui
+        lets clicks by while the app has lost it)"""
+        subprocess.run(["xdotool", "windowfocus", "--sync", str(win)], capture_output=True)
+        subprocess.run(["xdotool", "mousemove", "--window", str(win), str(x), str(y), "click", "1"], capture_output=True)
+
+    def keys(win, names, down):
+        """keys held down (or let go) on the run's own display, the window given the focus first"""
+        if down:
+            subprocess.run(["xdotool", "windowfocus", "--sync", str(win)], capture_output=True)
+        r = subprocess.run(["xdotool", "keydown" if down else "keyup", "--window", str(win)] + names.split("+"),
+                           capture_output=True, text=True)
+        return r.stderr.strip() or None
 
     def close_window(proc, win):
         # SIGTERM: SDL's quit, the game ends as it does closed (runtime/linux/main.cpp); to another release's
@@ -355,6 +425,22 @@ def edges(w, h, bgra, box):
     return round(total / count / 1000, 2)
 
 
+def luma(w, h, bgra, box):
+    """the mean brightness (0 to 255) in box, fractions of the window"""
+    x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    every = max(1, (x1 - x0) * (y1 - y0) // 100000)
+    total = count = 0
+    for y in range(y0, y1, every):
+        for x in range(x0, x1):
+            i = (y * w + x) * 4
+            total += bgra[i + 2] * 299 + bgra[i + 1] * 587 + bgra[i] * 114
+            count += 1
+    return round(total / count / 1000, 1)
+
+
 # --- expressions over the state ---------------------------------------------------------------------------------
 
 class View:
@@ -379,13 +465,16 @@ def view(v):
     return v
 
 
-def holds(expr, state, prev, screen, step, settings=None, shots=None):
+def holds(expr, state, prev, screen, step, settings=None, shots=None, extra=None):
     names = {k: view(v) for k, v in (state or {}).items()}
     names.update(prev=View(prev), screen=View(screen), step=View(step), settings=View(settings),
                  shots={k: View(v) for k, v in (shots or {}).items()}, abs=abs, min=min, max=max, round=round, len=len,
-                 any=any, all=all)
-    try:
-        return bool(eval(expr, {"__builtins__": {}}, names)), None
+                 any=any, all=all, int=int, float=float, str=str)
+    names.update({k: view(v) for k, v in (extra or {}).items()})
+    names.update(found=lambda lines, pattern: [l for l in lines if re.search(pattern, l)],
+                 total=lambda lines, pattern: sum(float(m.group(1)) for m in (re.search(pattern, l) for l in lines) if m))
+    try:  # the names as globals: a generator's own scope sees those, not the locals
+        return bool(eval(expr, dict(names, __builtins__={}))), None
     except Exception as e:  # a field the game did not report, usually
         return False, f"{type(e).__name__}: {e}"
 
@@ -403,6 +492,25 @@ def command_ms(entries):
         hold = int(f[2].rstrip("f")) * k if len(f) > 2 and f[2] else (9 * FRAME_MS if k > 1 else 150)
         end = max(end, int(f[0].rstrip("f")) * k + hold)
     return end
+
+
+def saved_settings(folder):
+    """the settings file as the game left it, its keys and values (strings, numbers, flags)"""
+    out = {}
+    try:
+        text = (folder / "castlevania.toml").read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        k, sep, v = line.partition("=")
+        if not sep or line.lstrip().startswith("#"):
+            continue
+        v = v.strip()
+        try:
+            out[k.strip()] = json.loads(v.replace("'", '"')) if v[:1] in "'\"" else json.loads(v)
+        except ValueError:
+            out[k.strip()] = v
+    return out
 
 
 def exe_name(scenario):
@@ -433,7 +541,15 @@ class Game:
         self.log = folder / "logs" / "castlevania.log"
         self.log_pos = 0
         env = dict(os.environ if env is None else env, CV_PAD_LIVE=str(self.live))
-        if LINUX:
+        env["XBE_NO_PADS"] = "1"  # a controller plugged into the PC left out: the run's presses alone
+        env.update(scenario.get("env", {}))
+        self.menu_state = folder / "menu-state.json"  # where the settings menu's controls are (src/common/menu.cpp)
+        env["CV_MENU_STATE"] = str(self.menu_state)
+        if LINUX and WAYLAND:
+            # on the run's own headless Weston
+            env.pop("DISPLAY", None)
+            env.update(wayland())
+        elif LINUX:
             # on the run's own X display, never the desktop's (WSLg's Wayland, a session's)
             env["DISPLAY"] = display()
             env["SDL_VIDEO_DRIVER"] = "x11"
@@ -455,6 +571,11 @@ class Game:
         self.first_start = None  # seconds the game code took to build, when it was built
         deadline = started + (1800 if installed else 30)
         while not self.hwnd and not self.dialog and self.proc.poll() is None and time.time() < deadline:
+            if LINUX and WAYLAND:  # up once the log says SDL's video is Wayland
+                if self.log.exists() and "Video: wayland" in self.log.read_text(errors="replace"):
+                    self.hwnd = "wayland"
+                time.sleep(0.2)
+                continue
             for h in windows(self.proc.pid):
                 kind = window_class(h)
                 if kind.endswith("GameCode"):  # building: Enter is Start once it is ready, nothing before
@@ -468,6 +589,32 @@ class Game:
 
     def alive(self):
         return self.proc.poll() is None
+
+    def menu_controls(self):
+        try:
+            return list(json.loads(self.menu_state.read_text(encoding="utf-8"))["controls"])
+        except (OSError, ValueError, KeyError):
+            return []
+
+    def menu_control(self, name, timeout=3.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                rect = json.loads(self.menu_state.read_text(encoding="utf-8"))["controls"].get(name)
+                if rect:
+                    return rect
+            except (OSError, ValueError, KeyError):
+                pass
+            time.sleep(0.05)
+        return None
+
+    def click(self, name):
+        """a click on the settings menu's control, made by the game (the live entry click=, src/common/menu.cpp) over
+        the frames of a short command; an error when the menu does not have it"""
+        if not self.menu_control(name):
+            return f"the settings menu has no {name!r}"
+        _, _, err = self.play(f"0:click={name},0f:wait:4f")
+        return err
 
     def play(self, entries):
         """one command; the state after it, its frames per second, or an error"""
@@ -970,6 +1117,14 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
     if review:
         scenario["review"] = False if review == "none" else review
     name = scenario.get("name", Path(scenario_path).stem)
+    here = "linux" if LINUX else "windows"
+    if scenario.get("platforms") and here not in scenario["platforms"]:
+        print(f"{name}: skipped, it runs on {', '.join(scenario['platforms'])}")
+        return True
+    textures = REPO / "textures"
+    if "textures" in scenario.get("needs", []) and not (install or any(textures.rglob("*.dds")) or any(textures.rglob("*.png"))):
+        print(f"{name}: skipped, no HD texture pack in {textures}")
+        return True
     out = REPO / "out" / "test" / f"{'install-' if install else ''}{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     game = Game(build, install or out / "game", scenario, installed=bool(install), env=env)
     shots = out / "shots"
@@ -987,6 +1142,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
         results.append(r)
         failed |= not r["ok"]
     places = {}  # sweep: where each room put Hector and the camera
+    runlog = []  # the game's log lines so far, without their times
     screens = {}  # each shot's screen, for later steps' shots["<shot>"]
     judge_model, review = scenario.get("judge"), None
     if judge_model or any("ask" in st for st in scenario["steps"]):
@@ -1026,7 +1182,37 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                                                         shots / f"{i:03d}_box" if step.get("box_shots") else None)
                 r["warnings"] += notes
             else:
-                state, seconds, err = game.play(step["press"])
+                clicks = step.get("click", [])
+                clicks = [clicks] if isinstance(clicks, str) else clicks
+                # the checks a click step is played again for: those on the game state, the settings and the menu
+                state_checks = [e for e in step.get("expect", []) if not re.search(r"\b(screen|shots|window)\b", e)]
+                for attempt in range(3 if clicks else 1):
+                    click_errors = []
+                    for n, control in enumerate(clicks):
+                        if n:  # frames between clicks: a list opened by the click before draws its choices after
+                            game.play("0f:wait:4f")
+                        err = game.click(control)
+                        if err:
+                            click_errors.append(err)
+                    if not clicks:
+                        break
+                    state, seconds, err = game.play(step["press"])
+                    now = {"log": [], "runlog": runlog, "saved": saved_settings(game.folder), "window": None,
+                           "release": scenario.get("release") or "usa", "menu_controls": game.menu_controls()}
+                    if err or all(holds(e, state, prev, {}, {}, settings, screens, now)[0] for e in state_checks):
+                        break
+                    r["warnings"].append(f"clicked again: {', '.join(clicks)}")
+                r["errors"] += click_errors
+                held = step.get("keys")
+                if held:
+                    err = keys(game.hwnd, held, True)
+                    if err:
+                        r["errors"].append(err)
+                if not clicks:
+                    state, seconds, err = game.play(step["press"])
+                if held:  # let go, and a few frames for the game to see it before the next step's keys
+                    keys(game.hwnd, held, False)
+                    game.play("0f:wait:3f")
             if err:
                 r["errors"].append(err)
             log = game.new_log_lines()
@@ -1037,13 +1223,15 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                 r["perf"] = perf_of(log)
                 if step.get("perf_room"):
                     r["perf_room"] = step["perf_room"]
-            screen = {}
+            screen, img = {}, None
             if game.alive():
                 img = capture(game.hwnd)
                 if img:
                     screen = screen_stats(*img)
                     if step.get("measure"):
                         screen["edges"] = {k: edges(*img, box) for k, box in step["measure"].items()}
+                    if step.get("luma"):
+                        screen["luma"] = {k: luma(*img, box) for k, box in step["luma"].items()}
                     shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
                     write_png(shot, *img)
                     if judge_model and step.get("judge", True):
@@ -1073,8 +1261,12 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                     except Exception as e:  # Jev's word alone, then
                         r["warnings"].append(f"review: {e}")
                         seen = judge_warnings(screen["judge"], state, screen)
+                lines = [line.split("] ", 1)[-1] for line in log]
+                extra = {"log": lines, "runlog": runlog + lines, "saved": saved_settings(game.folder),
+                         "window": {"w": img[0], "h": img[1]} if game.alive() and img else None,
+                         "release": scenario.get("release") or "usa", "menu_controls": game.menu_controls()}
                 for expr in step.get("expect", []):
-                    ok, why = holds(expr, state, prev, screen, info, settings, screens)
+                    ok, why = holds(expr, state, prev, screen, info, settings, screens, extra)
                     if not ok:
                         r["errors"].append(f"expect {expr!r} failed" + (f" ({why})" if why else ""))
                 r.update(state=state, screen=screen, **info)
@@ -1090,6 +1282,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
                     if place in places:
                         r["warnings"].append(f"same place and camera as room {places[place]}")
                     places.setdefault(place, step["sweep_room"])
+            runlog += [line.split("] ", 1)[-1] for line in log]
             if step.get("save_as") and not r["errors"]:
                 dest = SAVES / step["save_as"]
                 shutil.rmtree(dest, ignore_errors=True)

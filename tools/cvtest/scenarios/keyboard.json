@@ -1,0 +1,21 @@
+{
+  "name": "keyboard",
+  "after": "newgame.json",
+  "platforms": ["linux"],
+  "note": "Keyboard play (src/common/keyboard.cpp), keys held as the keyboard sends them (Linux only: on Windows the game reads the keyboard's state, which only a real key sets): each key as the Xbox controller's button it stands for, WASD the left stick (Hector walks), the arrows the right stick, F10 the settings menu (its key).",
+  "steps": [
+    {"keys": "j", "press": "0f:wait:10f", "expect": ["'x' in pad.held.split('+')"]},
+    {"keys": "i", "press": "0f:wait:10f", "expect": ["'y' in pad.held.split('+')"]},
+    {"keys": "z", "press": "0f:wait:10f", "expect": ["'white' in pad.held.split('+')"]},
+    {"keys": "c", "press": "0f:wait:10f", "expect": ["'black' in pad.held.split('+')"]},
+    {"keys": "q", "press": "0f:wait:10f", "expect": ["'lt' in pad.held.split('+')"]},
+    {"keys": "e", "press": "0f:wait:10f", "expect": ["'rt' in pad.held.split('+')"]},
+    {"keys": "KP_8", "press": "0f:wait:10f", "expect": ["'up' in pad.held.split('+')"]},
+    {"keys": "Right", "press": "0f:wait:10f", "expect": ["pad.rx > 30000"]},
+    {"keys": "w", "press": "0f:wait:40f", "shot": "walk", "expect": ["pad.ly > 30000", "((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 > 200"]},
+    {"keys": "Return", "press": "0f:wait:20f", "shot": "pause", "expect": ["menu"]},
+    {"keys": "l", "press": "0f:wait:30f", "expect": ["not menu"]},
+    {"keys": "F10", "press": "0f:wait:20f", "expect": ["settings_menu"]},
+    {"keys": "F10", "press": "0f:wait:20f", "expect": ["not settings_menu"]}
+  ]
+}

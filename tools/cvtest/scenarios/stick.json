@@ -1,0 +1,17 @@
+{
+  "name": "stick",
+  "after": "newgame.json",
+  "note": "Stick response (ps2_stick, src/game/hooks.cpp), by the way Hector faces from the camera's heading (he faces where he walks; the camera turns in the courtyard): PS2, the default, lets a small tilt through as the PS2 did, so he walks slowly any way it points (a diagonal: 45 degrees); Xbox cuts each axis to 0 under a third of its throw, so the same tilt does not move him, and a tilt near right (15.5 degrees off it) walks straight right, where PS2 keeps the 74.5 degrees.",
+  "steps": [
+    {"press": "0f:ls=0.25/0.25:60f", "shot": "ps2-small",
+     "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 > 40",
+                "abs((player.yaw - camera.heading + 3.14159) % 6.28318 - 3.14159 - 0.785) < 0.1"]},
+    {"press": "0:set=ps2_stick=false,0f:ls=0.25/0.25:60f", "shot": "xbox-small",
+     "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 < 5"]},
+    {"press": "0f:ls=0.9/0.25:20f", "shot": "xbox-near-right",
+     "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 > 100",
+                "abs((player.yaw - camera.heading + 3.14159) % 6.28318 - 3.14159 - 1.571) < 0.03"]},
+    {"press": "0:set=ps2_stick=true,0f:ls=0.9/0.25:20f", "shot": "ps2-near-right",
+     "expect": ["abs((player.yaw - camera.heading + 3.14159) % 6.28318 - 3.14159 - 1.300) < 0.1"]}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "wayland",
+  "save": "first-save",
+  "platforms": ["linux"],
+  "note": "Linux on Wayland: run with CV_WAYLAND=1, the game on a headless Weston through SDL's Wayland video, drawn slower there (the compositor's on the CPU): a save continued with longer waits than load-save.json's (the title, Continue, the slot, Yes), Hector walked in the save room. By the game state: there are no screenshots there.",
+  "steps": [
+    {"press": "0:wait:20000", "expect": ["not player.active"]},
+    {"press": "600:a,6000:wait", "note": "Continue"},
+    {"press": "0:a,4000:wait", "note": "the slot"},
+    {"press": "0:a,4000:wait", "note": "confirm"},
+    {"press": "0:a,6000:wait", "note": "yes"},
+    {"until": "player.active and not loading and not menu", "timeout": 90, "poll_by": [["cutscene", "0:start,45f:wait"], ["modal", "0:a,30f:wait"]], "expect": ["found(runlog, 'Video: wayland')", "map == 5", "room == 27", "player.exp > 0"]},
+    {"press": "0f:lsd:40f", "expect": ["((player.pos[0] - prev.player.pos[0]) ** 2 + (player.pos[2] - prev.player.pos[2]) ** 2) ** 0.5 > 150"]}
+  ]
+}

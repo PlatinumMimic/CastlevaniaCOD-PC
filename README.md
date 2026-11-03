@@ -380,8 +380,9 @@ build or to make a release; an ISO is extracted with PowerShell, which Windows h
 ### To Test
 Only for the tests in `tools\cvtest` (see [Testing](#testing)):
 
-- [Python](https://www.python.org/downloads/) 3.8 or newer (tested with 3.14), with **Add python.exe to PATH**
-  ticked in its installer. The tests use its standard library alone.
+- [Python](https://www.python.org/downloads/) 3.11 or newer (tested with 3.14), with **Add python.exe to PATH**
+  ticked in its installer. The tests use its standard library alone. On Linux also Xvfb, xdotool, ImageMagick and
+  Weston (the regression suite's Wayland test).
 - For `--judge` and a step's `"ask"`: the [Codex CLI](https://github.com/openai/codex), signed in. For
   `--judge=jev-latest`: a TypeSafe API key.
 
@@ -424,6 +425,10 @@ launcher, built in `out\build\package` (the `package` preset: no icon, and no DL
 folder the exe's first start builds the game code with on the player's PC (without its `work` folder; both releases'
 configs and import libraries), and the Visual C++ runtime. It checks that nothing of the game went into the package. `tools\cvtest\install.py` then tests the zip as
 a player would install it (see Testing).
+
+Before every release the whole regression suite passes on both platforms, on the commit released and with its
+packages: `python -I tools\cvtest\suite.py --linux` runs it on Windows and then on Linux in WSL, and
+`python -I tools\cvtest\suite.py --check` says whether both passed on what is checked out now (see Testing).
 
 ### Building on Linux
 With Clang, LLD, CMake 3.25 or later, Ninja and the headers SDL needs for X11, Wayland and sound (on Ubuntu:
@@ -546,6 +551,15 @@ Changes this game needed beyond the generated config:
     way; squeezed to 4:3, the columns it reads past its texture are left out (`ShaderHooks::Output`).
 
 ### Testing
+- `python -I tools\cvtest\suite.py` is the regression suite: every feature of the port by its tests, listed in
+  [tools/cvtest/SUITE.md](tools/cvtest/SUITE.md) with what each checks and what only a person can check, run one
+  after another on this platform: the scenarios below on the dev build, then the release packages in `out\release`
+  as a player installs them (`install.py` with each disc, `launcher_test.py`, `discs.py`). `--linux` (on Windows)
+  then runs it on Linux in WSL; `--quick` runs a shorter list, `--only` and `--from` some of it. A test that needs
+  what the PC lacks (a disc, the HD pack, a package) is skipped, and a run with one skipped is not a pass. This PC's
+  discs and WSL setup are in `out\test\suite.json` (its format at the top of `suite.py`). A full run that passed on
+  a commit without changes records it (`out\test\suite-<platform>.json`, with the packages' SHA-256), which
+  `--check` reads: a release needs both platforms' for the commit released. A feature added gets a test there.
 - `python -I tools\cvtest\cvtest.py tools\cvtest\scenarios\newgame.json` plays a scenario in a test folder of its own
   (`out\test\<scenario>-<time>`, its own settings and saves) through `CV_PAD_LIVE`, checks the game state after
   every step (`src\common\telemetry.cpp`: map and room, Hector's position, HP, the camera, menus), the log and

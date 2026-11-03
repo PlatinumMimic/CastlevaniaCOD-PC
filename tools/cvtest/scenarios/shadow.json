@@ -1,0 +1,13 @@
+{
+  "name": "shadow",
+  "after": "newgame.json",
+  "note": "Hector's shadow: drawn by the Xbox with 4X multisampling, onto the back buffer's multisample grid (the SDK's State::rt_back_buffer). At the start of the corridor of 5.2 it falls to the right of his legs, on the lit floor: there the floor is about half as bright (0.58) as a little farther right. Without the shadow both are alike.",
+  "steps": [
+    {"press": "0:warp=5.2,10f:wait:20f"},
+    {"until": "room == 2 and player.active and not loading and not cutscene", "timeout": 30,
+     "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]]},
+    {"press": "0f:wait:90f", "shot": "shadow",
+     "luma": {"shadow": [0.57, 0.72, 0.64, 0.84], "floor": [0.72, 0.72, 0.80, 0.84]},
+     "expect": ["screen.luma.shadow < 0.75 * screen.luma.floor", "screen.luma.floor > 10"]}
+  ]
+}

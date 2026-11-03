@@ -1,0 +1,12 @@
+{
+  "name": "language",
+  "settings": {"game_language": 1},
+  "note": "The title screen's menu in the game's language, asked of the judge: the European release's game_language (1 English, 3 German, 4 French, 5 Spanish, 6 Italian: --set game_language=4 --release eu), the USA release English whatever it is set to (its disc's other languages are empty).",
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title",
+     "ask": {"question": "What language are the words of the title screen's menu in: the entries under the logo, such as New Game, Continue and Options in English?",
+             "choices": {"english": "English", "french": "French", "german": "German", "spanish": "Spanish", "italian": "Italian"}},
+     "expect": ["not player.active",
+                "screen.ask.answer == ({1: 'english', 3: 'german', 4: 'french', 5: 'spanish', 6: 'italian'}[settings.game_language] if release == 'eu' else 'english')"]}
+  ]
+}

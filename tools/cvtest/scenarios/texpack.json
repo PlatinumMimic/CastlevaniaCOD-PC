@@ -1,0 +1,14 @@
+{
+  "name": "texpack",
+  "after": "newgame.json",
+  "needs": ["textures"],
+  "env": {"CV_TEXPACK_CENSUS": "1"},
+  "note": "The HD texture pack (src/common/texpack.cpp): its pictures indexed at the start (.dds packs too), and in the first courtyard three in four or more of the textures the pack can have (the P8 ones; the rest are the pack's known gaps, such as the save frame) drawn with its picture (CV_TEXPACK_CENSUS lists what each texture got). With --set texture_pack=false none is; --set texture_pack_size=1024 loads the pictures at that size at most.",
+  "steps": [
+    {"press": "0f:wait:30f", "shot": "courtyard",
+     "expect": ["(total(runlog, r'texpack: (\\d+) pictures') >= 1000) if settings.texture_pack else not found(runlog, r'texpack: \\d+ pictures')",
+                "(len(found(runlog, r'census: P8 .*: picture')) >= 0.75 * len(found(runlog, r'census: P8 .*: (picture|none)'))) if settings.texture_pack else not found(runlog, r'census: .*: picture')",
+                "len(found(runlog, r'census: P8 ')) >= 20",
+                "not settings.texture_pack or found(runlog, 'up to %d px' % (2048 if settings.texture_pack_size is None else settings.texture_pack_size))"]}
+  ]
+}
