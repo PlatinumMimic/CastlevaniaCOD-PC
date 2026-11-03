@@ -308,10 +308,10 @@ index 075b3b7..3541811 100644
      float h = CachedOutput().height * (Get().render_percent / 100.0f);
      return guest_height ? std::max(h / guest_height, 0.1f) : 1.0f;
 diff --git a/runtime/core/diag.h b/runtime/core/diag.h
-index 200d6b4..21c3d8c 100644
+index 200d6b4..cdb1efa 100644
 --- a/runtime/core/diag.h
 +++ b/runtime/core/diag.h
-@@ -11,6 +11,21 @@ inline bool Perf() {
+@@ -11,6 +11,42 @@ inline bool Perf() {
      return on;
  }
  
@@ -328,6 +328,27 @@ index 200d6b4..21c3d8c 100644
 +        return !v || std::atoi(v) != 0;
 +    }();
 +    return on;
++}
++
++// XBE_AO_VIEW: ambient occlusion drawn in place of the frame's 3D: 1 its shade, 2 the view depth it reads in bands of
++// 1000 units (to see the title's scale), 3 the same from its own pass, 4 why it gives none, 5 3 and 4 by turns; 0 unset
++inline int AoView() {
++    static const int v = [] {
++        const char* e = std::getenv("XBE_AO_VIEW");
++        return e ? std::atoi(e) : 0;
++    }();
++    return v;
++}
++
++// XBE_AO_RADIUS, XBE_AO_STRENGTH: ambient occlusion's radius in the title's units and its strength in place of the
++// quality's (to tune it); def when unset
++inline float AoRadius(float def) {
++    static const char* v = std::getenv("XBE_AO_RADIUS");
++    return v ? float(std::atof(v)) : def;
++}
++inline float AoStrength(float def) {
++    static const char* v = std::getenv("XBE_AO_STRENGTH");
++    return v ? float(std::atof(v)) : def;
 +}
 +
  // XBE_CAPTURE_DIR: where F3 saves a frame, empty: F3 does not capture
@@ -419,7 +440,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..1154745 100644
+index fe65837..09e77ec 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -34,6 +34,7 @@
@@ -2199,7 +2220,7 @@ index fe65837..1154745 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,22 +4182,837 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,22 +4182,851 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -2353,17 +2374,17 @@ index fe65837..1154745 100644
 +}
 +
 +// Ambient occlusion (AmbientOcclusion): how much of the sky above each point of the frame's 3D its surroundings hide,
-+// from the depth alone. Each pixel's place in the view and its surface's normal come from the depth buffer (reversed,
-+// 1 at the near plane); samples on a spiral within a radius in the view, turned per pixel and per frame (the
++// from the depth alone. Each pixel's place in the view and its surface's normal come from the depth buffer (the view's
++// near_w at its 0 and far_w at its 1, FrameView: this title's has the near plane at 0); samples on a spiral within a radius in the view, turned per pixel and per frame (the
 +// anti-aliasing gathers the frames), count where they stand above the surface. aoapply then blurs it among neighbours
 +// at a like depth and multiplies the frame by it, less under the frame's effects (the reactive mask)
 +const char* const kAoHlsl = R"(
 +cbuffer P : register(b1) {
-+    float4 cam;   // near, far, tan of half the view across, down
++    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
 +    float4 part;  // the depth's part the frame is in (uv scale), and one of its texels in the frame's uv
 +    float4 ao;    // radius in view units, strength, distance where it has faded out, samples
 +    float4 fr;    // the frame's number, reactive mask (1) or none, one ambient occlusion texel in the frame's uv
-+    float4 aop;   // the ambient occlusion's part of its texture (uv scale)
++    float4 aop;   // the ambient occlusion's part of its texture (uv scale), XBE_AO_VIEW
 +};
 +Texture2D<float> depth : register(t0);
 +Texture2D<float> aot : register(t1);
@@ -2379,7 +2400,8 @@ index fe65837..1154745 100644
 +    return o;
 +}
 +float Depth(float2 uv) { return depth.SampleLevel(ps, uv * part.xy, 0); }
-+float ViewZ(float d) { return cam.x * cam.y / (d * (cam.y - cam.x) + cam.x); }
++// the buffer holds a + b / z: 1 / z runs straight from 1 / cam.x at 0 to 1 / cam.y at 1
++float ViewZ(float d) { return cam.x * cam.y / (d * cam.x + (1 - d) * cam.y); }
 +float3 ViewPos(float2 uv, float d) {
 +    float z = ViewZ(d);
 +    return float3((uv.x * 2 - 1) * cam.z * z, (1 - uv.y * 2) * cam.w * z, z);
@@ -2388,9 +2410,14 @@ index fe65837..1154745 100644
 +float Noise(float2 px) { return frac(52.9829189 * frac(dot(px, float2(0.06711056, 0.00583715)))); }
 +float4 aomain(O i) : SV_Target {
 +    float d = Depth(i.uv);
-+    if (d <= 0) return 1;  // nothing drawn there: the far plane
++    // XBE_AO_VIEW 3: the view depth in bands of 1000 units; 4: why it gave none (0 no depth, 0.2 too far, 0.4 a radius
++    // under a pixel), else 0.6 and up with its shade; 5: 3 and 4 by turns, about 8 seconds each
++    float mode = aop.z == 5 ? (fr.x < 512 ? 3 : 4) : aop.z;
++    bool why = mode == 4;
 +    float3 p = ViewPos(i.uv, d);
-+    if (p.z >= ao.z) return 1;
++    if (p.z >= 0.999 * max(cam.x, cam.y)) return why ? 0 : 1;  // nothing drawn there: the far plane
++    if (mode == 3) return frac(p.z / 1000);
++    if (p.z >= ao.z) return why ? 0.2 : 1;
 +    // the surface's slope from the nearer neighbour each way, so an edge doesn't bend it
 +    float2 du = float2(part.z, 0), dv = float2(0, part.w);
 +    float3 pr = ViewPos(i.uv + du, Depth(i.uv + du)) - p, pl = p - ViewPos(i.uv - du, Depth(i.uv - du));
@@ -2400,7 +2427,7 @@ index fe65837..1154745 100644
 +    if (n.z > 0) n = -n;  // facing the camera, which looks along +z
 +    // the radius on the screen at the point's distance, in the frame's uv
 +    float2 r = ao.x / (2 * p.z * cam.zw);
-+    if (max(r.x, r.y) < 0.75 * part.z) return 1;  // under a pixel: too far for any
++    if (max(r.x, r.y) < 0.75 * part.z) return why ? 0.4 : 1;  // under a pixel: too far for any
 +    int count = int(ao.w);
 +    float turn = (Noise(i.p.xy) + fr.x * 0.618034) * 6.2831853, hidden = 0;
 +    [loop] for (int k = 0; k < count; k++) {
@@ -2408,15 +2435,14 @@ index fe65837..1154745 100644
 +        float a = turn + k * 2.3999632;  // the golden angle: a spiral that fills the disc evenly
 +        float2 su = i.uv + float2(cos(a), sin(a)) * r * sqrt(t);
 +        if (any(su < 0) || any(su > 1)) continue;
-+        float sd = Depth(su);
-+        if (sd <= 0) continue;
-+        float3 v = ViewPos(su, sd) - p;
++        float3 v = ViewPos(su, Depth(su)) - p;
 +        float len = length(v);
 +        // above the surface, by its angle to it, less the farther within the radius
 +        float near = saturate(1 - len * len / (ao.x * ao.x));
 +        hidden += max(dot(v, n) / max(len, 1e-3) - 0.1, 0) * near;
 +    }
 +    float vis = saturate(1 - ao.y * hidden / count);
++    if (why) return 0.6 + 0.4 * vis;
 +    // faded out with distance: the far half of its reach
 +    return lerp(vis, 1, saturate((p.z - 0.5 * ao.z) / (0.5 * ao.z)));
 +}
@@ -2434,6 +2460,8 @@ index fe65837..1154745 100644
 +    float v = sum / max(wsum, 1e-4);
 +    // an effect over the pixel (a spark, a glow) keeps its own light
 +    if (fr.y > 0) v = lerp(v, 1, saturate(rx.SampleLevel(ps, i.uv * part.xy, 0) / 0.9));
++    if (aop.z == 2) v = frac(zc / 1000) * 0.8 + 0.2 * saturate(zc / ao.z);  // XBE_AO_VIEW=2: bands of 1000 units
++    if (aop.z >= 3) v = aot.SampleLevel(ps, i.uv * aop.xy, 0);  // 3, 4: aomain's own, unblurred
 +    return float4(v, v, v, 1);
 +}
 +)";
@@ -2454,19 +2482,23 @@ index fe65837..1154745 100644
 +    b.DestBlendAlpha = D3D12_BLEND_ONE;
 +    b.BlendOp = b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
 +    b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE;
++    if (diag::AoView()) b.BlendEnable = FALSE;  // XBE_AO_VIEW: its shade alone
 +    if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) return nullptr;
 +    return pso.Get();
 +}
 +
-+// ambient occlusion's quality (g_ambient_occlusion): its radius in view units (the title's are about centimetres), its
-+// strength, the distance where it has faded out, its samples, and the part of the frame's size it is worked out at
++// ambient occlusion's quality (g_ambient_occlusion): its radius in view units, its strength, the distance where it has
++// faded out, its samples, and the part of the frame's size it is worked out at. This title's units are a few
++// millimetres (Hector stands about 400 tall, some 2000 from the camera in the throne room), so a radius of 200 to 250
++// is about a metre: High's 250 looked right there, contact shadow at the stairs, pillars and alcoves without darkening
++// whole walls (1000 did)
 +struct AoQuality {
 +    float radius, strength, reach, samples, scale;
 +};
 +// (strength 2.4: a right-angled corner at about 0.72 after the blur, a flat floor or wall at 1, checked on a made-up
 +// depth buffer of one)
-+constexpr AoQuality kAoLow{90, 2.4f, 6000, 8, 0.5f};
-+constexpr AoQuality kAoHigh{110, 2.4f, 8000, 16, 1.0f};
++constexpr AoQuality kAoLow{200, 2.4f, 15000, 8, 0.5f};
++constexpr AoQuality kAoHigh{250, 2.4f, 20000, 16, 1.0f};
 +
 +// Ambient occlusion over the frame's 3D (rw x rh of t from the top left), from anti-aliasing's copy of its depth: worked
 +// out into ao_ at its quality's part of that size, then multiplied into the frame, before the anti-aliasing's pass
@@ -2516,11 +2548,12 @@ index fe65837..1154745 100644
 +        dev_->CreateShaderResourceView(src[i], &sv, Cpu(srv_heap_.Get(), slot + i, srv_inc_));
 +    }
 +    float tan_y = std::tan(0.5f * ao_view_.fov_y);
++    float radius = diag::AoRadius(aq.radius);  // its reach goes with it
 +    float p[20] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
 +                   float(rw) / float(t.w), float(rh) / float(t.h), 1.0f / float(rw), 1.0f / float(rh),
-+                   aq.radius, aq.strength, aq.reach, aq.samples,
++                   radius, diag::AoStrength(aq.strength), aq.reach * radius / aq.radius, aq.samples,
 +                   float(presents_ % 1024), rx ? 1.0f : 0.0f, 1.0f / float(aw), 1.0f / float(ah),
-+                   float(aw) / float(t.w), float(ah) / float(t.h), 0, 0};
++                   float(aw) / float(t.w), float(ah) / float(t.h), float(diag::AoView()), 0};
 +    Alloc cb = Upload(256, 256);
 +    std::memcpy(cb.cpu, p, sizeof(p));
 +    // worked out at its part of the frame's size
@@ -2538,7 +2571,9 @@ index fe65837..1154745 100644
 +    DrawFullScreen(apso, cb.gpu, slot);
 +    bound_rt_ = bound_ds_ = nullptr;
 +    if (!ao_said_) {
-+        LOGR("ambient occlusion: %s, worked out at %ux%u for the 3D at %ux%u", q >= 2 ? "high" : "low", aw, ah, rw, rh);
++        LOGR("ambient occlusion: %s, worked out at %ux%u for the 3D at %ux%u; the view %.1f to %.1f deep, %.1f degrees "
++             "high", q >= 2 ? "high" : "low", aw, ah, rw, rh, ao_view_.near_w, ao_view_.far_w,
++             ao_view_.fov_y * 57.29578f);
 +        ao_said_ = true;
 +    }
 +}
@@ -3042,7 +3077,7 @@ index fe65837..1154745 100644
  }
  
  void D3D12Backend::RenderUi() {
-@@ -3253,19 +5027,202 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5041,202 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -3246,7 +3281,7 @@ index fe65837..1154745 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +5232,9 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5246,9 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -3256,7 +3291,7 @@ index fe65837..1154745 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +5251,12 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5265,12 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -3269,7 +3304,7 @@ index fe65837..1154745 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +5267,21 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +5281,21 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -3291,7 +3326,7 @@ index fe65837..1154745 100644
      }
  }
  
-@@ -3317,12 +5294,14 @@ void LogPerf() {
+@@ -3317,12 +5308,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -3310,7 +3345,7 @@ index fe65837..1154745 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +5310,98 @@ void LogPerf() {
+@@ -3331,25 +5324,98 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -3414,7 +3449,7 @@ index fe65837..1154745 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +5412,28 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +5426,28 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -3443,7 +3478,7 @@ index fe65837..1154745 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +5452,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +5466,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -3489,7 +3524,7 @@ index fe65837..1154745 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +5496,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +5510,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -3596,10 +3631,10 @@ index ce6acda..4557d99 100644
  inline std::unique_ptr<Extension> g_extension;
 diff --git a/runtime/gpu/framegen.cpp b/runtime/gpu/framegen.cpp
 new file mode 100644
-index 0000000..0075fe1
+index 0000000..4551c08
 --- /dev/null
 +++ b/runtime/gpu/framegen.cpp
-@@ -0,0 +1,990 @@
+@@ -0,0 +1,996 @@
 +// Frame generation by AMD FSR 3 or NVIDIA DLSS, and anti-aliasing and upscaling by AMD FSR or NVIDIA DLSS (framegen.h). Each vendor's library is loaded at run time from beside
 +// the executable, never linked: without the files the game runs as it did.
 +#include "gpu/framegen.h"
@@ -3939,8 +3974,9 @@ index 0000000..0075fe1
 +    c.cameraFar = v.far_w;
 +    c.cameraFOV = v.fov_y;
 +    c.cameraAspectRatio = aspect;
-+    // the renderer's depth buffer and its copies hold 1 at the near plane (ReversedDepthHlsl)
-+    c.depthInverted = sl::Boolean::eTrue;
++    // the renderer's depth buffer and its copies: near_w at their 0 and far_w at their 1 (FrameView). The renderer turns
++    // the title's depth round (ReversedDepthHlsl), and this title's own has the near plane at its top, so near is at 0
++    c.depthInverted = v.near_w > v.far_w ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 +    c.cameraMotionIncluded = sl::Boolean::eTrue;
 +    c.motionVectors3D = sl::Boolean::eFalse;
 +    c.motionVectorsJittered = sl::Boolean::eFalse;  // each draw's motion is taken before the offset (WithMotion)
@@ -4327,12 +4363,14 @@ index 0000000..0075fe1
 +
 +    bool Run(ID3D12GraphicsCommandList* cl, const Frame& f) override {
 +        if (!f.color || !f.depth || !f.motion || !f.output || !f.w || !f.h || !f.rw || !f.rh) return false;
-+        if (ctx_ && (f.w != w_ || f.h != h_)) {
++        // the depth buffer's convention, from the view: near at its 0 (as this title's), or at its 1
++        bool inverted = f.view.near_w > f.view.far_w;
++        if (ctx_ && (f.w != w_ || f.h != h_ || inverted != inverted_)) {
 +            destroy_(&ctx_, nullptr);
 +            ctx_ = nullptr;
 +        }
 +        bool fresh = !ctx_;
-+        if (!ctx_ && !MakeContext(f.w, f.h)) return false;
++        if (!ctx_ && !MakeContext(f.w, f.h, inverted)) return false;
 +        ffxDispatchDescUpscale d{};
 +        d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
 +        d.commandList = cl;
@@ -4365,7 +4403,7 @@ index 0000000..0075fe1
 +    }
 +
 +private:
-+    bool MakeContext(uint32_t w, uint32_t h) {
++    bool MakeContext(uint32_t w, uint32_t h, bool inverted) {
 +        ffxCreateBackendDX12Desc be{};
 +        be.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
 +        be.device = dev_;
@@ -4376,9 +4414,10 @@ index 0000000..0075fe1
 +        ffxCreateContextDescUpscale c{};
 +        c.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
 +        c.header.pNext = &ver.header;
-+        // the frame as the game drew it: gamma-encoded colour, depth reversed (1 near), exposure found by AMD; the size
-+        // drawn changes with the setting, and is the output's on the first 3D frame after a 2D screen
-+        c.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DEPTH_INVERTED |
++        // the frame as the game drew it: gamma-encoded colour, depth as the view says (near at 0 unless inverted),
++        // exposure found by AMD; the size drawn changes with the setting, and is the output's on the first 3D frame
++        // after a 2D screen
++        c.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | (inverted ? FFX_UPSCALE_ENABLE_DEPTH_INVERTED : 0u) |
 +                  FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
 +        c.maxRenderSize = {w, h};
 +        c.maxUpscaleSize = {w, h};
@@ -4390,7 +4429,8 @@ index 0000000..0075fe1
 +        }
 +        w_ = w;
 +        h_ = h;
-+        LOGR("antialias: AMD FSR at %ux%u", w, h);
++        inverted_ = inverted;
++        LOGR("antialias: AMD FSR at %ux%u, depth %s", w, h, inverted ? "near at 1" : "near at 0");
 +        return true;
 +    }
 +
@@ -4401,6 +4441,7 @@ index 0000000..0075fe1
 +    PfnFfxDispatch dispatch_ = nullptr;
 +    ffxContext ctx_ = nullptr;
 +    uint32_t w_ = 0, h_ = 0;
++    bool inverted_ = false;
 +};
 +
 +// NVIDIA DLSS through Streamline (g_sl, loaded with it at the start): DLAA at the frame's own size, or upscaling from
@@ -4592,10 +4633,10 @@ index 0000000..0075fe1
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/framegen.h b/runtime/gpu/framegen.h
 new file mode 100644
-index 0000000..4a3d203
+index 0000000..24d3f74
 --- /dev/null
 +++ b/runtime/gpu/framegen.h
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,137 @@
 +// Frame generation: a frame made between each two the title draws, by AMD FidelityFX Super Resolution 3 frame
 +// generation (any Direct3D 12 card) or NVIDIA DLSS frame generation through Streamline (GeForce RTX 40 and 50). And
 +// the frame's anti-aliasing and upscaling (AntiAlias), by AMD FSR or NVIDIA DLSS.
@@ -4699,7 +4740,8 @@ index 0000000..4a3d203
 +public:
 +    struct Frame {
 +        ID3D12Resource* color = nullptr;   // the frame's colour, in ALL_SHADER_RESOURCE
-+        ID3D12Resource* depth = nullptr;   // R32_FLOAT, the colour's size, reversed (1 near), ALL_SHADER_RESOURCE
++        ID3D12Resource* depth = nullptr;   // R32_FLOAT, the colour's size, ALL_SHADER_RESOURCE: the view's near_w at 0
++                                           // and far_w at 1 (FrameView)
 +        ID3D12Resource* motion = nullptr;  // R16G16_FLOAT, the colour's size: to the frame before in UV units
 +        // R8_UNORM, the colour's size, ALL_SHADER_RESOURCE: the effects' share of each pixel (sparks, fire, glows: no
 +        // depth or motion of their own), 0 to 0.9, taken from this frame rather than gathered; may be null
