@@ -485,6 +485,11 @@ bool DlssCard(const std::string& name) {
            std::isdigit(static_cast<unsigned char>(name[at + 5]));
 }
 
+// any GeForce RTX (or NVIDIA RTX workstation card): DLSS anti-aliasing's
+bool RtxCard(const std::string& name) {
+    return name.find("NVIDIA") != std::string::npos && name.find("RTX") != std::string::npos;
+}
+
 struct FrameGenDownload {
     std::atomic<bool> running{false};
     std::atomic<float> progress{0};
@@ -604,7 +609,7 @@ struct FrameGenDownload {
                 fs::remove_all(tmp, ec);
             }
             progress = 1;
-            result = ok ? T("Downloaded. Frame generation starts with the game's next start.")
+            result = ok ? T("Downloaded. The game uses them from its next start.")
                         : F("The download failed (error {}): check the connection and try again.",
                             {std::to_string(uint32_t(hr))});
             CoUninitialize();
@@ -646,6 +651,12 @@ struct Settings {
     uint32_t draw_distance = 100;       // percent of the game's far plane (game/view.cpp)
     uint32_t fog_distance = 100;        // percent of the game's fog distance, 0 none (game/view.cpp)
     bool hud_edges = true;              // widescreen: the HUD at the screen's corners (widescreen.cpp)
+    bool menu_spread = true;            // widescreen: the pause menu's columns toward the sides (widescreen.cpp)
+    uint32_t antialiasing = 1;          // 0 off, 1 AMD FSR, 2 NVIDIA DLSS (menu.cpp, the SDK's renderer)
+    uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
+    uint32_t sharpening = 30;           // percent, AMD FSR's
+    uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
+    uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     toml::table rest;
 
@@ -686,6 +697,12 @@ struct Settings {
         draw_distance = rest["draw_distance"].value_or(draw_distance);
         fog_distance = rest["fog_distance"].value_or(fog_distance);
         hud_edges = rest["hud_edges"].value_or(hud_edges);
+        menu_spread = rest["menu_spread"].value_or(menu_spread);
+        antialiasing = std::min(rest["antialiasing"].value_or(antialiasing), 2u);
+        upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
+        sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
+        ambient_occlusion = std::min(rest["ambient_occlusion"].value_or(ambient_occlusion), 2u);
+        surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
     }
 
@@ -719,6 +736,12 @@ struct Settings {
         rest.insert_or_assign("draw_distance", int64_t(draw_distance));
         rest.insert_or_assign("fog_distance", int64_t(fog_distance));
         rest.insert_or_assign("hud_edges", hud_edges);
+        rest.insert_or_assign("menu_spread", menu_spread);
+        rest.insert_or_assign("antialiasing", int64_t(antialiasing));
+        rest.insert_or_assign("upscaling", int64_t(upscaling));
+        rest.insert_or_assign("sharpening", int64_t(sharpening));
+        rest.insert_or_assign("ambient_occlusion", int64_t(ambient_occlusion));
+        rest.insert_or_assign("surface_depth", int64_t(surface_depth));
         rest.insert_or_assign("gpu", gpu);
         std::ofstream f(File());
         f << rest << "\n";
@@ -973,6 +996,21 @@ void Banner(ImDrawList* dl, ImVec2 a, float w, float h) {
     dl->AddRectFilledMultiColor({a.x, ry}, {a.x + w * 0.92f, ry + S(2)}, white, Fade(white, 0), Fade(white, 0), white);
 }
 
+// controls that do nothing as the other settings stand (upscaling with anti-aliasing off): shown under a veil of the
+// card's navy and not taken, a note under them saying what they need
+bool g_off = false;
+void BeginOff(bool off) {
+    ImGui::BeginDisabled(off);
+    g_off = off;
+}
+void EndOff() {
+    ImGui::EndDisabled();
+    g_off = false;
+}
+void Veil(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    if (g_off) dl->AddRectFilled(a - ImVec2(S(1), S(1)), b + ImVec2(S(1), S(1)), Rgb(2, 9, 38, 175));
+}
+
 // an on/off switch; true when flipped
 bool Toggle(const char* id, bool& v) {
     ImVec2 size{S(46), S(22)};
@@ -992,6 +1030,7 @@ bool Toggle(const char* id, bool& v) {
     ImVec2 c{a.x + r + t * (size.x - 2 * r), a.y + r};
     dl->AddCircleFilled(c, r - S(4), Rgb(230, 236, 240), 24);
     dl->AddCircle(c, r - S(4), Rgb(16, 40, 60), 24);
+    Veil(dl, a, a + size);
     return pressed;
 }
 
@@ -1035,6 +1074,7 @@ bool Segmented(const char* id, T& value, const std::vector<T>& values, const std
         else dl->AddText(f, size, tp, hover ? kText : kMuted, names[i].c_str());
         ImGui::PopID();
     }
+    Veil(dl, a, a + ImVec2(avail, h));
     ImGui::SetCursorScreenPos(a);
     ImGui::Dummy({avail, h});
     ImGui::PopID();
@@ -1071,6 +1111,7 @@ bool Slider(const char* id, uint32_t& value, uint32_t lo, uint32_t hi, const std
     Bar(dl, a + in, a + ImVec2(right, h) - in, S(7), hover ? kAccentHi : kAccent, kAccentLo, Rgb(0, 60, 14));
     ImVec2 ts = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, name.c_str());
     Outlined(dl, g_italic, a + ImVec2((avail - ts.x) * 0.5f, (h - ts.y) * 0.5f), kText, Rgb(0, 50, 12, 220), name.c_str(), 1);
+    Veil(dl, a, a + ImVec2(avail, h));
     ImGui::PopID();
     return changed;
 }
@@ -1182,11 +1223,36 @@ void EndSetting() {
     ImGui::Dummy({0, S(4)});
 }
 
+// a setting with many choices: title and description across the card, its control under them across it too
+void BeginWideSetting(const char* title, const char* desc, bool first = false) {
+    if (!first) {
+        Rule(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x, kLine);
+        ImGui::Dummy({0, S(7)});
+    }
+    Text(g_semi, kText, title);
+    if (desc) Wrapped(g_small, kMuted, desc);
+    ImGui::Dummy({0, S(4)});
+    ImGui::BeginGroup();
+}
+
 // a switch at the right end of the control column
 void ToggleRight(const char* id, bool& v) {
     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - S(46));
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(5));
     Toggle(id, v);
+}
+
+// a line under a setting's control, in its column: what the choice does, or what it needs (amber)
+void ControlNote(ImU32 col, const std::string& s) {
+    ImGui::Dummy({0, S(1)});
+    Wrapped(g_small, col, s.c_str());
+}
+
+// the name of the cards under it, in the band's teal
+void Section(const char* s) {
+    ImGui::Dummy({0, S(4)});
+    Text(g_small, kTealHi, s);
+    ImGui::Dummy({0, S(1)});
 }
 
 // a page's name on its banner, what it is for under it
@@ -1234,7 +1300,9 @@ void Status(uint32_t icon, ImU32 col, const std::string& text) {
     ImGui::TextUnformatted(Icon(icon).c_str());
     ImGui::PopStyleColor();
     ImGui::SameLine(0, S(10));
+    ImGui::PushTextWrapPos(0.0f);  // a long line (some languages') wraps under itself, not out of its card
     ImGui::TextUnformatted(text.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::PopFont();
 }
 
@@ -1495,6 +1563,44 @@ Picture LoadCrest() {
     return p;
 }
 
+// the pages, in the sidebar's order
+enum Page : int { kHome, kDisplay, kGraphics, kView, kTextures, kGame, kControls, kFiles, kPageCount };
+
+// the Graphics page's quality presets: anti-aliasing (on keeps the kind chosen), upscaling and ambient occlusion
+// together. Original is the Xbox's picture; anti-aliasing off, the others do nothing, so off is Original whatever
+// they are
+struct Preset {
+    uint32_t aa, upscaling, ao;
+};
+constexpr Preset kPresets[] = {{0, 0, 0}, {1, 3, 0}, {1, 2, 1}, {1, 0, 1}, {1, 0, 2}};
+enum : int { kOriginal, kLow, kMedium, kHigh, kUltra, kCustom = -1 };
+
+int PresetOf(const Settings& s) {
+    if (!s.antialiasing) return kOriginal;
+    for (int i = kLow; i <= kUltra; i++)
+        if (s.upscaling == kPresets[i].upscaling && s.ambient_occlusion == kPresets[i].ao) return i;
+    return kCustom;
+}
+
+void SetPreset(Settings& s, int p) {
+    s.antialiasing = kPresets[p].aa ? std::max(s.antialiasing, 1u) : 0;
+    s.upscaling = kPresets[p].upscaling;
+    s.ambient_occlusion = kPresets[p].ao;
+}
+
+const char* PresetName(int p) {
+    switch (p) {
+        case kOriginal: return T("Original");
+        case kLow: return T("Low");
+        case kMedium: return T("Medium");
+        case kHigh: return T("High");
+        case kUltra: return T("Ultra");
+        default: return T("Custom");
+    }
+}
+
+const char* AntiAliasName(uint32_t aa) { return aa == 2 ? "NVIDIA DLSS" : aa == 1 ? "AMD FSR" : T("Off"); }
+
 // the launcher's state and its one screen
 class Launcher {
 public:
@@ -1540,11 +1646,13 @@ public:
         ImGui::BeginChild("page", {0, 0}, ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PushFont(g_body);
         switch (page_) {
-            case 0: keep = HomePage(); break;
-            case 1: DisplayPage(); break;
-            case 2: GraphicsPage(); break;
-            case 3: GamePage(); break;
-            case 4: ControlsPage(); break;
+            case kHome: keep = HomePage(); break;
+            case kDisplay: DisplayPage(); break;
+            case kGraphics: GraphicsPage(); break;
+            case kView: ViewPage(); break;
+            case kTextures: TexturesPage(); break;
+            case kGame: GamePage(); break;
+            case kControls: ControlsPage(); break;
             default: FilesPage(); break;
         }
         ImGui::PopFont();
@@ -1569,7 +1677,9 @@ private:
                std::to_string(s.invert_camera_x) + std::to_string(s.invert_camera_y) + std::to_string(s.hud_edges) + "|" +
                std::to_string(s.fov) + "|" + std::to_string(s.draw_distance) + "|" + std::to_string(s.fog_distance) + "|" +
                std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
-               std::to_string(s.frame_generation);
+               std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
+               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + "|" +
+               std::to_string(s.sharpening);
     }
 
     void AutoSave() {
@@ -1616,14 +1726,15 @@ private:
         dl->AddText(g_small, g_small->FontSize, {tx + S(2), p.y + S(27)}, Rgb(226, 78, 70), "Curse of Darkness");
         ImGui::Dummy({0, cs + S(22)});
 
-        static const words::Key kPages[] = {"Home", "Display", "Graphics", "Game", "Controls", "Game files"};
-        for (int i = 0; i < 6; i++) {
-            if (i == 1) {
+        static const words::Key kPages[kPageCount] = {"Home", "Display", "Graphics", "View", "Textures",
+                                                      "Game", "Controls", "Game files"};
+        for (int i = 0; i < kPageCount; i++) {
+            if (i == kDisplay) {
                 ImGui::Dummy({0, S(4)});
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(30));
                 Label(T("SETTINGS"));
             }
-            if (i == 5) ImGui::Dummy({0, S(6)});
+            if (i == kFiles) ImGui::Dummy({0, S(6)});
             if (NavItem(T(kPages[i]), page_ == i)) page_ = i;
         }
 
@@ -1715,7 +1826,7 @@ private:
         ImGui::EndDisabled();
         if (!ready) {
             ImGui::SameLine(0, S(22));
-            if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = 5;
+            if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = kFiles;
         }
         // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
         ImVec2 end = ImGui::GetItemRectMax();
@@ -1765,17 +1876,19 @@ private:
         std::string mode = settings_.display_mode == "fullscreen" ? T("Fullscreen")
                            : settings_.display_mode == "windowed" ? T("Windowed")
                                                                   : T("Borderless");
+        std::string quality = PresetName(PresetOf(settings_));
+        if (settings_.antialiasing) quality += "  |  " + std::string(AntiAliasName(settings_.antialiasing));
         struct Tile {
             const char* label;
             std::string value;
             int page;
-        } tiles[] = {{T("Display"), mode + "  |  " + res, 1},
+        } tiles[] = {{T("Display"), mode + "  |  " + res, kDisplay},
+                     {T("Graphics quality"), quality, kGraphics},
                      {T("Widescreen"),
                       settings_.widescreen ? F("On ({}, Hor+)", {settings_.widescreen_aspect == 1610 ? "16:10" : "16:9"})
                                            : T("Off (4:3)"),
-                      2},
-                     {T("Render scale"), std::to_string(settings_.render_percent) + "%", 2},
-                     {T("Menu key"), KeyName(settings_.menu_key) + "  |  L3 + R3", 3}};
+                      kView},
+                     {T("Menu key"), KeyName(settings_.menu_key) + "  |  L3 + R3", kGame}};
         float gap = S(12), tw = (ImGui::GetContentRegionAvail().x - gap) / 2, th = S(68);
         for (int i = 0; i < 4; i++) {
             if (i % 2) ImGui::SameLine(0, gap);
@@ -1790,6 +1903,13 @@ private:
             Cursor(dl, {p.x + tw - S(38) + S(6) * hv, p.y + th * 0.5f}, S(18), 0.3f + 0.7f * hv);
         }
         ImGui::Dummy({0, S(8)});
+        // anti-aliasing is on by default but its vendor's files are not in the download: without them it, upscaling
+        // and ambient occlusion do nothing, so say so where everyone looks
+        if (settings_.antialiasing && !HaveFrameGen(ExeDir(), AntiAliasVendor())) {
+            Status(kIconWarn, kAmber, F("Anti-aliasing ({}) needs its files: download them on the Graphics page.",
+                                        {AntiAliasName(AntiAliasVendor())}));
+            ImGui::Dummy({0, S(4)});
+        }
         std::string tip = F("In game, press {} or click both sticks (L3 + R3) for these settings.", {KeyName(settings_.menu_key)});
         Wrapped(g_small, kMuted, tip.c_str());
         return keep;
@@ -1824,28 +1944,19 @@ private:
         }
     }
 
-    // frame generation's files: here, or a download from the vendor's own release, with its licence a click away
-    void FrameGenStatus() {
-        uint32_t k = settings_.frame_generation;
-        if (!k) return;
+    // a vendor's files (1 AMD FSR, 2 NVIDIA DLSS), for anti-aliasing and frame generation: here, or a download from
+    // the vendor's own release, with its licence a click away
+    void VendorFiles(uint32_t k) {
         bool fsr = k == 1;
-        if (!fsr && !DlssCard(UsedGpu().name)) {
-            Status(kIconWarn, kAmber, T("Needs a GeForce RTX 40 or 50: this graphics card has no DLSS frame generation. "
-                                        "AMD FSR 3 works on it."));
-        }
-        if (!fsr && settings_.hdr) {
-            Wrapped(g_small, kMuted, T("With HDR on, the game sends HDR10 for DLSS frame generation, the HDR format it "
-                                       "takes."));
-        }
         if (fg_download_.running && fg_download_.kind == k) {
             ImGui::ProgressBar(fg_download_.progress, {-FLT_MIN, S(30)},
                                fsr ? T("Downloading from AMD...") : T("Downloading from NVIDIA..."));
             return;
         }
         if (HaveFrameGen(ExeDir(), k)) {
-            Status(kIconCheck, kGreen, fsr ? T("AMD FSR 3's files are here") : T("NVIDIA DLSS's files are here"));
+            Status(kIconCheck, kGreen, fsr ? T("AMD FSR's files are here") : T("NVIDIA DLSS's files are here"));
         } else {
-            Status(kIconWarn, kAmber, fsr ? T("AMD FSR 3's files are not here yet") : T("NVIDIA DLSS's files are not here yet"));
+            Status(kIconWarn, kAmber, fsr ? T("AMD FSR's files are not here yet") : T("NVIDIA DLSS's files are not here yet"));
             Wrapped(g_small, kMuted, fsr ? T("From AMD's own release on GitHub. The files are AMD's, under AMD's licence, "
                                              "which is saved with them; they are not part of this game's download.")
                                          : T("From NVIDIA's own Streamline release on GitHub (about 280 MB, of which the game "
@@ -1864,6 +1975,27 @@ private:
             Note(fg_download_.result);
             fg_download_.result.clear();
         }
+    }
+
+    // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR
+    uint32_t AntiAliasVendor() const {
+        uint32_t aa = settings_.antialiasing;
+        return aa == 2 && !RtxCard(UsedGpu().name) ? 1 : aa;
+    }
+
+    // frame generation's warnings, and its files when anti-aliasing's card above does not show them already
+    void FrameGenStatus() {
+        uint32_t k = settings_.frame_generation;
+        if (!k) return;
+        if (k == 2 && !DlssCard(UsedGpu().name)) {
+            Status(kIconWarn, kAmber, T("Needs a GeForce RTX 40 or 50: this graphics card has no DLSS frame generation. "
+                                        "AMD FSR 3 works on it."));
+        }
+        if (k == 2 && settings_.hdr) {
+            Wrapped(g_small, kMuted, T("With HDR on, the game sends HDR10 for DLSS frame generation, the HDR format it "
+                                       "takes."));
+        }
+        if (k != AntiAliasVendor()) VendorFiles(k);
     }
 
     void DisplayPage() {
@@ -1925,7 +2057,105 @@ private:
     }
 
     void GraphicsPage() {
-        PageTitle(T("Graphics"), T("Picture quality and shape."));
+        PageTitle(T("Graphics"), T("Picture quality and speed. A running game takes the changes at once, unless a setting "
+                                   "says otherwise."));
+        uint32_t& aa = settings_.antialiasing;
+
+        Section(T("QUALITY"));
+        BeginCard("presets");
+        BeginWideSetting(T("Quality preset"), T("Sets anti-aliasing, upscaling and ambient occlusion together. Pick the "
+                                                "closest, then change any of them below."), true);
+        {
+            int preset = PresetOf(settings_);
+            if (Segmented<int>("preset", preset, {kOriginal, kLow, kMedium, kHigh, kUltra},
+                               {PresetName(kOriginal), PresetName(kLow), PresetName(kMedium), PresetName(kHigh),
+                                PresetName(kUltra)}))
+                SetPreset(settings_, preset);
+            const char* note = preset == kOriginal ? T("The game as the Xbox showed it: no smoothing, no added shadow.")
+                               : preset == kLow    ? T("For handhelds and older graphics: the 3D at half resolution, "
+                                                       "smoothed and rebuilt to full size.")
+                               : preset == kMedium ? T("For handhelds and laptops: balanced upscaling and soft shadow. It "
+                                                       "held 60 FPS on a Legion Go 2 in testing.")
+                               : preset == kHigh   ? T("Full resolution, smooth edges and soft shadow. The default.")
+                               : preset == kUltra  ? T("As High, with deeper shadow in corners and crevices.")
+                                                   : T("Your own mix of the settings below.");
+            ControlNote(kMuted, note);
+        }
+        EndSetting();
+        EndCard();
+
+        Section(T("ANTI-ALIASING AND UPSCALING"));
+        BeginCard("aa");
+        BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world. AMD FSR works on any "
+                                           "graphics card; NVIDIA DLSS needs a GeForce RTX. The HUD and menus stay sharp."),
+                     true);
+        Segmented<uint32_t>("aa", aa, {0, 1, 2}, {T("Off"), "AMD FSR", "NVIDIA DLSS"});
+        if (aa == 2 && AntiAliasVendor() != 2) ControlNote(kAmber, T("This graphics card has no DLSS: the game uses AMD FSR."));
+        else if (aa == 2) ControlNote(kMuted, T("From the game's next start."));
+        EndSetting();
+        if (aa) VendorFiles(AntiAliasVendor());
+        if (aa) ImGui::Dummy({0, S(6)});
+        BeginOff(!aa);
+        BeginWideSetting(T("Upscaling"), T("Draws the 3D world at a lower resolution and rebuilds it to full size, for a "
+                                           "higher frame rate on slower graphics or a handheld. The HUD and menus stay at "
+                                           "full resolution."));
+        Segmented<uint32_t>("up", settings_.upscaling, {0, 1, 2, 3},
+                            {T("Native"), T("Quality"), T("Balanced"), T("Performance")});
+        EndOff();
+        if (!aa) {
+            ControlNote(kAmber, T("Needs anti-aliasing on."));
+        } else {
+            static const words::Key kUpNotes[] = {
+                "The 3D at the screen's full resolution.",
+                "The 3D at two thirds of the resolution, its textures as sharp as at full size.",
+                "The 3D at 59% of the resolution: a good trade on a handheld.",
+                "The 3D at half the resolution: the fastest, a little softer.",
+            };
+            ControlNote(kMuted, T(kUpNotes[std::min(settings_.upscaling, 3u)]));
+        }
+        EndSetting();
+        BeginOff(AntiAliasVendor() != 1);
+        BeginSetting(T("Sharpening"), T("Brings back fine texture detail after AMD FSR smooths the picture; too much "
+                                        "outlines the edges. 30% suits most."));
+        Slider("sharp", settings_.sharpening, 0, 100,
+               settings_.sharpening ? std::to_string(settings_.sharpening) + "%" : std::string(T("Off")));
+        EndOff();
+        if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+        else if (AntiAliasVendor() == 2) ControlNote(kMuted, T("NVIDIA DLSS has no sharpening of its own."));
+        EndSetting();
+        EndCard();
+
+        Section(T("LIGHTING AND DETAIL"));
+        BeginCard("detail");
+        BeginOff(!aa);
+        BeginSetting(T("Ambient occlusion"), T("Soft shadow where surfaces meet: in corners, between stones, under ledges "
+                                               "and where feet touch the floor. Low is lighter on the graphics card."),
+                     true);
+        Segmented<uint32_t>("ao", settings_.ambient_occlusion, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
+        EndOff();
+        if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+        EndSetting();
+        BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "
+                                                   "little."));
+        Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
+        EndSetting();
+        BeginSetting(T("Render scale"), T("The whole picture drawn at more or less than the screen's resolution. Above "
+                                          "100% is sharper and far slower; for speed, upscaling is the better way."));
+        Segmented<uint32_t>("scale", settings_.render_percent, {50, 75, 100, 150, 200}, {"50%", "75%", "100%", "150%", "200%"});
+        EndSetting();
+        EndCard();
+
+        Section(T("FRAME GENERATION"));
+        BeginCard("framegen");
+        BeginSetting(T("Frame generation"), T("A frame made between each two the game draws, for twice the frame rate on a "
+                                              "screen that shows it (120 Hz or more). AMD FSR 3 works on any graphics card; "
+                                              "NVIDIA DLSS needs a GeForce RTX 40 or 50. From the next start."), true);
+        Segmented<uint32_t>("fg", settings_.frame_generation, {0, 1, 2}, {T("Off"), "AMD FSR 3", "NVIDIA DLSS"});
+        EndSetting();
+        FrameGenStatus();
+        EndCard();
+
+        Section(T("GRAPHICS CARD"));
         BeginCard("gpu");
         BeginSetting(T("Graphics card"), T("The one the game draws with, from its next start. Automatic takes the fastest: on "
                                            "a laptop the dedicated GPU, not the one in the processor."), true);
@@ -1946,31 +2176,14 @@ private:
         EndSetting();
         GpuStatus();
         EndCard();
-        BeginCard("presets");
-        BeginSetting(T("Quality preset"), T("Sets render scale and texture filtering together."), true);
-        int preset = settings_.render_percent == 75 && settings_.aniso == 0      ? 0
-                     : settings_.render_percent == 100 && settings_.aniso == 0   ? 1
-                     : settings_.render_percent == 150 && settings_.aniso == 8   ? 2
-                     : settings_.render_percent == 200 && settings_.aniso == 16  ? 3
-                                                                                 : -1;
-        if (Segmented<int>("preset", preset, {0, 1, 2, 3}, {T("Low"), T("Original"), T("High"), T("Ultra")})) {
-            static const uint32_t kScale[] = {75, 100, 150, 200}, kAniso[] = {0, 0, 8, 16};
-            settings_.render_percent = kScale[preset];
-            settings_.aniso = kAniso[preset];
-        }
-        EndSetting();
-        EndCard();
-        BeginCard("framegen");
-        BeginSetting(T("Frame generation"), T("A frame made between each two the game draws, for twice the frame rate on a "
-                                              "screen that shows it (120 Hz or more). AMD FSR 3 works on any graphics card; "
-                                              "NVIDIA DLSS needs a GeForce RTX 40 or 50. From the next start."), true);
-        Segmented<uint32_t>("fg", settings_.frame_generation, {0, 1, 2}, {T("Off"), "AMD FSR 3", "NVIDIA DLSS"});
-        EndSetting();
-        FrameGenStatus();
-        EndCard();
-        BeginCard("graphics");
-        BeginSetting(T("Widescreen"), T("More of the world at the sides, nothing stretched: 16:9 for a 16:9 screen, 16:10 "
-                                        "for a 16:10 one (1920x1200). The HUD, menus and movies stay 4:3 in the middle."),
+    }
+
+    void ViewPage() {
+        PageTitle(T("View"), T("The picture's shape, where the HUD sits, and how far and wide you see."));
+        Section(T("WIDESCREEN"));
+        BeginCard("wide");
+        BeginSetting(T("Widescreen"), T("More of the world at the sides, nothing stretched: 16:9 for most screens, 16:10 "
+                                        "for 16:10 ones such as 1920x1200. Off shows the game in 4:3, as on an old TV."),
                      true);
         {
             uint32_t wide = settings_.widescreen ? settings_.widescreen_aspect : 0;
@@ -1980,18 +2193,25 @@ private:
             }
         }
         EndSetting();
-        BeginSetting(T("Render scale"), T("Of the output height. Above 100% supersamples for a sharper picture; below is "
-                                          "faster on weak GPUs."));
-        Segmented<uint32_t>("scale", settings_.render_percent, {50, 75, 100, 150, 200}, {"50%", "75%", "100%", "150%", "200%"});
-        EndSetting();
-        BeginSetting(T("Anisotropic filtering"), T("Sharper textures on floors and walls seen at an angle."));
-        Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
-        EndSetting();
-        BeginSetting(T("HUD at the screen edges"), T("Widescreen: the health bar and the rest of the HUD in the screen's "
-                                                    "corners rather than at the corners of the 4:3 middle."));
+        bool narrow = !settings_.widescreen;
+        BeginOff(narrow);
+        BeginSetting(T("HUD at the screen edges"), T("The health bar and the rest of the HUD in the screen's corners, "
+                                                    "rather than around the 4:3 middle."));
         ToggleRight("hudedges", settings_.hud_edges);
+        EndOff();
+        if (narrow) ControlNote(kAmber, T("Needs widescreen on."));
+        EndSetting();
+        BeginOff(narrow);
+        BeginSetting(T("Pause menu across the screen"), T("The pause menu's columns spread toward the screen's sides, its "
+                                                         "page buttons in the middle, rather than all of it in the 4:3 "
+                                                         "middle."));
+        ToggleRight("menuspread", settings_.menu_spread);
+        EndOff();
+        if (narrow) ControlNote(kAmber, T("Needs widescreen on."));
         EndSetting();
         EndCard();
+
+        Section(T("CAMERA AND DISTANCE"));
         BeginCard("view");
         BeginSetting(T("Field of view"), T("How much of the world the camera takes in: 100% is the game's own, which each "
                                            "room's camera sets; more is wider. Story scenes keep the game's."), true);
@@ -2019,18 +2239,16 @@ private:
                             {T("Original"), "1.5x", "2x", "4x", T("None")});
         EndSetting();
         EndCard();
+    }
+
+    void TexturesPage() {
+        PageTitle(T("Textures"), T("An HD texture pack replaces the game's textures with sharper ones. Packs made for "
+                                   "PCSX2 work: put the pack's pictures in the textures folder."));
         BeginCard("texpack");
-        BeginSetting(T("HD texture pack"), T("Texture packs made for PCSX2 replace the game's textures: put a pack's "
-                                             "replacement pictures in the textures folder."), true);
+        BeginSetting(T("HD texture pack"), T("Uses the pack in the textures folder. Off shows the game's own textures."),
+                     true);
         ToggleRight("texpack", settings_.texture_pack);
-        EndSetting();
-        BeginSetting(T("Texture size"), T("The largest side a picture is loaded at. Larger is sharper and needs more video "
-                                          "memory and loading time."));
-        Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", T("Full")});
-        EndSetting();
-        BeginSetting(T("Material maps"), T("A pack's normal and ORM maps (its materials folder) shade its pictures: relief "
-                                           "that catches the light, darker crevices, shine on metal."));
-        ToggleRight("texmat", settings_.texture_pack_materials);
+        ControlNote(kMuted, T("From the game's next start."));
         EndSetting();
         ImGui::Dummy({0, S(2)});
         if (files_.pictures) Status(kIconCheck, kGreen, F("{} in the textures folder", {words::Pictures(files_.pictures)}));
@@ -2039,6 +2257,33 @@ private:
         if (Button(T("Open textures folder"), {0, 0}, Kind::Secondary)) OpenTextures();
         ImGui::SameLine();
         if (Button(T("Check again"), {0, 0}, Kind::Secondary)) rescan_ = true;
+        EndCard();
+
+        Section(T("PACK OPTIONS"));
+        BeginCard("texdetail");
+        bool pack = settings_.texture_pack, maps = pack && settings_.texture_pack_materials;
+        BeginOff(!pack);
+        BeginSetting(T("Texture size"), T("The largest side a picture is loaded at. Larger is sharper and needs more video "
+                                          "memory and loading time."), true);
+        Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", T("Full")});
+        EndOff();
+        ControlNote(pack ? kMuted : kAmber, pack ? T("From the game's next start.") : T("Needs the HD texture pack on."));
+        EndSetting();
+        BeginOff(!pack);
+        BeginSetting(T("Material maps"), T("A pack's normal and ORM maps (its materials folder) shade its pictures: relief "
+                                           "that catches the light, darker crevices, shine on metal."));
+        ToggleRight("texmat", settings_.texture_pack_materials);
+        EndOff();
+        if (!pack) ControlNote(kAmber, T("Needs the HD texture pack on."));
+        EndSetting();
+        BeginOff(!maps);
+        BeginSetting(T("Surface depth"), T("With material maps, bricks, mortar, cracks and carvings get real depth that "
+                                           "shifts as the camera moves (parallax), not only shading. Low is shallower and "
+                                           "lighter on the graphics card."));
+        Segmented<uint32_t>("depth", settings_.surface_depth, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
+        EndOff();
+        if (!maps) ControlNote(kAmber, pack ? T("Needs material maps on.") : T("Needs the HD texture pack on."));
+        EndSetting();
         EndCard();
     }
 
@@ -2366,9 +2611,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     Launcher launcher;
-    // --page home|display|graphics|game|controls|files opens on that page
-    static const wchar_t* kPageNames[] = {L"home", L"display", L"graphics", L"game", L"controls", L"files"};
-    for (int i = 0; i < 6; i++)
+    // --page home|display|graphics|view|textures|game|controls|files opens on that page
+    static const wchar_t* kPageNames[kPageCount] = {L"home", L"display", L"graphics", L"view",
+                                                    L"textures", L"game", L"controls", L"files"};
+    for (int i = 0; i < kPageCount; i++)
         if (std::wcsstr(GetCommandLineW(), (std::wstring(L"--page ") + kPageNames[i]).c_str())) launcher.ShowPage(i);
     g_launcher = &launcher;
     g_paint = PaintFrame;
