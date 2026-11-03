@@ -1,0 +1,9 @@
+{
+  "name": "census",
+  "after": "newgame.json",
+  "note": "Every room of every map with CV_TEXPACK_CENSUS=<folder> set: each texture the game draws, saved and listed with its pack picture, material and how it is drawn (census.jsonl), for finding the ones a pack lacks. Give \"maps\" to sweep fewer.",
+  "settings": {"hdr": false, "texture_pack_size": 1024},
+  "steps": [
+    {"sweep": {"hold": 30}}
+  ]
+}

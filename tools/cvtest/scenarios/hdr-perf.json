@@ -1,0 +1,13 @@
+{
+  "name": "hdr-perf",
+  "after": "newgame.json",
+  "note": "The frame's cost with HDR output on and off, at 4K and 200% render scale, on the rampart of 5.7 (perf: the SDK's timings each second).",
+  "settings": {"width": 3840, "height": 2160, "display_mode": "borderless", "render_percent": 200, "hdr": true, "fps_counter": true},
+  "perf": true,
+  "steps": [
+    {"press": "0:warp=5.7,10f:wait:20f"},
+    {"until": "room == 7 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:400f", "shot": "hdr-on"},
+    {"press": "0:set=hdr=false,0f:wait:400f", "shot": "hdr-off"}
+  ]
+}

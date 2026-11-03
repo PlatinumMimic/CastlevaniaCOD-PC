@@ -1,0 +1,17 @@
+{
+  "name": "namecard",
+  "note": "An area's name card (\"Abandoned Castle\") as a new game's first courtyard comes up, shot as it shows, for its place on a wide screen with the HUD at the screen's edges; --set hud_edges=false for it in the 4:3 middle.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "hud_edges": true},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "expect": ["not player.active"]},
+    {"press": "1000:a,4000:a,4600:a,5200:a,6000:start,7000:a,9000:a,13000:left,14000:a,18000:a,21000:a,24000:a,36500:start,41000:start,42000:wait",
+     "note": "New Game, name AAA, create the save, skip the movies"},
+    {"until": "player.active and camera.special == False and not cutscene and not loading and not menu", "timeout": 90,
+     "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]], "shot": "card-0", "judge": false},
+    {"press": "0f:wait:15f", "shot": "card-1", "judge": false},
+    {"press": "0f:wait:15f", "shot": "card-2", "judge": false},
+    {"press": "0f:wait:30f", "shot": "card-3", "judge": false},
+    {"press": "0f:wait:60f", "shot": "card-4", "judge": false},
+    {"press": "0f:wait:90f", "shot": "card-5", "judge": false}
+  ]
+}

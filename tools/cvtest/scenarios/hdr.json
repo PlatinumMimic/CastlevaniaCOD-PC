@@ -1,0 +1,77 @@
+{
+  "name": "hdr",
+  "after": "newgame.json",
+  "note": "HDR output on an HDR display: the frame written for a look at its brightness (XBE_HDR_DUMP, XBE_HDR_STATS) in the first courtyard, the drawbridge and the rampart of 5.7 by its moon; then HDR off and on again while playing, and the peak and scene brightness moved.",
+  "settings": {
+    "width": 1600,
+    "height": 900,
+    "hdr": true,
+    "hdr_peak_nits": 0,
+    "hdr_scene_nits": 200
+  },
+  "steps": [
+    {
+      "press": "0f:wait:120f",
+      "shot": "start-hdr"
+    },
+    {
+      "press": "0:set=hdr_dump=1,0f:wait:40f",
+      "note": "the frame written"
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f",
+      "note": "the drawbridge"
+    },
+    {
+      "until": "room == 0 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "drawbridge-hdr"
+    },
+    {
+      "press": "0:set=hdr_dump=1,0f:wait:40f",
+      "note": "the frame written"
+    },
+    {
+      "press": "0:set=hdr=false,0f:wait:60f",
+      "shot": "drawbridge-sdr"
+    },
+    {
+      "press": "0:set=hdr=true,0f:wait:60f",
+      "shot": "drawbridge-hdr-again"
+    },
+    {
+      "press": "0:set=hdr_peak_nits=600,0f:wait:150f",
+      "shot": "drawbridge-peak-600"
+    },
+    {
+      "press": "0:set=hdr_peak_nits=0,0:set=hdr_scene_nits=300,0f:wait:150f",
+      "shot": "drawbridge-scene-300"
+    },
+    {
+      "press": "0:set=hdr_scene_nits=200,0:warp=5.7,10f:wait:20f"
+    },
+    {
+      "until": "room == 7 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "rampart-hdr"
+    },
+    {
+      "press": "0:set=hdr_dump=1,0f:wait:40f",
+      "note": "the rampart frame written"
+    },
+    {
+      "press": "0:set=fps_counter=true,0f:wait:60f",
+      "shot": "fps-counter-hdr"
+    },
+    {
+      "press": "0:set=hdr_dump=1,0f:wait:40f",
+      "note": "with the FPS counter, drawn in the UI layer"
+    }
+  ]
+}

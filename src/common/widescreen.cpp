@@ -1,0 +1,777 @@
+// Widescreen, and the frame pass's overscan, through a renderer extension.
+//
+// Widescreen: on a 16:9 output the console frame is shown 16:9, and every draw into the back buffer is squeezed to
+// 3/4 of its width around the centre, so nothing is stretched (16:10, widescreen_aspect: shown 16:10, squeezed to 5/6). The game projects with a PS2 style view screen matrix
+// (c68..c71, or c85..c88 with the world matrix in it) into PS2 screen space, which c94 and c95 then scale to console
+// pixels. Squeezing a projected draw is the same as narrowing the camera's focal length, so the 3D view shows more
+// at the sides (Hor+). 2D draws (HUD, menus, text, backdrops, movies) keep their 4:3 shape in the middle. Draws over
+// the whole width that are no picture of their own stay whole: fades and tints, panels whose texture does not change
+// across them (a message's dimmed panel), and passes that draw the frame itself back (which already holds the
+// squeezed scene).
+//
+// Backdrops: the menus, the map and the save and load screens draw theirs in pieces, none over the whole width. The
+// pieces at the frame's left and right edges have those edges pulled out to the screen's, so the backdrop reaches
+// the sides, its outer pieces that much wider. Only for a backdrop of its own, drawn before the 3D world and any 4:3
+// picture of the frame: the world's effects touch the edges too, and the title's logo is in pieces at the edges over
+// its castle.
+//
+// HUD at the edges (hud_edges): the HUD's draws, from the first of the frame that takes one of its textures (kHud: the
+// sheet of the health bar's frame, digits and icons, the bar's fill, the icon at the bottom left) to the frame pass, go
+// to the screen's left or right edge, rather than the 4:3 middle's: as on a 4:3 screen, the same way from the screen's
+// corner. They go by the piece of the HUD they are part of, the draws that touch one another (the health bar's frame,
+// its fill, its digits that reach past the middle of the frame; a message's box at the bottom right and its text),
+// taken from the frame before: a piece at least twice as far from one side of the frame as from the other goes to
+// that side's screen edge, one about the middle stays, and so does one with none of the HUD's textures. Before the
+// HUD in the frame are the world's 2D effects (glows, sparks), drawn at the points they light, which stay; nothing
+// moves while the pause menu or a message box is up, or in a story scene.
+//
+// Skies past the fog: the game builds its skies from painted strips, a moon and clouds placed far out in the world,
+// past a room's far plane where its fog has hidden everything (the rampart of 5.7: a ring of sky strips up to 62000
+// out, the moon at 45000, with fog from 14000 to 39000 and the far plane at 39000). With the fog and the far plane
+// pushed out (game/view.cpp) they show as the cards they are, their edges and overlaps never meant to be seen. The
+// draws of a sky's textures (kSky) get the room's own fog back (the coefficients in c91, as the game set them) and
+// are not drawn where wholly past the room's own far plane; everything else is drawn as far as set. A texture is
+// listed by hand: level geometry lies past a room's far plane too, and only the sky's cards are held back.
+// CV_SKY_TRACE logs the candidates, CV_SKY_HIDE hides them, CV_BACKDROPS=0 draws the skies pushed out too.
+//
+// Overscan: the last pass of each frame draws a copy of the frame back over it with rows -16 to 496 of the copy
+// across rows 0 to 480, the PS2's 448 lines and their border shrunk into the NTSC frame. A TV's overscan hid the 16
+// rows at the top and bottom, which read past the copy and smear its first and last rows into streaks. The pass is
+// drawn that much taller instead, so the copy fills the frame row for row, as square pixels as the scene was drawn.
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+#include "app/app.h"
+#include "core/log.h"
+#include "gpu/ext.h"
+
+uint64_t TexturePackReplace(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette);  // texpack.cpp
+extern bool g_hud_edges;  // menu.cpp
+bool PauseMenuUp();       // telemetry.cpp
+bool ViewBackdrop(float game[2], float drawn[2], float& far_z, uint32_t& room);  // game/view.cpp
+bool ModalUp();           // telemetry.cpp
+uint32_t SceneWord();     // telemetry.cpp
+std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);                              // texpack.cpp
+bool TexturePackCensus();                                                                // texpack.cpp
+void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive);            // texpack.cpp
+void TexturePackCensusFlush();                                                           // texpack.cpp
+
+namespace {
+
+// a widescreen draw's width as a part of its own: the console's 4:3 over the frame's 16:9 (3/4) or 16:10 (5/6)
+float Squeeze() { return (4.0f / 3.0f) / app::WideAspect(); }
+
+// hardware constant order: D3D register + 96
+constexpr uint32_t kCamera = 68 + 96;       // view screen matrix
+constexpr uint32_t kCameraWorld = 85 + 96;  // world view screen matrix
+constexpr uint32_t kScreenScale = 94 + 96;  // PS2 screen to console pixels
+constexpr uint32_t kScreenOffset = 95 + 96;
+constexpr uint32_t kFog = 91 + 96;          // the fog's coefficients
+// the game's skies by their textures' Name: painted cards it placed past a room's far plane, in its fog
+constexpr uint64_t kSky[] = {
+    0xa13869efdd70cb49ull,  // 5.7, the Abandoned Castle's rampart: its ring of sky strips
+    0x8713e8116bb8057bull,  // its moon
+    0x2d6da7cc8094311cull,  // its clouds
+};
+constexpr int kFrameTexCoord = 2;  // the frame pass's texture coordinates, in texels
+constexpr int kTexCoord = 2;       // a 2D draw's, as the game's programs take them
+// the HUD's textures by their Name (CV_WIDE_TRACE shows them): its sheet, the health bar's fill, the icon at the
+// bottom left
+constexpr uint64_t kHud[] = {0x3ff08a280ddd7171ull, 0x9d83fce80f5f78f6ull, 0x8d0b7015b1ee08baull};
+// an area's name card's effects drawn apart from the picture the game composed of it: the red flame it scrolls over
+// the crest as the card burns away. They go with the card
+constexpr uint64_t kCardFx[] = {0xe8728269d4380016ull};
+
+// whole pictures that widen to the screen's sides with their middle as it was: the quad to the sides, its texture
+// coordinates stretched with it, so past the 4:3 middle they reach out of the picture: the misty castle behind the
+// title's logo, a panorama the game scrolls (wrapping, it goes on), and the Konami logo, on white to its edges
+constexpr uint64_t kSides[] = {0x538892ce4eebc65cull, 0x5aa1017e3e7eb511ull};
+
+struct Program {
+    bool camera = false;  // projects with the game's camera
+    bool screen = false;  // takes PS2 screen coordinates: x * c94.x / w + c95.x
+    bool world = false;   // with the world matrix too (c85)
+    bool skinned = false;  // indexes its constants (arl): a character's bones
+};
+
+struct Span {
+    float lo = 1e30f, hi = -1e30f;
+    void Add(float v) {
+        lo = std::fmin(lo, v);
+        hi = std::fmax(hi, v);
+    }
+    bool Empty() const { return lo > hi; }
+};
+
+class Hooks : public gpu::ShaderHooks {
+public:
+    // ext.z: a vertex on the console frame's left or right edge goes out to the screen's instead
+    // ext.w: the HUD's move to the screen's edge, a part of its width
+    // ext.z 2: a whole picture to the sides (kSides), its first texture coordinates stretched about ext.w, the middle
+    // of their span, by as much as the quad, so the 4:3 middle shows as it was
+    std::string Position() const override {
+        return "    bool sides = ext.z > 1.5;\n"
+               "    if (sides) oT0.x = ext.w + (oT0.x - ext.w) / ext.x;\n"
+               "    o.pos.x *= ext.z != 0 && abs(abs(o.pos.x / o.pos.w) - 1) < 0.006 ? 1 : ext.x;\n"
+               "    o.pos.x += sides ? 0 : ext.w * o.pos.w;\n"
+               "    o.pos.y *= ext.y;\n";
+    }
+};
+
+class Widescreen : public gpu::Extension {
+public:
+    const gpu::ShaderHooks* Shaders() const override { return &hooks_; }
+
+    void BeginDraw(const gpu::State& s) override {
+        d_ = {};
+        // adds to what is there (a glow, a spark): blending on, the target's colour kept whole
+        d_.additive = s.simple[gpu::kMBlendEnable >> 2] && s.simple[gpu::kMDestBlend >> 2] == 1;
+    }
+
+    void Vertices(const gpu::State& s, const gpu::Assembled& a) override {
+        d_.squeeze = true;
+        bool prog = (s.vs_handle & 1) && s.vs && !s.vs->program.empty();
+        d_.textured = s.textures[0] != 0;
+        d_.count = a.vertex_count;
+        // fixed function transform: a camera of its own
+        d_.world = !prog && !a.pretransformed;
+        if (d_.world) return;
+        Program p = prog ? Classify(*s.vs) : Program{};
+        d_.world = p.camera;
+        d_.skinned = p.skinned;
+        if (p.camera) {
+            Distance(s, a, p);
+            // frame generation's view (View): the draws of the world matrix, found again in the next frame by what
+            // they draw: their first vertices' positions, their first indices, their counts (the texture is added in
+            // SeeWorld). The game streams its meshes into buffers that move from frame to frame, so not by address
+            if (p.world && !p.skinned) {
+                uint64_t h = 1469598103934665603ull;
+                auto mix = [&](const void* v, size_t n) {
+                    const uint8_t* b = static_cast<const uint8_t*>(v);
+                    for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull;
+                };
+                const gpu::VertexElement& e = a.elements[0];
+                if ((a.regs & 1) && e.buffer < a.buffer_count) {
+                    const gpu::VertexBuffer& b = a.buffers[e.buffer];
+                    uint32_t n = std::min<uint32_t>(a.vertex_count, 4);
+                    for (uint32_t i = 0; b.src && i < n; i++)
+                        if (uint64_t(i) * b.stride + e.offset + 12 <= b.bytes) mix(b.src + size_t(i) * b.stride + e.offset, 12);
+                }
+                if (a.index_src && a.index_count) mix(a.index_src, std::min<size_t>(a.index_count, 8) * (a.index16 ? 2 : 4));
+                mix(&a.vertex_count, sizeof(a.vertex_count));
+                mix(&a.index_count, sizeof(a.index_count));
+                mix(&a.draw_count, sizeof(a.draw_count));
+                d_.mesh = h | 1;
+                zscale_ = s.zscale;
+            }
+            return;
+        }
+        // on the console frame
+        auto screen = [&](int axis) {
+            return Read(a, 0, [&](const float* v, uint32_t comps) {
+                if (!p.screen) return v[axis];
+                uint32_t decode = a.decode & 0xF;
+                float w = comps == 4 && decode != gpu::kDecodeW1 ? v[3] : decode == gpu::kDecodeFloat2H ? v[2] : 1.0f;
+                return v[axis] * s.vsc[kScreenScale][axis] * (w != 0 ? 1 / w : 1) + s.vsc[kScreenOffset][axis];
+            });
+        };
+        d_.x = screen(0);
+        d_.y = screen(1);
+        const Span& x = d_.x;
+        const Span& y = d_.y;
+        float gw = float(s.viewport.w ? s.viewport.w : 640), gh = float(s.viewport.h ? s.viewport.h : 480);
+        d_.gw = gw;
+        d_.whole = !x.Empty() && x.lo <= 1 && x.hi >= gw - 1;
+        bool inside = !x.Empty() && !y.Empty() && x.lo >= -2 && x.hi <= gw + 2 && y.lo >= -2 && y.hi <= gh + 2;
+        // a backdrop's piece at the frame's left or right edge (on the PS2's grid, a pixel to the right), no speck
+        d_.edge = inside && !d_.whole && x.hi - x.lo >= 64 &&
+                  (std::fabs(x.lo - 0.5f) <= 1.5f || std::fabs(x.hi - gw - 0.5f) <= 1.5f);
+        // a quad on the frame: across it, how far its texture coordinates go
+        if (inside && a.vertex_count == 4) d_.u = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[0]; });
+        // the frame pass: screen positions, its copy's rows read over a taller span than it covers
+        if (prog && !p.screen && d_.whole && a.vertex_count == 4) {
+            Span t = Read(a, kFrameTexCoord, [](const float* v, uint32_t) { return v[1]; });
+            if (!t.Empty() && y.hi > y.lo && t.lo < y.lo - 0.5f && t.hi > y.hi + 0.5f)
+                d_.stretch = (t.hi - t.lo) / (y.hi - y.lo);
+        }
+    }
+
+    bool Bound(gpu::Context& c, const gpu::State& s, gpu::Target* rt, gpu::Target*, bool) override {
+        uint32_t w = 0, h = 0;
+        c.GuestSize(w, h);
+        // the device's own: the game also composes in a target the size of it and copies pieces out (the name card
+        // of an area: CopyRects from 640x480 to its texture), which a squeeze there would cut at the left
+        back_buffer_ = rt && s.rt_back_buffer && rt->gw == w && rt->gh == h;
+        guest_w_ = w;
+        guest_h_ = h;
+        trace_rt_ = rt ? rt->data : 0;
+        trace_device_ = s.rt_back_buffer;
+        if (c.Presents() != frame_) {  // the frame's first draw
+            frame_ = c.Presents();
+            world_ = 0;
+            picture_ = false;
+            hud_ = false;
+            ui_ = false;
+            menu_ = PauseMenuUp();
+            card_free_ = g_hud_edges && !menu_ && !ModalUp();
+            // the frame before's world draws, to find the view's move from (View)
+            std::swap(seen_prev_, seen_now_);
+            seen_now_.clear();
+            cam_now_ = {};
+            card_before_ = card_now_;
+            card_before_seen_ = card_now_seen_;
+            card_now_seen_ = false;
+            hud_free_ = card_free_ && !(SceneWord() & 0x20000);
+            HudPieces();
+            if (TexturePackCensus() && frame_ % 300 == 0) TexturePackCensusFlush();
+        }
+        return false;
+    }
+
+    void Sampled(const gpu::TextureDesc& d, const gpu::Target* t, uint8_t, gpu::TexInfo&) override {
+        d_.target |= t != nullptr;
+        // a picture the game composed in a target of its own (an area's name card: in a 640x480 one, then drawn to
+        // the frame as a mesh), not the one drawn into
+        d_.card |= t && (t->gw != guest_w_ || t->gh != guest_h_ || t->data != trace_rt_);
+        if (!t && d_.ntex < 4) d_.texs[d_.ntex++] = d.data;
+        if (!d_.sampled) {
+            d_.tex = d;
+            auto it = t ? names_.end() : names_.find(d.data);
+            d_.name = it != names_.end() ? it->second : 0;
+        }
+        d_.sampled = true;
+    }
+
+    // HD texture packs (texpack.cpp)
+    uint64_t Replace(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette) override {
+        if (guest) names_[d.data] = Name(d, guest);
+        return TexturePackReplace(d, guest, palette);
+    }
+    std::shared_ptr<const gpu::Replacement> Replaced(uint64_t id) override { return TexturePackReplaced(id); }
+
+    // HDR output (the SDK's gpu/d3d12.cpp): the frame's UI starts at its first 2D draw into the back buffer after its
+    // last 3D draw that does not add to what is there (a glow or a spark adds, and stays a highlight). What it and the
+    // draws after it change, the HUD, text, menus, their backdrops and movies, keeps scene brightness
+    bool UiStart(bool additive) override {
+        if (!back_buffer_) return false;
+        if (d_.world) {
+            ui_ = false;
+            return false;
+        }
+        if (ui_ || additive || !d_.squeeze || d_.target) return false;
+        ui_ = true;
+        return true;
+    }
+
+    void Constants(float (*vsc)[4], float* ext, const gpu::Target*, uint32_t src_blend) override {
+        bool squeeze = d_.squeeze && back_buffer_ && app::Widescreen();
+        // whole width: an untextured fade or tint, a panel whose texture does not change across it (a few texels
+        // stretched over the frame: a message's dimmed panel), or the frame drawn back over itself
+        float texels = (d_.u.hi - d_.u.lo) * (d_.tex.linear ? 1.0f : float(d_.tex.width));
+        bool flat = !d_.textured || (d_.sampled && !d_.u.Empty() && texels <= 4);
+        if (d_.whole && (flat || d_.target)) squeeze = false;
+        // a backdrop's edge pieces reach the screen's edges on a screen of their own: not over the 3D world or a
+        // 4:3 picture drawn before them in the frame. In the pause menu the world is not drawn, and the 3D there is
+        // the menu's own (an Innocent Devil's model on its page, 1600 vertices before the backdrop)
+        bool edges = squeeze && d_.edge && !d_.target && (world_ < kWorld || menu_) && !picture_;
+        if (back_buffer_) {
+            world_ += d_.world ? d_.count : 0;
+            picture_ |= squeeze && d_.whole && d_.textured && !d_.target;
+        }
+        // the HUD, from its first draw to the frame pass, to the screen's edges
+        float shift = 0;
+        if (back_buffer_ && d_.target && d_.whole) hud_ = false;
+        bool card_fx = (card_now_seen_ || card_before_seen_) && !d_.target && d_.name &&
+                       std::find(std::begin(kCardFx), std::end(kCardFx), d_.name) != std::end(kCardFx);
+        if (squeeze && hud_free_ && !d_.world && !d_.whole && !d_.target && !card_fx) {
+            bool named = std::find(std::begin(kHud), std::end(kHud), d_.name) != std::end(kHud);
+            hud_ |= named;
+            bool inside = !d_.x.Empty() && !d_.y.Empty() && d_.x.lo >= -2 && d_.x.hi <= d_.gw + 2;
+            if (hud_ && inside) shift = HudShift({d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, named, 0}, d_.count == 4);
+        } else if (squeeze && card_free_ && !d_.world && !d_.whole && (d_.card || card_fx)) {
+            // an area's name card, drawn from the picture the game composed of it, and its effects (kCardFx), to its
+            // side's screen edge as the HUD goes; it comes up as an area's opening scene ends, so a story scene does
+            // not hold it. As it burns away the game draws the picture as a wavering mesh that reaches a few pixels
+            // past the frame: it goes as the card does, though only what lies on the frame says where the card is
+            bool inside = !d_.x.Empty() && !d_.y.Empty() && d_.x.lo >= -2 && d_.x.hi <= d_.gw + 2;
+            Rect r{d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, true, 0};
+            if (inside) {
+                if (card_now_seen_) {
+                    card_now_.x0 = std::min(card_now_.x0, r.x0);
+                    card_now_.x1 = std::max(card_now_.x1, r.x1);
+                    card_now_.y0 = std::min(card_now_.y0, r.y0);
+                    card_now_.y1 = std::max(card_now_.y1, r.y1);
+                } else {
+                    card_now_ = r;
+                    card_now_seen_ = true;
+                }
+            }
+            gw_ = d_.gw;
+            if (card_before_seen_ || card_now_seen_) shift = Side(card_before_seen_ ? card_before_ : card_now_);
+            static int logged = 0;
+            if (logged < 6 && ++logged)
+                LOGR("wide: a composed picture (an area's name card) at x %.0f..%.0f y %.0f..%.0f, %s", d_.x.lo,
+                     d_.x.hi, d_.y.lo, d_.y.hi, shift > 0 ? "to the right edge" : shift < 0 ? "to the left edge" : "kept");
+        }
+        if (TexturePackCensus())
+            for (int i = 0; i < d_.ntex; i++) TexturePackUsed(d_.texs[i], d_.world, d_.skinned, d_.additive);
+        bool sides = squeeze && d_.whole && d_.textured && !d_.target && d_.sampled && !d_.u.Empty() &&
+                     std::find(std::begin(kSides), std::end(kSides), d_.name) != std::end(kSides);
+        ext[0] = squeeze ? Squeeze() : 1.0f;
+        ext[1] = back_buffer_ && d_.target ? d_.stretch : 1.0f;
+        ext[2] = sides ? 2.0f : edges ? 1.0f : 0.0f;
+        ext[3] = sides ? (d_.u.lo + d_.u.hi) * 0.5f : shift;
+        if (Backdrop(vsc)) ext[0] = ext[1] = 0;  // not drawn: every vertex at the centre
+        else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
+        // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
+        if (kTrace && frame_ % kTrace == 0 && d_.world)
+            LOGR("wide %llu: into %08x%s 3D, n %u", (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "",
+                 d_.count);
+        else if (kTrace && frame_ % kTrace == 0 && d_.squeeze)
+            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g%s blend %u: %s%s",
+                 (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
+                 d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, (unsigned long long)d_.name, d_.u.lo, d_.u.hi,
+                 d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
+                 sides ? "to the sides" : edges ? "edges out" : shift < 0 ? "hud left" : shift > 0 ? "hud right"
+                 : squeeze ? "squeezed" : "kept");
+    }
+
+    // Frame generation's view (gpu::FrameView): the world drawn with the camera's view screen matrix and an object's
+    // world matrix (c85..c88: PS2 screen coordinates t = M v, then p = c94 * t.xyz / t.w + c95, console pixels). For a
+    // mesh that held still, M before times M now inverted is the camera's move in t, the same for every such mesh
+    // whatever its world matrix: of the meshes drawn in both frames, the move most of them agree on. Then the clip
+    // space the renderer draws (x times the squeeze, the depth buffer's reversed z) round it, from this frame's clip
+    // to the frame before's
+    bool View(gpu::FrameView& v) override {
+        static const bool trace = std::getenv("XBE_FG_TRACE") != nullptr;
+        auto no = [&](const char* why, size_t a = 0, size_t b = 0) {
+            if (trace) LOGR("wide: frame %llu no view: %s %zu %zu", (unsigned long long)frame_, why, a, b);
+            return false;
+        };
+        if (!cam_now_.have || seen_now_.empty() || seen_prev_.empty())
+            return no("no world draws now or before", seen_now_.size(), seen_prev_.size());
+        struct Cand {
+            uint32_t count;
+            float r[16];
+        };
+        std::vector<Cand> cands;
+        for (const auto& [key, now] : seen_now_) {
+            if (now.dup) continue;
+            auto it = seen_prev_.find(key);
+            if (it == seen_prev_.end() || it->second.dup) continue;
+            float inv[16];
+            if (!Invert(now.m, inv)) continue;
+            Cand c{now.count, {}};
+            Mul(it->second.m, inv, c.r);
+            cands.push_back(c);
+        }
+        if (cands.empty()) return no("no mesh in both frames", seen_now_.size(), seen_prev_.size());
+        std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.count > b.count; });
+        if (cands.size() > 24) cands.resize(24);
+        auto close = [](const float* a, const float* b) {
+            float big = 0, diff = 0;
+            for (int i = 0; i < 16; i++) {
+                big = std::max(big, std::fabs(a[i]));
+                diff = std::max(diff, std::fabs(a[i] - b[i]));
+            }
+            return diff <= 2e-3f * std::max(big, 1e-6f);
+        };
+        size_t best = 0, support = 0;
+        for (size_t i = 0; i < cands.size(); i++) {
+            size_t n = 0;
+            for (size_t j = 0; j < cands.size(); j++) n += close(cands[i].r, cands[j].r);
+            if (n > support) {
+                support = n;
+                best = i;
+            }
+        }
+        // one mesh alone is believed only as the only one there is
+        if (support < 2 && cands.size() > 1) return no("the meshes disagree", support, cands.size());
+        const Cam& c = cam_now_;
+        float gw = float(guest_w_), gh = float(guest_h_), z = std::max(zscale_, 1.0f);
+        if (std::fabs(c.s[0]) < 1e-12f || std::fabs(c.s[1]) < 1e-12f || std::fabs(c.s[2]) < 1e-12f) return false;
+        // t to the renderer's clip space (shaders.cpp's epilogue, ReversedClip, the squeeze of Position)
+        float to_clip[16] = {c.sq * 2 * c.s[0] / gw, 0, 0, c.sq * (2 * c.o[0] / gw - 1),
+                             0, -2 * c.s[1] / gh, 0, 1 - 2 * c.o[1] / gh,
+                             0, 0, -c.s[2] / z, 1 - c.o[2] / z,
+                             0, 0, 0, 1};
+        float from_clip[16], tmp[16];
+        if (!Invert(to_clip, from_clip)) return false;
+        Mul(cands[best].r, from_clip, tmp);
+        Mul(to_clip, tmp, v.clip_to_prev);
+        // depth: t.z = a t.w + b (the projection's z row), so the buffer holds k0 + k1 / w
+        const float* m = c.m;
+        float l2 = m[12] * m[12] + m[13] * m[13] + m[14] * m[14];
+        if (l2 > 0) {
+            float a = (m[8] * m[12] + m[9] * m[13] + m[10] * m[14]) / l2, b = m[11] - a * m[15];
+            float k0 = 1 - (c.s[2] * a + c.o[2]) / z, k1 = -c.s[2] * b / z;
+            float n = k0 != 0 ? -k1 / k0 : 0, f = k0 != 1 ? -k1 / (k0 - 1) : 0;
+            if (n > 0 && f > n) {
+                v.near_w = n;
+                v.far_w = f;
+            }
+        }
+        // the camera, as the largest mesh's matrix has it (a level's, with no world matrix of its own)
+        float fwd[3] = {m[12], m[13], m[14]};
+        if (Normalize(fwd)) {
+            std::copy(fwd, fwd + 3, v.forward);
+            float d = m[4] * fwd[0] + m[5] * fwd[1] + m[6] * fwd[2];
+            float up[3] = {-(m[4] - d * fwd[0]), -(m[5] - d * fwd[1]), -(m[6] - d * fwd[2])};  // screen y runs down
+            if (Normalize(up)) {
+                std::copy(up, up + 3, v.up);
+                v.right[0] = up[1] * fwd[2] - up[2] * fwd[1];
+                v.right[1] = up[2] * fwd[0] - up[0] * fwd[2];
+                v.right[2] = up[0] * fwd[1] - up[1] * fwd[0];
+            }
+            // where rows 0, 1 and 3 are all 0: the camera (a 3 x 3 solve, written as a 4 x 4 one)
+            float inv[16];
+            float rows[16] = {m[0], m[1], m[2], 0, m[4], m[5], m[6], 0, m[12], m[13], m[14], 0, 0, 0, 0, 1};
+            if (Invert(rows, inv)) {
+                float rhs[3] = {-m[3], -m[7], -m[15]};
+                for (int i = 0; i < 3; i++) v.position[i] = inv[i * 4] * rhs[0] + inv[i * 4 + 1] * rhs[1] + inv[i * 4 + 2] * rhs[2];
+            }
+        }
+        // the projection: c68..c71 when it is one (its w row 0 0 1 0), into the same clip space
+        if (c.p_ok) {
+            Mul(to_clip, c.p, v.view_to_clip);
+            float fy = c.p[5];
+            if (fy != 0) v.fov_y = 2 * std::atan(gh * 0.5f / std::fabs(c.s[1] * fy));
+        } else {
+            for (int i = 0; i < 16; i++) v.view_to_clip[i] = i % 5 == 0 ? 1.0f : 0.0f;
+        }
+        v.valid = true;
+        v.cut = false;
+        return true;
+    }
+
+private:
+    // a world matrix draw of this frame: its matrix (c85..c88, rows) and how many vertices it has; dup when the same
+    // mesh was drawn twice, which then tells nothing
+    struct Mesh {
+        float m[16];
+        uint32_t count;
+        bool dup;
+    };
+    // the frame's camera constants, as its last world draw had them
+    struct Cam {
+        bool have = false;
+        float s[3] = {}, o[3] = {};  // c94, c95
+        float m[16] = {};            // the largest mesh's c85..c88
+        uint32_t count = 0;
+        float p[16] = {};            // c68..c71
+        bool p_ok = false;
+        float sq = 1;                // the squeeze in x the world draws had
+    };
+    void SeeWorld(float (*vsc)[4], float squeeze) {
+        Mesh n{};
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++) n.m[r * 4 + c] = vsc[kCameraWorld + r][c];
+        n.count = d_.count;
+        auto [it, fresh] = seen_now_.try_emplace(d_.mesh ^ d_.name * 0x100000001B3ull, n);
+        if (!fresh) it->second.dup = true;
+        Cam& c = cam_now_;
+        for (int i = 0; i < 3; i++) {
+            c.s[i] = vsc[kScreenScale][i];
+            c.o[i] = vsc[kScreenOffset][i];
+        }
+        c.sq = squeeze;
+        if (!c.have || n.count > c.count) {
+            std::copy(n.m, n.m + 16, c.m);
+            c.count = n.count;
+        }
+        for (int r = 0; r < 4; r++)
+            for (int k = 0; k < 4; k++) c.p[r * 4 + k] = vsc[kCamera + r][k];
+        c.p_ok = c.p[12] == 0 && c.p[13] == 0 && c.p[14] != 0 && c.p[15] == 0;
+        c.have = true;
+    }
+    static void Mul(const float* a, const float* b, float* out) {
+        float r[16];
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+                r[i * 4 + j] = a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j] + a[i * 4 + 2] * b[8 + j] + a[i * 4 + 3] * b[12 + j];
+        std::copy(r, r + 16, out);
+    }
+    static bool Normalize(float* v) {
+        float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (!(l > 0)) return false;
+        for (int i = 0; i < 3; i++) v[i] /= l;
+        return true;
+    }
+    // a 4 x 4 inverse, in double for the PS2 matrices' range (screen scale with depth in the millions)
+    static bool Invert(const float* f, float* out) {
+        double m[16], inv[16];
+        for (int i = 0; i < 16; i++) m[i] = f[i];
+        inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+        inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+        inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+        inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+        inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+        inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+        inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+        inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+        inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+        inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+        inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+        inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+        inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+        inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+        inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+        inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+        double det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+        if (!(std::fabs(det) > 1e-300)) return false;
+        for (int i = 0; i < 16; i++) out[i] = float(inv[i] / det);
+        return true;
+    }
+
+    // a HUD draw on the console frame, and where it went: a part of the frame's width
+    struct Rect {
+        float x0, x1, y0, y1;
+        bool named;  // with one of the HUD's textures
+        float shift;
+    };
+    static bool Touch(const Rect& a, const Rect& b) {
+        constexpr float kGap = 2;
+        return a.x0 <= b.x1 + kGap && b.x0 <= a.x1 + kGap && a.y0 <= b.y1 + kGap && b.y0 <= a.y1 + kGap;
+    }
+    // a piece of the HUD at least twice as far from one side of the frame as from the other, to that side
+    float Side(const Rect& r) const {
+        float left = std::max(r.x0, 0.0f), right = std::max(gw_ - r.x1, 0.0f);
+        float k = Squeeze();
+        return left * 2 < right ? k - 1 : right * 2 < left ? 1 - k : 0.0f;
+    }
+
+    // at a frame's start: the frame before's HUD draws, gathered into the pieces they touch one another in
+    void HudPieces() {
+        pieces_.clear();
+        size_t n = rects_.size();
+        std::vector<size_t> up(n);
+        for (size_t i = 0; i < n; i++) up[i] = i;
+        auto root = [&](size_t i) {
+            while (up[i] != i) i = up[i] = up[up[i]];
+            return i;
+        };
+        for (size_t i = 0; i < n; i++)
+            for (size_t j = i + 1; j < n; j++)
+                if (Touch(rects_[i], rects_[j])) up[root(i)] = root(j);
+        std::vector<int> piece(n, -1);
+        for (size_t i = 0; i < n; i++) {
+            size_t r = root(i);
+            if (piece[r] < 0) {
+                piece[r] = int(pieces_.size());
+                pieces_.push_back(rects_[i]);
+            }
+            Rect& p = pieces_[size_t(piece[r])];
+            p.x0 = std::min(p.x0, rects_[i].x0);
+            p.x1 = std::max(p.x1, rects_[i].x1);
+            p.y0 = std::min(p.y0, rects_[i].y0);
+            p.y1 = std::max(p.y1, rects_[i].y1);
+            p.named |= rects_[i].named;
+        }
+        for (Rect& p : pieces_) p.shift = p.named ? Side(p) : 0.0f;
+        rects_.clear();
+    }
+
+    // a HUD draw's move: as the piece of the frame before it is in, else as a draw of this frame it touches, else a
+    // quad of the HUD's own textures by itself (a piece's first frame)
+    float HudShift(Rect r, bool quad) {
+        gw_ = d_.gw;
+        r.shift = 0;
+        bool found = false;
+        for (const Rect& p : pieces_)
+            if (Touch(p, r)) {
+                r.shift = p.shift;
+                found = true;
+                break;
+            }
+        for (size_t i = 0; !found && i < rects_.size(); i++)
+            if (Touch(rects_[i], r)) {
+                r.shift = rects_[i].shift;
+                found = true;
+            }
+        if (!found && r.named && quad) r.shift = Side(r);
+        if (rects_.size() < 256) rects_.push_back(r);
+        return r.shift;
+    }
+
+    // a texture by its first bytes (its indices), size and format: the same picture wherever the game loads it
+    static uint64_t Name(const gpu::TextureDesc& d, const uint8_t* guest) {
+        uint32_t n = std::min<uint32_t>(gpu::LevelSize(d, 0), 16384);
+        uint64_t shape[2] = {uint64_t(d.width) << 32 | d.height, d.format};
+        return gpu::Hash(guest, n, gpu::Hash(shape, sizeof(shape)));
+    }
+
+    // a 3D draw's depth through the camera, while the view is pushed out (Backdrop)
+    void Distance(const gpu::State& s, const gpu::Assembled& a, const Program& p) {
+        uint32_t room = 0;
+        backdrop_ = kBackdrops && ViewBackdrop(fog_game_, fog_drawn_, far_z_, room);
+        if (!backdrop_) return;
+        if (room != room_) {
+            SkyCandidates();
+            room_ = room;
+            room_far_ = far_z_;
+            room_frame_ = frame_;
+        }
+        uint32_t m = p.world ? kCameraWorld : kCamera;
+        const auto& c = s.vsc[m + 3];
+        uint32_t ahead = 0, past = 0;
+        d_.w = Read(a, 0, [&](const float* v, uint32_t comps) {
+            float w = v[0] * c[0] + v[1] * c[1] + v[2] * c[2] + (comps == 4 ? v[3] : 1.0f) * c[3];
+            ahead += w > 0;
+            past += w > far_z_;
+            return w;
+        });
+        d_.past = ahead ? float(past) / float(ahead) : 0.0f;
+    }
+
+    // CV_SKY_TRACE: the textures of a room none of whose draws came nearer than mostly past its far plane, the
+    // candidates for kSky, logged as the next room starts
+    void SkyCandidates() {
+        if (kSkyTrace && room_)
+            for (const auto& [name, seen] : seen_)
+                if (seen.min_past >= 0.3f && !Sky(name))
+                    LOGR("wide: sky candidate in room %u (from frame %llu, far %.0f): %016llx, %u draws, all %.0f%% or "
+                         "more past it, out to %.0f",
+                         room_, (unsigned long long)room_frame_, room_far_, (unsigned long long)name, seen.draws,
+                         seen.min_past * 100, seen.max_w);
+        seen_.clear();
+    }
+
+    static bool Sky(uint64_t name) { return std::find(std::begin(kSky), std::end(kSky), name) != std::end(kSky); }
+
+    // A sky's draw (kSky) gets the room's own fog, and one wholly past the room's own far plane is not drawn (true):
+    // the sky is as the game shows it, and the rest of the room has the fog and far plane as set.
+    bool Backdrop(float (*vsc)[4]) {
+        if (!backdrop_ || !vsc || !d_.world || d_.w.Empty() || !d_.name) return false;
+        if (kSkyTrace && d_.past > 0) {
+            Seen& seen = seen_[d_.name];
+            seen.draws++;
+            seen.min_past = std::min(seen.min_past, d_.past);
+            seen.max_w = std::max(seen.max_w, d_.w.hi);
+        } else if (kSkyTrace) {
+            seen_[d_.name].min_past = 0;
+        }
+        // CV_SKY_HIDE: every candidate's draw hidden, to see what they are
+        if (kSkyHide) return d_.past >= 0.3f;
+        if (!Sky(d_.name)) return false;
+        auto same = [](float a, float b) { return b != 0 && std::fabs(a - b) <= 1e-4f * std::fabs(b); };
+        float* fog = vsc[kFog];
+        // c91 holds them over 128 (the PS2's fog units): (A / 128, B / 128, 0, 0)
+        for (int i = 0; i < 4; i++)
+            for (int k = 0; k < 2; k++)
+                if (same(fog[i], fog_drawn_[k] / 128)) {
+                    fog[i] = fog_game_[k] / 128;
+                    break;
+                }
+        return d_.w.lo > far_z_;
+    }
+
+    Program Classify(const gpu::VertexShader& vs) {
+        uint64_t key = gpu::Hash(vs.program.data(), vs.program.size() * 4);
+        auto it = programs_.find(key);
+        if (it != programs_.end()) return it->second;
+        Program p;
+        for (uint32_t r = 0; r < 4; r++)
+            p.camera |= gpu::ReadsConstant(vs.program, kCamera + r) || gpu::ReadsConstant(vs.program, kCameraWorld + r);
+        p.world = gpu::ReadsConstant(vs.program, kCameraWorld);
+        p.screen = gpu::ReadsConstant(vs.program, kScreenScale) && gpu::ReadsConstant(vs.program, kScreenOffset);
+        // an instruction's MAC op, bits 21 to 24 of its second word: 13 loads a0
+        for (size_t n = 0; n + 4 <= vs.program.size(); n += 4) p.skinned |= ((vs.program[n + 1] >> 21) & 0xF) == 13;
+        programs_.emplace(key, p);
+        return p;
+    }
+
+    // f(element, components) over the draw's vertices of input register reg, when it is 2 to 4 floats
+    template <typename F>
+    static Span Read(const gpu::Assembled& a, int reg, F f) {
+        Span span;
+        const gpu::VertexElement& e = a.elements[size_t(reg)];
+        if (!(a.regs >> reg & 1) || e.buffer >= a.buffer_count) return span;
+        const gpu::VertexBuffer& b = a.buffers[e.buffer];
+        uint32_t comps = e.format == DXGI_FORMAT_R32G32B32A32_FLOAT ? 4
+                         : e.format == DXGI_FORMAT_R32G32B32_FLOAT  ? 3
+                         : e.format == DXGI_FORMAT_R32G32_FLOAT     ? 2
+                                                                    : 0;
+        if (!comps || !b.src) return span;
+        for (uint32_t v = 0; v < a.vertex_count; v++) {
+            uint64_t at = uint64_t(v) * b.stride + e.offset;
+            if (at + comps * 4 > b.bytes) break;
+            span.Add(f(reinterpret_cast<const float*>(b.src + at), comps));
+        }
+        return span;
+    }
+
+    static inline const uint64_t kTrace =
+        std::getenv("CV_WIDE_TRACE") ? std::max(1, std::atoi(std::getenv("CV_WIDE_TRACE"))) : 0;
+
+    // the draw at hand
+    struct Draw {
+        bool squeeze = false, world = false, whole = false, edge = false, textured = false, target = false;
+        bool sampled = false;
+        bool card = false;     // samples a target smaller than the frame
+        bool skinned = false;  // a skinned program's (Program::skinned)
+        bool additive = false;
+        uint32_t texs[4] = {};  // the textures it samples, for the census (texpack.cpp)
+        int ntex = 0;
+        uint64_t name = 0;  // the first texture's (Name), 0 for a target or one not seen uploaded
+        uint64_t mesh = 0;  // a world matrix draw's indices or vertices, count and base, for View
+        Span w;             // a 3D draw's depth, while the view is pushed out
+        float past = 0;     // the part of its vertices ahead past the room's own far plane
+        float stretch = 1;
+        float gw = 640;     // the console frame's width
+        uint32_t count = 0;
+        Span x, y, u;  // on the console frame; the first texture coordinate, for one quad on it
+        gpu::TextureDesc tex;
+    };
+    Draw d_;
+    bool back_buffer_ = false;
+    // the frame so far: vertices of 3D drawn (the map screen's shapes are some 150, the world's thousands), a 4:3
+    // picture over the whole frame
+    static constexpr uint32_t kWorld = 1000;
+    uint64_t frame_ = ~0ull;
+    uint32_t guest_w_ = 640, guest_h_ = 480;
+    uint32_t trace_rt_ = 0;  // the target's address, for the trace
+    bool trace_device_ = false;
+    uint32_t world_ = 0;
+    bool picture_ = false;
+    bool hud_ = false;       // the frame's HUD has begun
+    bool hud_free_ = false;  // the HUD may go to the edges this frame
+    bool card_free_ = false;  // an area's name card may
+    bool menu_ = false;       // the pause menu is up this frame
+    bool ui_ = false;        // the frame's UI has begun, for HDR (UiStart)
+    std::vector<Rect> rects_, pieces_;  // this frame's HUD draws; the pieces of the frame before's
+    // an area's name card, its crest, title and line drawn apart: all of it this frame, and the frame before's, which
+    // goes to a side as one
+    Rect card_now_{}, card_before_{};
+    bool card_now_seen_ = false, card_before_seen_ = false;
+    // frame generation's view: this frame's and the frame before's world draws, by mesh and texture; their camera
+    std::unordered_map<uint64_t, Mesh> seen_now_, seen_prev_;
+    Cam cam_now_;
+    float zscale_ = 16777215.0f;
+    float gw_ = 640;
+    // backdrops (Backdrop): the room's own fog coefficients and far plane, the fog drawn, the backdrops' textures
+    bool backdrop_ = false;
+    float fog_game_[2] = {}, fog_drawn_[2] = {}, far_z_ = 0;
+    uint32_t room_ = 0;
+    float room_far_ = 0;
+    uint64_t room_frame_ = 0;
+    struct Seen {
+        uint32_t draws = 0;
+        float min_past = 1, max_w = 0;
+    };
+    std::unordered_map<uint64_t, Seen> seen_;  // CV_SKY_TRACE: each texture's draws in the room
+    static inline const bool kBackdrops = !std::getenv("CV_BACKDROPS") || std::atoi(std::getenv("CV_BACKDROPS")) != 0;
+    static inline const bool kSkyTrace = std::getenv("CV_SKY_TRACE") != nullptr;
+    static inline const bool kSkyHide = std::getenv("CV_SKY_HIDE") != nullptr;
+    Hooks hooks_;
+    std::unordered_map<uint64_t, Program> programs_;
+    std::unordered_map<uint32_t, uint64_t> names_;  // each texture's Name, by its guest address, as last uploaded
+};
+
+}  // namespace
+
+// GameInfo::init: before the renderer is made
+void WidescreenInit() { gpu::SetExtension(std::make_unique<Widescreen>()); }

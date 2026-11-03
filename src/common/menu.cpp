@@ -1,0 +1,505 @@
+// The in-game settings menu (F10) and the FPS counter, drawn with ImGui over the game.
+//
+// Every change applies at once and is saved to the settings file. While the menu is open the game gets no input:
+// the keyboard and controller drive the menu instead.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include <imgui.h>
+
+#include "app/app.h"
+
+// game settings beside the runtime's, in the settings file (game_info.cpp lists them)
+bool g_fps_counter = false;
+bool g_pause_on_focus_loss = true;
+uint32_t g_menu_key = VK_F10;  // virtual key that opens the menu
+bool g_launcher_keep_open = false;  // the launcher's, kept when the game writes the file
+bool g_lament_save = false;  // as with a Lament of Innocence save on the PS2's memory card (hooks.cpp)
+bool g_ps2_stick = true;     // the sticks as the PS2 read them, without the Xbox's dead zone by axis (hooks.cpp)
+bool g_invert_camera_x = false;  // the right stick turns the camera the other way across (keyboard.cpp)
+bool g_invert_camera_y = false;  // and up and down
+uint32_t g_fov = 100;            // percent of the game's field of view in play (game/view.cpp)
+uint32_t g_draw_distance = 100;  // percent of the game's far plane (game/view.cpp)
+uint32_t g_fog_distance = 100;   // percent of the game's fog distance, 0 for none (game/view.cpp)
+bool g_hud_edges = true;         // widescreen: the HUD at the screen's corners rather than the 4:3 middle (widescreen.cpp)
+extern uint32_t g_button_layout;    // texpack.cpp
+bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
+
+namespace {
+
+std::atomic<bool> g_open{false};
+bool g_scaled = false;
+
+std::string KeyName(uint32_t vk);  // the key as the keyboard labels it
+
+struct Res {
+    uint32_t w, h;
+};
+
+// the window's monitor's modes, largest first, with 0x0 for the desktop's own, and 1920x1200 for a 16:10 window
+// (or a 16:10 screen streamed to) on a monitor without that mode
+std::vector<Res> Resolutions() {
+    std::vector<Res> list{{0, 0}};
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(MonitorFromWindow(static_cast<HWND>(app::Window()), MONITOR_DEFAULTTOPRIMARY), &mi);
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    auto add = [&](uint32_t w, uint32_t h) {
+        bool seen = false;
+        for (const Res& r : list) seen |= r.w == w && r.h == h;
+        if (!seen) list.push_back({w, h});
+    };
+    for (DWORD i = 0; EnumDisplaySettingsW(mi.szDevice, i, &dm); i++)
+        if (dm.dmPelsWidth >= 640 && dm.dmPelsHeight >= 480) add(dm.dmPelsWidth, dm.dmPelsHeight);
+    add(1920, 1200);
+    std::sort(list.begin() + 1, list.end(), [](Res a, Res b) { return a.w != b.w ? a.w > b.w : a.h > b.h; });
+    return list;
+}
+
+std::string ResName(Res r) {
+    if (!r.w) {
+        app::Mode d = app::Desktop();
+        return "Desktop (" + std::to_string(d.width) + "x" + std::to_string(d.height) + ")";
+    }
+    return std::to_string(r.w) + "x" + std::to_string(r.h);
+}
+
+// a combo over a list of values; true when the choice changed
+template <typename T>
+bool Choice(const char* label, T& value, const std::vector<T>& values, const std::vector<std::string>& names) {
+    size_t cur = 0;
+    for (size_t i = 0; i < values.size(); i++)
+        if (values[i] == value) cur = i;
+    bool changed = false;
+    if (ImGui::BeginCombo(label, names[cur].c_str())) {
+        for (size_t i = 0; i < values.size(); i++) {
+            if (ImGui::Selectable(names[i].c_str(), i == cur) && i != cur) {
+                value = values[i];
+                changed = true;
+            }
+            if (i == cur) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+void Row(const char* name, const char* help) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::TextUnformatted(name);
+    if (help && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", help);
+    ImGui::TableNextColumn();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+}
+
+bool BeginRows(const char* id) {
+    if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return false;
+    ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+    return true;
+}
+
+// HDR: the switch with the display's state beside it, then the two brightness levels, which take effect at once
+void HdrRows(bool& save) {
+    app::Settings& s = app::Get();
+    app::HdrState h = app::Hdr();
+    Row("HDR", "On a display with HDR on in Windows: fire, magic, light and the other brightest parts of the picture "
+               "shine brighter than the rest, up to the peak brightness. The game's HUD is part of its picture, so its "
+               "white text rises with them. Off sends the usual picture.");
+    save |= ImGui::Checkbox("##hdr", &s.hdr);
+    ImGui::SameLine();
+    if (h.on)
+        ImGui::TextDisabled("HDR output");
+    else if (!h.display)
+        ImGui::TextDisabled("HDR is off in Windows for this display");
+    else
+        ImGui::TextDisabled("This display is in HDR");
+    ImGui::BeginDisabled(!h.on);
+    Row("Peak brightness", "The brightest highlights, in nits. The display's own peak suits most; lower it if highlights "
+                           "glare. Right-click for the display's own again.");
+    {
+        int peak = int(app::HdrPeak());
+        const char* fmt = s.hdr_peak_nits ? "%d nits" : "%d nits (the display's)";
+        if (ImGui::SliderInt("##peak", &peak, 400, 4000, fmt, ImGuiSliderFlags_AlwaysClamp)) {
+            s.hdr_peak_nits = uint32_t(peak + 5) / 10 * 10;
+            save = true;
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && s.hdr_peak_nits) {
+            s.hdr_peak_nits = 0;
+            save = true;
+        }
+    }
+    Row("Scene brightness", "How bright the picture is apart from its highlights, and this menu, in nits. 200 suits "
+                            "most rooms; more for a bright room, less for a dark one.");
+    {
+        int scene = int(s.hdr_scene_nits);
+        if (ImGui::SliderInt("##scene", &scene, 80, 500, "%d nits", ImGuiSliderFlags_AlwaysClamp)) {
+            s.hdr_scene_nits = uint32_t(scene);
+            save = true;
+        }
+    }
+    ImGui::EndDisabled();
+}
+
+void DisplayTab(bool& save) {
+    app::Settings& s = app::Get();
+    if (!BeginRows("display")) return;
+    Row("Display mode", nullptr);
+    if (Choice("##mode", s.display_mode,
+               {app::DisplayMode::Fullscreen, app::DisplayMode::Borderless, app::DisplayMode::Windowed},
+               {"Fullscreen", "Borderless", "Windowed"})) {
+        app::ApplyDisplay();
+        save = true;
+    }
+    Row("Resolution", "The output size. Fullscreen switches the monitor to it; borderless always fills the monitor.");
+    static std::vector<Res> modes = Resolutions();
+    {
+        size_t cur = 0;
+        for (size_t i = 0; i < modes.size(); i++)
+            if (modes[i].w == s.width && modes[i].h == s.height) cur = i;
+        if (ImGui::BeginCombo("##res", ResName(modes[cur]).c_str())) {
+            for (size_t i = 0; i < modes.size(); i++)
+                if (ImGui::Selectable(ResName(modes[i]).c_str(), i == cur) && i != cur) {
+                    s.width = modes[i].w;
+                    s.height = modes[i].h;
+                    app::ApplyDisplay();
+                    save = true;
+                }
+            ImGui::EndCombo();
+        }
+    }
+    // no frame rate cap here: the game's logic steps once a frame, so it is held at the 60 it was made for
+    Row("V-Sync", "Off can tear, and lowers input latency a little.");
+    save |= ImGui::Checkbox("##vsync", &s.vsync);
+    HdrRows(save);
+    ImGui::EndTable();
+}
+
+void GraphicsTab(bool& save) {
+    app::Settings& s = app::Get();
+    if (!BeginRows("graphics")) return;
+    Row("Render scale", "Of the output height. Above 100% supersamples for a sharper, smoother picture.");
+    save |= Choice<uint32_t>("##scale", s.render_percent, {50, 75, 100, 150, 200},
+                             {"50%", "75%", "100%", "150%", "200%"});
+    Row("Anisotropic filtering", "Sharper textures at an angle.");
+    save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
+    Row("Frame generation", "A frame made between each two the game draws, for twice the frame rate on a 120 Hz or "
+                            "faster screen: AMD FSR 3 on any graphics card, NVIDIA DLSS on a GeForce RTX 40 or 50. Their "
+                            "files come from AMD and NVIDIA: the launcher's Graphics page downloads them. From the next "
+                            "start.");
+    {
+        static const uint32_t running = s.frame_generation;  // as this run started
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##fg", s.frame_generation, {0, 1, 2}, {"Off", "AMD FSR 3", "NVIDIA DLSS"});
+        ImGui::SameLine();
+        app::FrameGenState fg = app::FrameGen();
+        if (s.frame_generation != running)
+            ImGui::TextDisabled("from the next start");
+        else if (running && fg.kind != running)
+            ImGui::TextDisabled("not running (logs\\castlevania.log)");
+        else if (running)
+            // the menu over the frame stops it: what counts is the frame rate once the menu is closed
+            ImGui::TextDisabled("on (paused in this menu)");
+    }
+    Row("Widescreen", "More of the world at the sides, nothing stretched: 16:9 for a 16:9 screen, 16:10 for a 16:10 "
+                      "one (1920x1200). The HUD, menus and movies stay 4:3 in the middle. Off shows the game 4:3, "
+                      "as on a 4:3 TV.");
+    {
+        uint32_t wide = s.widescreen ? s.widescreen_aspect : 0;
+        if (Choice<uint32_t>("##wide", wide, {0, 169, 1610}, {"Off (4:3)", "16:9", "16:10"})) {
+            s.widescreen = wide != 0;
+            if (wide) s.widescreen_aspect = wide;
+            save = true;
+        }
+    }
+    Row("HUD at the screen edges", "Widescreen: the health and magic bars and the rest of the HUD in the screen's "
+                                   "corners, as on a 4:3 screen, rather than at the corners of the 4:3 middle.");
+    save |= ImGui::Checkbox("##hud", &g_hud_edges);
+    Row("Field of view", "How much of the world the camera takes in: 100% is the game's own, which each room's camera "
+                         "sets; more is wider. Story scenes keep the game's.");
+    {
+        int fov = int(g_fov);
+        char fmt[64] = "%d%% (the game's)";
+        double game = 0, drawn = 0;
+        if (fov != 100 && ViewFov(game, drawn))
+            std::snprintf(fmt, sizeof(fmt), "%%d%%%% (%.0f\xC2\xB0 up and down here, the game's %.0f\xC2\xB0)", drawn, game);
+        else if (fov != 100)
+            std::snprintf(fmt, sizeof(fmt), "%%d%%%%");
+        if (ImGui::SliderInt("##fov", &fov, 100, 200, fmt, ImGuiSliderFlags_AlwaysClamp)) {
+            g_fov = uint32_t(fov);
+            save = true;
+        }
+    }
+    Row("Far view", "The fog and the draw distance both 4x as far out. Off puts both back to the game's.");
+    {
+        bool on = g_draw_distance == 400 && g_fog_distance == 400;
+        if (ImGui::Checkbox("##farview", &on)) {
+            g_draw_distance = g_fog_distance = on ? 400 : 100;
+            save = true;
+        }
+    }
+    Row("Draw distance", "How far the world is drawn. The game's ends where its fog has hidden everything; farther shows "
+                         "more once there is less fog, and may show where a room's scenery ends.");
+    save |= Choice<uint32_t>("##far", g_draw_distance, {100, 150, 200, 400}, {"The game's", "1.5x", "2x", "4x"});
+    Row("Fog", "The fog and the darkness that hides the distance in most rooms: as far out as the game puts it, "
+               "farther, or none.");
+    save |= Choice<uint32_t>("##fog", g_fog_distance, {100, 150, 200, 400, 0},
+                             {"The game's", "1.5x farther", "2x farther", "4x farther", "None"});
+    ImGui::EndTable();
+}
+
+void GameTab(bool& save) {
+    if (!BeginRows("game")) return;
+    Row("FPS counter", nullptr);
+    save |= ImGui::Checkbox("##fpsc", &g_fps_counter);
+    Row("Pause on focus loss", "Stops the game while another window is in front.");
+    save |= ImGui::Checkbox("##pause", &g_pause_on_focus_loss);
+    Row("Lament of Innocence save", "As the PS2 game with a Lament of Innocence save on the memory card: a Moai "
+                                    "at the far end of the room behind the first courtyard, beside the potion.");
+    save |= ImGui::Checkbox("##lament", &g_lament_save);
+    ImGui::EndTable();
+}
+
+void ControlsTab(bool& save) {
+    if (BeginRows("layout")) {
+        Row("Button layout", "PS2: the PS2's button icons (from an HD texture pack made from the PS2 game) and its "
+                             "shoulders: L1 resets the camera, R1 guards, L2 and R2 lock on. From the next start.");
+        save |= Choice<uint32_t>("##layout", g_button_layout, {0, 1}, {"Xbox", "PS2"});
+        Row("Stick response", "PS2: Hector walks any way the stick points and walks slowly when it is tilted a "
+                              "little, as on the PS2. Xbox: the Xbox release's, where a stick near up, down, left or "
+                              "right walks straight along it and a walk starts at a third of his speed.");
+        save |= Choice<bool>("##stick", g_ps2_stick, {true, false}, {"PS2", "Xbox"});
+        Row("Invert camera left / right", "The right stick (and the arrow keys) turn the camera the other way across.");
+        save |= ImGui::Checkbox("##invx", &g_invert_camera_x);
+        Row("Invert camera up / down", "The right stick (and the arrow keys) move the camera the other way up and down.");
+        save |= ImGui::Checkbox("##invy", &g_invert_camera_y);
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::TextWrapped("Xbox, PlayStation and Switch controllers work as player 1. The keyboard plays alongside:");
+    ImGui::Spacing();
+    static const char* kKeys[][2] = {
+        {"W A S D", "Move"},           {"Arrow keys", "Camera"},   {"K / Space", "A (jump)"},
+        {"J", "X (attack)"},           {"L", "B"},                 {"I", "Y"},
+        {"Q / E", "Left / right trigger"}, {"Z / C", "White / black"}, {"Enter", "Start"},
+        {"Backspace", "Back"},         {"Numpad 8 2 4 6", "D-pad"},
+        {"L3 + R3 (controller)", "This menu"},
+    };
+    if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(KeyName(g_menu_key).c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("This menu (change it in the launcher)");
+        for (auto& k : kKeys) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(k[0]);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(k[1]);
+        }
+        ImGui::EndTable();
+    }
+}
+
+void Defaults() {
+    app::Settings d;
+    app::Settings& s = app::Get();
+    d.join_ip = s.join_ip;
+    s = d;
+    g_fps_counter = false;
+    g_pause_on_focus_loss = true;
+    g_button_layout = 0;
+    g_lament_save = false;
+    g_ps2_stick = true;
+    g_invert_camera_x = g_invert_camera_y = false;
+    g_fov = 100;
+    g_draw_distance = g_fog_distance = 100;
+    g_hud_edges = true;
+    app::ApplyDisplay();
+}
+
+std::string KeyName(uint32_t vk) {
+    wchar_t name[64] = {};
+    LONG scan = LONG(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)) << 16;
+    // keys of the navigation block share scan codes with the numpad: the extended bit tells them apart
+    if ((vk >= VK_PRIOR && vk <= VK_DOWN) || vk == VK_INSERT || vk == VK_DELETE) scan |= 1 << 24;
+    if (!GetKeyNameTextW(scan, name, 64)) return "F10";
+    char out[64];
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, out, sizeof(out), nullptr, nullptr);
+    return out;
+}
+
+bool Foreground() {
+    HWND fg = GetForegroundWindow();
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return fg && pid == GetCurrentProcessId();
+}
+
+bool Down(uint32_t vk) { return (GetAsyncKeyState(int(vk)) & 0x8000) != 0; }
+
+// render thread, each frame: the menu key's state is read rather than its messages, which an overlay or another
+// program's hotkey can take before the window sees them
+void PollKeys() {
+    static bool menu_was = false, escape_was = false;
+    bool fg = Foreground();
+    bool menu = fg && Down(g_menu_key ? g_menu_key : VK_F10);
+    if (menu && !menu_was) g_open = !g_open;
+    menu_was = menu;
+    bool escape = fg && Down(VK_ESCAPE);
+    if (escape && !escape_was) g_open = false;
+    escape_was = escape;
+}
+
+void Style(float scale) {
+    ImGuiStyle& st = ImGui::GetStyle();
+    ImGui::StyleColorsDark(&st);
+    st.WindowRounding = 6;
+    st.FrameRounding = 4;
+    st.TabRounding = 4;
+    st.WindowPadding = {14, 12};
+    st.FramePadding = {8, 5};
+    st.ItemSpacing = {10, 8};
+    ImVec4* c = st.Colors;
+    // Castlevania red over near black
+    ImVec4 red{0.55f, 0.08f, 0.10f, 1}, red_hi{0.72f, 0.12f, 0.14f, 1}, red_lo{0.40f, 0.06f, 0.08f, 1};
+    c[ImGuiCol_WindowBg] = {0.06f, 0.05f, 0.06f, 0.94f};
+    c[ImGuiCol_TitleBg] = c[ImGuiCol_TitleBgActive] = red_lo;
+    c[ImGuiCol_Tab] = red_lo;
+    c[ImGuiCol_TabHovered] = red_hi;
+    c[ImGuiCol_TabSelected] = red;
+    c[ImGuiCol_Button] = red_lo;
+    c[ImGuiCol_ButtonHovered] = red_hi;
+    c[ImGuiCol_ButtonActive] = red;
+    c[ImGuiCol_FrameBg] = {0.16f, 0.13f, 0.14f, 1};
+    c[ImGuiCol_FrameBgHovered] = {0.26f, 0.16f, 0.18f, 1};
+    c[ImGuiCol_FrameBgActive] = {0.32f, 0.18f, 0.20f, 1};
+    c[ImGuiCol_Header] = red_lo;
+    c[ImGuiCol_HeaderHovered] = red_hi;
+    c[ImGuiCol_HeaderActive] = red;
+    c[ImGuiCol_CheckMark] = {0.95f, 0.80f, 0.45f, 1};
+    c[ImGuiCol_NavHighlight] = {0.95f, 0.80f, 0.45f, 1};
+    st.ScaleAllSizes(scale);
+}
+
+}  // namespace
+
+bool MenuOpen() { return g_open; }
+void MenuToggle() { g_open = !g_open; }
+
+// the game window is up, before the first frame: the font, sized for the monitor
+void MenuWindow() {
+    std::lock_guard lock(app::UiLock());
+    float scale = std::max(1.0f, app::Desktop().height / 1080.0f);
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    if (!io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 20.0f * scale)) {
+        ImFontConfig cfg;
+        cfg.SizePixels = 13.0f * scale;
+        io.Fonts->AddFontDefault(&cfg);
+    }
+    Style(scale);
+    g_scaled = true;
+}
+
+// window thread: the menu key and Escape are taken here so the host does nothing with them (F10 alone would put
+// the window in menu mode); PollKeys opens and closes the menu
+extern std::atomic<bool> g_closing;  // keyboard.cpp
+
+bool MenuMessage(void*, uint32_t msg, uintptr_t wp, intptr_t, intptr_t* result) {
+    if (msg == WM_CLOSE) g_closing = true;
+    bool key = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP;
+    if (key && (wp == VK_F10 || wp == g_menu_key || (wp == VK_ESCAPE && g_open))) {
+        *result = 0;
+        return true;
+    }
+    return false;
+}
+
+void SettingsWatch();  // keyboard.cpp
+
+void MenuUi(double fps) {
+    SettingsWatch();
+    if (!g_scaled) return;
+    PollKeys();
+    ImGuiIO& io = ImGui::GetIO();
+    if (g_fps_counter) {
+        // with frame generation, the frames reaching the screen, and the game's own beside them
+        char text[64];
+        app::FrameGenState fg = app::FrameGen();
+        if (fg.active && fg.shown_fps > fps + 1)
+            std::snprintf(text, sizeof(text), "%.0f FPS (game %.0f)", fg.shown_fps, fps);
+        else
+            std::snprintf(text, sizeof(text), "%.0f FPS", fps);
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        ImVec2 at{io.DisplaySize.x * 0.01f, io.DisplaySize.y * 0.01f};
+        dl->AddText({at.x + 2, at.y + 2}, IM_COL32(0, 0, 0, 200), text);
+        dl->AddText(at, IM_COL32(255, 230, 140, 255), text);
+    }
+    io.MouseDrawCursor = false;
+    if (!g_open) return;
+
+    ImVec2 size{io.DisplaySize.y * 0.75f, io.DisplaySize.y * 0.55f};
+    ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    // the menu keeps the keyboard and controller, except while a drop-down's list is open: focusing the menu then
+    // would close the list the moment it opened
+    if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) ImGui::SetNextWindowFocus();
+    bool open = true;
+    if (ImGui::Begin("Castlevania: Curse of Darkness - Settings", &open,
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                         ImGuiWindowFlags_NoSavedSettings)) {
+        bool save = false;
+        float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        if (ImGui::BeginChild("tabs", {0, -footer})) {
+            if (ImGui::BeginTabBar("tabbar")) {
+                if (ImGui::BeginTabItem("Display")) {
+                    DisplayTab(save);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Graphics")) {
+                    GraphicsTab(save);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Game")) {
+                    GameTab(save);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Controls")) {
+                    ControlsTab(save);
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::Separator();
+        if (ImGui::Button("Reset to defaults")) {
+            Defaults();
+            save = true;
+        }
+        ImGui::SameLine();
+        std::string close = "Close (" + KeyName(g_menu_key) + ")";
+        float close_w = ImGui::CalcTextSize(close.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - close_w);
+        if (ImGui::Button(close.c_str())) open = false;
+        if (save) app::Save();
+    }
+    ImGui::End();
+    if (!open) g_open = false;
+}

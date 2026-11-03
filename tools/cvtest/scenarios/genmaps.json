@@ -1,0 +1,15 @@
+{
+  "name": "genmaps",
+  "after": "newgame.json",
+  "note": "The generated material maps (textures\\SLUS-21168\\generated\\materials, tools/texpack/make_materials.py) where most of them are, map 2 room 1, and on 9.14; run with CV_MATERIALS=0 for the same shots without them.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "texture_pack_size": 0},
+  "steps": [
+    {"press": "0:warp=2.1,10f:wait:20f"},
+    {"until": "map == 2 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "room-2-1", "judge": false},
+    {"press": "0f:rs=0.7/0:40f,0f:wait:30f", "shot": "room-2-1-turned", "judge": false},
+    {"press": "0:warp=9.14,10f:wait:20f"},
+    {"until": "map == 9 and room == 14 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "room-9-14", "judge": false}
+  ]
+}
