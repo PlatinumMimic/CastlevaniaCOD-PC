@@ -7,10 +7,11 @@
 # Builds in tools/linux/Containerfile's image (Ubuntu 22.04, so the release runs on glibc 2.35 and later) with podman.
 # Needs both releases' default.xbe, as release.bat does: the USA one in assets, the European one in assets/eu (the
 # build reads them for their SHA-1s; nothing of them is packed). Downloads, kept in $CV_CACHE (~/.cache/cvcod-release):
-# vkd3d's source, LLVM's Linux build, TeX Gyre Pagella; the build itself goes to $CV_WORK (~/.cache/cvcod-release/work).
+# vkd3d's source, LLVM's Linux build, URW's P052; the build itself goes to $CV_WORK (~/.cache/cvcod-release/work).
 set -euo pipefail
 VKD3D=2.1
 LLVM=23.1.4
+URW_FONTS=20200910
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 
@@ -38,10 +39,9 @@ echo "[2/5] vkd3d $VKD3D, LLVM $LLVM's clang and lld, the launcher's fonts"
 cd /cache
 [ -f vkd3d-$VKD3D.tar.xz ] || curl -fsSLO https://dl.winehq.org/vkd3d/source/vkd3d-$VKD3D.tar.xz
 [ -f LLVM-$LLVM-Linux-X64.tar.zst ] || curl -fsSLO https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM/LLVM-$LLVM-Linux-X64.tar.zst
-for f in regular bold bolditalic; do
-    [ -f texgyrepagella-$f.otf ] || curl -fsSLO https://mirrors.ctan.org/fonts/tex-gyre/opentype/texgyrepagella-$f.otf
-done
-[ -f tex-gyre-GUST-FONT-LICENSE.txt ] || curl -fsSL -o tex-gyre-GUST-FONT-LICENSE.txt https://mirrors.ctan.org/fonts/tex-gyre/doc/GUST-FONT-LICENSE.txt
+URW=https://github.com/ArtifexSoftware/urw-base35-fonts/raw/$URW_FONTS
+for f in Roman Bold BoldItalic; do [ -f P052-$f.otf ] || curl -fsSLO $URW/fonts/P052-$f.otf; done
+for f in LICENSE COPYING; do [ -f urw-base35-$f.txt ] || curl -fsSL -o urw-base35-$f.txt $URW/$f; done
 if [ ! -f /work/vkd3d/lib/libvkd3d.so.1 ]; then
     rm -rf /work/vkd3d-src && mkdir -p /work/vkd3d-src && tar xf vkd3d-$VKD3D.tar.xz -C /work/vkd3d-src --strip-components=1
     (cd /work/vkd3d-src && ./configure -q --prefix=/work/vkd3d --disable-tests --disable-demos --disable-doxygen-doc \
@@ -83,10 +83,11 @@ patchelf --set-rpath '$ORIGIN' $PKG/lib/*.so.1
 # the compiler folder without its work folder, where the recompiled code is made
 (cd $B/compiler && tar cf - --exclude=./work .) | (cd $PKG && mkdir compiler && tar xf - -C compiler)
 cp /work/llvm/clang /work/llvm/ld.lld $PKG/compiler/
-cp $B/fonts/MaterialIcons-Regular.ttf /cache/texgyrepagella-*.otf $PKG/fonts/
+cp $B/fonts/MaterialIcons-Regular.ttf /cache/P052-*.otf $PKG/fonts/
 cp $SRC/tools/release/README-linux.txt $PKG/README.txt
 cp $SRC/LICENSE $PKG/LICENSE.txt
-cat /src/XboxXBE-Recomp/THIRD_PARTY.txt $SRC/tools/linux/THIRD_PARTY-linux.txt /cache/tex-gyre-GUST-FONT-LICENSE.txt > $PKG/THIRD_PARTY.txt
+cat /src/XboxXBE-Recomp/THIRD_PARTY.txt $SRC/tools/linux/THIRD_PARTY-linux.txt /cache/urw-base35-LICENSE.txt \
+    /cache/urw-base35-COPYING.txt > $PKG/THIRD_PARTY.txt
 echo "Put your game here: its disc image (.iso), or the extracted disc (default.xbe with its folders)." > "$PKG/assets/PUT YOUR GAME HERE.txt"
 echo "Optional: an HD texture pack made for PCSX2. Put its replacement pictures here (.png or .dds files, folders inside are fine)." > "$PKG/textures/PUT A TEXTURE PACK HERE.txt"
 # files copied from a Windows drive come out executable: only the programs are (a file manager offers to run the rest)

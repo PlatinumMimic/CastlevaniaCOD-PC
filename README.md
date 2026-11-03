@@ -134,8 +134,8 @@ On a freshly installed Windows there is nothing to download besides the release 
    progress; press **Start** when it is done.
 
 `./CastlevaniaLauncher` has every setting, in the same pages and seven languages as on Windows. `lib` holds vkd3d,
-which draws the game's Direct3D 12 with Vulkan; `fonts` the launcher's fonts (TeX Gyre Pagella for its Palatino, and
-Material Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs installing besides a Vulkan driver
+which draws the game's Direct3D 12 with Vulkan; `fonts` the launcher's fonts (URW's P052 for its Palatino, and Material
+Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs installing besides a Vulkan driver
 (see [To Play on Linux](#to-play-on-linux)), and no root.
 
 ### Windows or Antivirus Warnings
@@ -210,6 +210,8 @@ dropdown with the globe at the bottom of its sidebar switches it at once (`launc
 `en`, `de`, `es`, `fr`, `it`, `pt-BR` or `ru`; **Reset to defaults** keeps it). The game itself and its in-game
 settings menu stay in English. Every phrase is in `src/launcher/words.h`, a row per English phrase with its
 translations; a phrase the launcher shows without a row there does not compile, nor does a row that lacks a language.
+`--check-fonts` checks that every letter of every phrase, in each language, is in the fonts the launcher writes it
+with (a missing one shows as ?) and says which are missing; `install.py` runs it on every release.
 
 ### Settings Menu
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be
@@ -677,7 +679,8 @@ The source in this repository is released under the [GNU General Public License 
 - [LLVM](https://llvm.org) for Clang and LLD, which releases bundle to build the game code on the player's PC.
 - [vkd3d](https://gitlab.winehq.org/wine/vkd3d) (LGPL 2.1), which draws the game's Direct3D 12 with Vulkan on Linux;
   [stb](https://github.com/nothings/stb) for PNG files there; [Material Icons](https://github.com/google/material-design-icons)
-  and [TeX Gyre Pagella](https://www.gust.org.pl/projects/e-foundry/tex-gyre/pagella) for the Linux launcher.
+  and URW's [P052](https://github.com/ArtifexSoftware/urw-base35-fonts) (AGPL 3.0 with a font exception) for the Linux
+  launcher.
 - [xxHash](https://github.com/Cyan4973/xxHash) for hashing textures, and [PCSX2](https://pcsx2.net) for the texture
   pack naming its replacement pictures follow.
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), the model `tools\texpack\upscale.py` makes HD pictures with

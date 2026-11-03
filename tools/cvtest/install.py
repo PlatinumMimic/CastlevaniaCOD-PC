@@ -115,6 +115,19 @@ def check_contents(pkg):
             "errors": errors, "warnings": []}
 
 
+def check_fonts(launcher, env):
+    """every letter of the launcher's phrases, in each of its languages, in the fonts it writes them with: its
+    --check-fonts (a font without a language's letters shows ? for them, as Russian did on Linux with TeX Gyre Pagella)"""
+    r = subprocess.run([str(launcher), "--check-fonts"], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", env=env, timeout=120)
+    missing = [line for line in r.stdout.splitlines() if line.startswith("missing ")]
+    errors = missing[:12] + ([f"... {len(missing) - 12} more"] if len(missing) > 12 else [])
+    if r.returncode != 0 and not missing:
+        errors.append(f"--check-fonts ended with {r.returncode}: {(r.stdout + r.stderr).strip()[-300:]}")
+    return {"step": "package", "label": "launcher: every phrase's letters in its fonts, in all its languages",
+            "ok": r.returncode == 0 and not errors, "errors": errors, "warnings": []}
+
+
 def put_game(game, assets):
     """the player's copy into assets: hard links, else copies"""
     def place(src, dst):
@@ -215,8 +228,8 @@ def check_contents_linux(pkg):
     for need in ("Castlevania", "CastlevaniaEU", "CastlevaniaLauncher", "compiler/xbe_recomp", "compiler/clang",
                  "compiler/ld.lld", "compiler/config/game.toml", "compiler/config/game_eu.toml",
                  "compiler/Castlevania.hooks", "compiler/CastlevaniaEU.hooks", "lib/libvkd3d.so.1",
-                 "lib/libvkd3d-shader.so.1", "lib/libvkd3d-utils.so.1", "fonts/MaterialIcons-Regular.ttf", "assets",
-                 "textures"):
+                 "lib/libvkd3d-shader.so.1", "lib/libvkd3d-utils.so.1", "fonts/MaterialIcons-Regular.ttf",
+                 "fonts/P052-Roman.otf", "fonts/P052-Bold.otf", "fonts/P052-BoldItalic.otf", "assets", "textures"):
         if not (pkg / need).exists():
             errors.append(f"missing from the package: {need}")
     return {"step": "package", "label": "package: no game files, the first start's tools there", "ok": not errors,
@@ -245,6 +258,7 @@ def main_linux(release, game, scenario):
     env = {k: os.environ[k] for k in ("HOME", "USER", "LANG", "XDG_RUNTIME_DIR", "PULSE_SERVER", "VK_DRIVER_FILES",
                                       "VK_ICD_FILENAMES", "GALLIUM_DRIVER") if k in os.environ}
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    checks.append(check_fonts(pkg / "CastlevaniaLauncher", env))
     ok = cvtest.run(str(scenario), None, False, install=pkg, env=env, checks=checks)
     return ok, root
 
@@ -285,6 +299,7 @@ def main():
     env = {k: os.environ[k] for k in WINDOWS_VARS if k in os.environ}
     windows = os.environ.get("SystemRoot", r"C:\Windows")
     env["PATH"] = ";".join([str(SYSTEM32), windows, str(SYSTEM32 / "Wbem"), str(SYSTEM32 / "WindowsPowerShell" / "v1.0")])
+    checks.append(check_fonts(pkg / "CastlevaniaLauncher.exe", env))
     ok = cvtest.run(str(scenario), None, False, install=pkg, env=env, checks=checks)
     if ok and "--keep" not in sys.argv:
         shutil.rmtree(root, ignore_errors=True)  # the game's hard link goes, the player's file stays

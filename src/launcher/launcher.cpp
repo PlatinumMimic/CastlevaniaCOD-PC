@@ -41,6 +41,7 @@ extern char** environ;
 #include <cmath>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1300,23 +1301,21 @@ void Fonts() {
     std::string italic = path({"palabi.ttf", "georgiaz.ttf", "seguisb.ttf"});
     std::string icons = path({"SegoeIcons.ttf", "segmdl2.ttf"});
 #else
-    // Linux: the fonts folder beside the launcher (a release's: TeX Gyre Pagella, a Palatino, and Material Icons), else a
-    // Palatino the system has (URW's P052, TeX Gyre Pagella), else its serif
+    // Linux: the fonts folder beside the launcher (a release's: URW's P052, a Palatino with the Cyrillic letters, and
+    // Material Icons), else the system's P052, else its serif (TeX Gyre Pagella has no Cyrillic: Russian showed ?)
     auto path = [&](std::initializer_list<const char*> names) -> std::string {
         for (const char* n : names) {
-            for (fs::path dir : {ExeDir() / "fonts", fs::path("/usr/share/fonts/opentype/tex-gyre"),
-                                 fs::path("/usr/share/fonts/opentype/urw-base35"), fs::path("/usr/share/fonts/urw-base35"),
+            for (fs::path dir : {ExeDir() / "fonts", fs::path("/usr/share/fonts/opentype/urw-base35"),
+                                 fs::path("/usr/share/fonts/urw-base35"),
                                  fs::path("/usr/share/fonts/truetype/dejavu"), fs::path("/usr/share/fonts/TTF"),
                                  fs::path("/usr/share/fonts/dejavu-serif-fonts"), fs::path("/usr/share/fonts/truetype/noto")})
                 if (fs::exists(dir / n, ec)) return (dir / n).string();
         }
         return {};
     };
-    std::string regular = path({"texgyrepagella-regular.otf", "P052-Roman.otf", "P052-Roman.t1", "DejaVuSerif.ttf",
-                                "NotoSerif-Regular.ttf"});
-    std::string bold = path({"texgyrepagella-bold.otf", "P052-Bold.otf", "DejaVuSerif-Bold.ttf", "NotoSerif-Bold.ttf"});
-    std::string italic = path({"texgyrepagella-bolditalic.otf", "P052-BoldItalic.otf", "DejaVuSerif-BoldItalic.ttf",
-                               "NotoSerif-BoldItalic.ttf"});
+    std::string regular = path({"P052-Roman.otf", "DejaVuSerif.ttf", "NotoSerif-Regular.ttf"});
+    std::string bold = path({"P052-Bold.otf", "DejaVuSerif-Bold.ttf", "NotoSerif-Bold.ttf"});
+    std::string italic = path({"P052-BoldItalic.otf", "DejaVuSerif-BoldItalic.ttf", "NotoSerif-BoldItalic.ttf"});
     std::string icons = path({"MaterialIcons-Regular.ttf"});
 #endif
     // the title's fonts write only its own words, in Latin letters: the rest every language's
@@ -1339,6 +1338,49 @@ void Fonts() {
     g_hero = load(italic, 58, false, nullptr);
     g_heroSub = load(italic, 28, false, nullptr);
     g_button = load(italic, 26, false);
+}
+
+// --check-fonts: every letter of every phrase in every language, as each font that writes them has it (a font without
+// a language's letters, or kTextRanges without them, shows ? for them); the title's fonts write only Latin words.
+// Prints what is missing, and is 0 with nothing missing.
+int CheckFonts() {
+    ImGui::CreateContext();
+    g_scale = 1;
+    Fonts();
+    ImGui::GetIO().Fonts->Build();
+    std::vector<std::pair<std::string, int>> texts;  // a phrase, its language
+    for (const words::Row& r : words::kRows)
+        for (int l = 0; l < words::kLangs; l++) texts.push_back({r.text[l], l});
+    for (int l = 0; l < words::kLangs; l++) {
+        texts.push_back({words::kLanguages[l].name, l});
+        words::g_lang = l;
+        for (size_t n : {1, 2, 5}) texts.push_back({words::Pictures(n), l});
+    }
+    const std::pair<const char*, ImFont*> fonts[] = {{"body", g_body},     {"small", g_small}, {"semi", g_semi},
+                                                     {"italic", g_italic}, {"head", g_head},   {"button", g_button}};
+    int missing = 0;
+    for (const auto& [role, f] : fonts) {
+        std::vector<ImWchar> seen;  // a letter reported once per font
+        for (const auto& [text, lang] : texts) {
+            for (const char* s = text.c_str(); *s;) {
+                unsigned c = 0;
+                s += ImTextCharFromUtf8(&c, s, nullptr);
+                if (c < 0x20 || f->FindGlyphNoFallback(ImWchar(c)) ||
+                    std::find(seen.begin(), seen.end(), ImWchar(c)) != seen.end())
+                    continue;
+                seen.push_back(ImWchar(c));
+                char ch[5] = {};
+                ImTextCharToUtf8(ch, c);
+                std::printf("missing U+%04X %s in the %s font (%s), as in %s \"%s\"\n", c, ch, role, f->GetDebugName(),
+                            words::kLanguages[lang].code, text.c_str());
+                missing++;
+            }
+        }
+    }
+    std::printf("%d letters missing\n", missing);
+    std::fflush(stdout);
+    ImGui::DestroyContext();
+    return missing ? 1 : 0;
 }
 
 // a picture the launcher shows: a texture of its own
@@ -2270,6 +2312,7 @@ private:
 
 #ifdef _WIN32
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
+    if (std::wcsstr(GetCommandLineW(), L"--check-fonts")) return CheckFonts();
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC, for the pack's logo
     float scale = float(GetDpiForSystem()) / 96.0f;
@@ -2363,6 +2406,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
 #else
 // Linux: SDL's window at the display's scale, drawn with OpenGL 3; ImGui's input from the SDK's SDL layer
 int main(int argc, char** argv) {
+    for (int a = 1; a < argc; a++)
+        if (!std::strcmp(argv[a], "--check-fonts")) return CheckFonts();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL failed to start: %s\n", SDL_GetError());
         return 1;

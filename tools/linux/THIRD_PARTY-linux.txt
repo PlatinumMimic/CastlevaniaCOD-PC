@@ -31,8 +31,9 @@ Clang and LLD (https://llvm.org), compiler/clang and compiler/ld.lld: the LLVM p
 Apache License 2.0 with LLVM Exceptions, see compiler/LLVM-LICENSE.txt.
 
 
-TeX Gyre Pagella (https://www.gust.org.pl/projects/e-foundry/tex-gyre/pagella), fonts/texgyrepagella-*.otf
+P052 of the URW base35 fonts (https://github.com/ArtifexSoftware/urw-base35-fonts, release 20200910, its source),
+fonts/P052-*.otf, unmodified
 
-Copyright 2006-2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). Licensed under the GUST Font
-License, which follows.
+Copyright URW++ Design & Development GmbH. Licensed under the GNU Affero General Public License version 3 with a
+font exception, which follow.
 
