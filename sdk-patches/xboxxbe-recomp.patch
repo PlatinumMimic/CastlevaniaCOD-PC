@@ -307,6 +307,32 @@ index 075b3b7..3541811 100644
  float RenderScale(uint32_t guest_height) {
      float h = CachedOutput().height * (Get().render_percent / 100.0f);
      return guest_height ? std::max(h / guest_height, 0.1f) : 1.0f;
+diff --git a/runtime/core/diag.h b/runtime/core/diag.h
+index 200d6b4..21c3d8c 100644
+--- a/runtime/core/diag.h
++++ b/runtime/core/diag.h
+@@ -11,6 +11,21 @@ inline bool Perf() {
+     return on;
+ }
+ 
++// XBE_AA_MIPBIAS: levels added to upscaling's texture bias (def when unset); to weigh its cost
++inline float AaMipBias(float def) {
++    static const char* v = std::getenv("XBE_AA_MIPBIAS");
++    return v ? float(std::atof(v)) : def;
++}
++
++// XBE_AA_REACTIVE=0: anti-aliasing without the effects' reactive mask; to weigh its cost
++inline bool AaReactive() {
++    static const bool on = [] {
++        const char* v = std::getenv("XBE_AA_REACTIVE");
++        return !v || std::atoi(v) != 0;
++    }();
++    return on;
++}
++
+ // XBE_CAPTURE_DIR: where F3 saves a frame, empty: F3 does not capture
+ inline const std::filesystem::path& CaptureDir() {
+     static const std::filesystem::path dir = [] {
 diff --git a/runtime/core/input.cpp b/runtime/core/input.cpp
 index bb7f3a9..0522aa9 100644
 --- a/runtime/core/input.cpp
@@ -366,10 +392,10 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/backend.h b/runtime/gpu/backend.h
-index c82ae36..ce98a2e 100644
+index c82ae36..3e8f743 100644
 --- a/runtime/gpu/backend.h
 +++ b/runtime/gpu/backend.h
-@@ -66,5 +66,18 @@ inline std::atomic<uint64_t> g_perf_sync_late{0}, g_perf_sync_block{0};  // read
+@@ -66,5 +66,22 @@ inline std::atomic<uint64_t> g_perf_sync_late{0}, g_perf_sync_block{0};  // read
  
  // F3: save the next frame, every draw and target, under diag::CaptureDir
  inline std::atomic<bool> g_capture{false};
@@ -383,13 +409,17 @@ index c82ae36..ce98a2e 100644
 +inline std::atomic<uint32_t> g_antialias{0};
 +// its upscaling (framegen.h, Upscale): 0 the frame's own size, 1 quality, 2 balanced, 3 performance
 +inline std::atomic<uint32_t> g_upscale{0};
++// AMD FSR's sharpening after it, percent (0 none); DLSS has none of its own
++inline std::atomic<uint32_t> g_aa_sharpness{30};
++// ambient occlusion of the frame's 3D, before its anti-aliasing (which it needs): 0 off, 1 low, 2 high
++inline std::atomic<uint32_t> g_ambient_occlusion{0};
 +// what runs, for a menu: the kind (AntiAliasKind, 0 none), and the last frame's 3D size drawn and output (w << 16 | h)
 +inline std::atomic<uint32_t> g_antialias_running{0};
 +inline std::atomic<uint32_t> g_antialias_drawn{0}, g_antialias_output{0};
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..e0bc068 100644
+index fe65837..1154745 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -34,6 +34,7 @@
@@ -400,7 +430,7 @@ index fe65837..e0bc068 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +53,26 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +53,28 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -422,12 +452,14 @@ index fe65837..e0bc068 100644
 +constexpr uint32_t kFgObjRtv = kFgRtv + 2 + kFrames;
 +constexpr uint32_t kFgRtvCount = 3 + kFrames;
 +constexpr uint32_t kAaRtv = kFgRtv + kFgRtvCount;  // anti-aliasing's depth and motion at the frame's size, after them
++constexpr uint32_t kAaRxRtv = kAaRtv + 2;            // its reactive mask (AntiAlias::Frame::reactive)
++constexpr uint32_t kAoRtv = kAaRxRtv + 1;            // ambient occlusion's (AmbientOcclusion), last
 +// the motion target's clear and MotionOut's value where a pixel has no motion of its own: the camera's from depth
 +constexpr float kNoMotion = 1024;
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +89,7 @@ struct Perf {
+@@ -72,6 +91,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -435,15 +467,45 @@ index fe65837..e0bc068 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,6 +112,7 @@ struct Perf {
+@@ -94,10 +114,37 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
 +    uint64_t shaders_kept = 0;  // read from the disk cache instead
      uint64_t raw = 0;
      uint64_t lates = 0;
++    // the GPU's milliseconds by part of the frame (GpuMark), summed over gpu_frames, and the whole's
++    double gpu[6] = {};
++    uint64_t gpu_frames = 0;
++    // a draw's steps on the render thread (Draw, DrawLap): targets and the extension's first look, shaders and their
++    // keys, the pipeline (with the anti-aliasing's passes as the UI starts), constants, views and samplers, geometry
++    double lap[6] = {};
++    // UploadConstants' steps: the frame before's constants found, the vertex constants uploaded, the extension's
++    // edits, kept for the next frame, the rest
++    double clap[5] = {};
++    uint64_t barriers = 0, pso_sets = 0;  // resource barriers and pipeline changes recorded
  };
-@@ -140,6 +159,63 @@ float4 psmain(O i) : SV_Target {
+ Perf g_perf;
++// Draw's time to the next step, into g_perf.lap[i]
++struct DrawLap {
++    bool on = diag::Perf();
++    PerfClock::time_point t = on ? PerfClock::now() : PerfClock::time_point{};
++    void operator()(int i) { Into(g_perf.lap, i); }
++    void Into(double* acc, int i) {
++        if (!on) return;
++        auto n = PerfClock::now();
++        acc[i] += std::chrono::duration<double, std::milli>(n - t).count();
++        t = n;
++    }
++};
++// XBE_PERF's GPU timestamps: the start of each part of the frame. The parts: its 3D (and anything before the
++// anti-aliasing), anti-aliasing's motion and depth, ambient occlusion, the vendor's pass, then the UI and output
++enum GpuMarkIndex : uint32_t { kGpuStart, kGpuAa, kGpuAo, kGpuVendor, kGpuAfter, kGpuEnd, kGpuMarks };
++constexpr uint32_t kGpuParts = kGpuMarks - 1;
+ struct PerfScope {
+     double& acc;
+     bool on = diag::Perf();
+@@ -140,6 +187,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -507,7 +569,7 @@ index fe65837..e0bc068 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -148,6 +224,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+@@ -148,6 +252,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
  constexpr float kDepthFar = 0;
  
  const char* kDepthHlsl = R"(
@@ -515,7 +577,7 @@ index fe65837..e0bc068 100644
  Texture2D<float> img : register(t0);
  SamplerState ps : register(s1);
  struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
-@@ -157,7 +234,7 @@ O vs(uint id : SV_VertexID) {
+@@ -157,7 +262,7 @@ O vs(uint id : SV_VertexID) {
      o.p = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
      return o;
  }
@@ -524,7 +586,7 @@ index fe65837..e0bc068 100644
  )";
  
  const char* kClearHlsl = R"(
-@@ -345,6 +422,14 @@ struct Tex {
+@@ -345,6 +450,14 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -539,15 +601,16 @@ index fe65837..e0bc068 100644
  };
  
  struct PsoKey {
-@@ -377,6 +462,7 @@ struct PsoKey {
+@@ -377,6 +490,8 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
 +    uint32_t mv;      // frame generation's motion target bound as SV_Target1: 1 kept, 2 written (PixelKey::motion)
++    uint32_t rx;      // anti-aliasing's reactive mask bound as SV_Target2 (with mv): 1 kept, 2 written as its maximum
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +473,7 @@ struct BlitOptions {
+@@ -387,6 +502,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -555,7 +618,7 @@ index fe65837..e0bc068 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +488,15 @@ struct ShrinkOptions {
+@@ -401,11 +517,15 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -573,7 +636,7 @@ index fe65837..e0bc068 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -549,6 +640,8 @@ private:
+@@ -549,6 +669,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -582,7 +645,7 @@ index fe65837..e0bc068 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -565,10 +658,10 @@ private:
+@@ -565,10 +687,10 @@ private:
      ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
      void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
      void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
@@ -591,11 +654,11 @@ index fe65837..e0bc068 100644
      float RenderTargetShift(const State& s, const DrawShaders& sh) const;
      void FillDepthConstants(const State& s, const DrawShaders& sh, const PsoKey& k, DrawConstants& c) const;
 -    uint8_t* UploadVertexConstants(const State& s);
-+    uint8_t* UploadVertexConstants(const State& s, const float* prev = nullptr);
++    void UploadVertexConstants(const State& s, const void* edited, const float* prev);
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,7 +676,7 @@ private:
+@@ -583,7 +705,7 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -604,7 +667,7 @@ index fe65837..e0bc068 100644
      void SetBlendFactorStencilRef(const State& s);
      void UpdateTargetUsed(uint32_t data);
      void DrawGeometry(const Assembled& a);
-@@ -598,6 +691,7 @@ private:
+@@ -598,6 +720,7 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -612,7 +675,7 @@ index fe65837..e0bc068 100644
      D3D12_GRAPHICS_PIPELINE_STATE_DESC FullScreenPipelineDesc(ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv) const;
      // Init, in order, each callee right after its caller
      bool CreateDevice();
-@@ -613,10 +707,40 @@ private:
+@@ -613,10 +736,51 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -630,14 +693,25 @@ index fe65837..e0bc068 100644
 +    D3D12_VIEWPORT FrameViewport() const;
 +    void EnsureFrameGenTargets(uint32_t w, uint32_t h, DXGI_FORMAT bb);
 +    bool EnsureObjectMotion(const Target& rt);
++    bool EnsureReactive(const Target& rt);
 +    // anti-aliasing (framegen.h, AntiAlias): the frame's 3D before its UI, once a frame; true when it recorded
 +    // anything, after which the draw at hand's state must be set again
 +    bool AntiAliasFrame(Target& t);
 +    bool EnsureAaTargets(uint32_t w, uint32_t h, DXGI_FORMAT fmt);
++    // ambient occlusion (g_ambient_occlusion): the frame's 3D darkened where surfaces meet, from its depth, before the
++    // anti-aliasing's pass; rw x rh the part drawn
++    void AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const FrameView& view, bool rx);
++    ID3D12PipelineState* EnsureAoApplyPipeline(DXGI_FORMAT rtv);
++    // XBE_PERF: a GPU timestamp at the start of a part of the frame (GpuMark); GpuFrameEnd resolves the frame's,
++    // GpuFrameStart adds up the slot's last ones (its fence passed) and marks the new frame's start
++    void GpuMark(uint32_t mark);
++    void GpuFrameEnd();
++    void GpuFrameStart();
 +    // upscaling (g_upscale): the frame's 3D drawn into the top left part of its target (the scene), from the frame's
 +    // first draw into the back buffer until its UI starts, then made up to the whole target
 +    void OpenScene(Target& rt);
 +    bool InScene() const;          // the bound targets are the scene's
++    float SceneMipBias() const;    // the draw's texture level of detail bias in the scene, 0 outside it
 +    bool SceneTarget(const Target* t) const;  // the scene's colour or depth
 +    Target* SceneDepth() const;
 +    void CloseScene(const char* why);  // the scene made whole (why: when early, for the log), the renderer's state reset
@@ -653,7 +727,7 @@ index fe65837..e0bc068 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -665,6 +789,7 @@ private:
+@@ -665,6 +829,7 @@ private:
          uint32_t color;
          float z;
          uint32_t stencil;
@@ -661,7 +735,7 @@ index fe65837..e0bc068 100644
      };
      void ClearTarget(Target& t, const State& s, const ClearArgs& c, std::vector<D3D12_RECT>& rs);
      void ClearChannels(Target& t, const float col[4], uint8_t mask, const std::vector<D3D12_RECT>& rs);
-@@ -675,8 +800,9 @@ private:
+@@ -675,8 +840,9 @@ private:
          uint32_t src_rects;
          uint32_t dst_points;
      };
@@ -672,7 +746,17 @@ index fe65837..e0bc068 100644
      void CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state, Target& dst_t,
                        const CopyList& l);
      // the target as a guest sized BGRA copy source, and the shrunk copy that holds it when it is not one already
-@@ -766,6 +892,10 @@ private:
+@@ -708,6 +874,9 @@ private:
+     // the constants last uploaded in this command list, reused while a draw's are the same; 0 after a submit
+     decltype(State::vsc) last_vsc_{};
+     D3D12_GPU_VIRTUAL_ADDRESS last_vsc_gpu_ = 0;
++    // the draw's vertex constants as the extension edits them, in ordinary memory: the upload heap is write-combined,
++    // and reading it back (the extension's edits, the motion's copy for the next frame) takes microseconds a draw
++    decltype(State::vsc) vsc_edit_{};
+     DrawConstants last_dc_{};
+     D3D12_GPU_VIRTUAL_ADDRESS last_dc_gpu_ = 0;
+     ComPtr<ID3D12GraphicsCommandList> cl_;
+@@ -766,6 +935,10 @@ private:
      uint32_t bb_w_ = 0;
      uint32_t bb_h_ = 0;
      float scale_ = 1.0f;
@@ -683,7 +767,7 @@ index fe65837..e0bc068 100644
      // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
      struct Late {
          ComPtr<ID3D12Resource> rb[kFrames];
-@@ -801,6 +931,102 @@ private:
+@@ -801,6 +974,125 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -741,6 +825,7 @@ index fe65837..e0bc068 100644
 +    uint32_t fg_objmv_w_ = 0, fg_objmv_h_ = 0;
 +    uint64_t fg_objmv_frame_ = UINT64_MAX;  // the frame it was cleared for, and drawn into
 +    bool bound_mv_ = false;                 // bound as the second target with bound_rt_
++    bool bound_rx_ = false;                 // anti-aliasing's reactive mask bound as the third
 +    uint64_t draw_mv_key_ = 0;              // the draw at hand's MotionKey
 +    bool draw_texbox_ = false;              // the draw at hand's PixelKey::texbox, its DrawConstants::uvbox
 +    float draw_uvbox_[4] = {};
@@ -779,6 +864,28 @@ index fe65837..e0bc068 100644
 +    ComPtr<ID3D12Resource> scene_tmp_;  // StretchScene's copy of the part
 +    D3D12_RESOURCE_STATES scene_tmp_state_{};
 +    ComPtr<ID3D12Resource> aa_depth_, aa_motion_, aa_out_;
++    // its reactive mask (EnsureReactive): R8 at the frame target's size, the frame's effects' share of each pixel
++    ComPtr<ID3D12Resource> aa_rx_;
++    D3D12_RESOURCE_STATES aa_rx_state_{};
++    uint32_t aa_rx_w_ = 0, aa_rx_h_ = 0;
++    uint64_t aa_rx_frame_ = UINT64_MAX;  // the frame it was cleared for
++    uint32_t rx_draws_ = 0;  // this frame's draws into it
++    // ambient occlusion's target (R8, the frame target's size, the part drawn at its quality's), the view it last had
++    ComPtr<ID3D12Resource> ao_;
++    D3D12_RESOURCE_STATES ao_state_{};
++    uint32_t ao_w_ = 0, ao_h_ = 0;
++    FrameView ao_view_;
++    bool ao_view_ok_ = false, ao_said_ = false;
++    bool rx_said_ = false;
++    // XBE_PERF: the GPU's time by part of the frame, timestamps (GpuMark) at each part's start, read back when the
++    // frame's slot is used again
++    ComPtr<ID3D12QueryHeap> ts_heap_;
++    ComPtr<ID3D12Resource> ts_rb_;
++    uint64_t* ts_map_ = nullptr;
++    double ts_ms_ = 0;                  // milliseconds a tick
++    bool ts_failed_ = false;
++    uint32_t ts_marked_[kFrames] = {};  // the marks written for each slot's frame
++    bool ts_resolved_[kFrames] = {};
 +    D3D12_RESOURCE_STATES aa_depth_state_{}, aa_motion_state_{}, aa_out_state_{};
 +    uint32_t aa_w_ = 0, aa_h_ = 0;
 +    DXGI_FORMAT aa_fmt_ = DXGI_FORMAT_UNKNOWN, aa_out_fmt_ = DXGI_FORMAT_UNKNOWN;
@@ -786,7 +893,7 @@ index fe65837..e0bc068 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -814,6 +1040,7 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -814,6 +1106,7 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      HWND hwnd = static_cast<HWND>(app::Window());
      if (!CreateDevice()) return false;
      if (!CreateSwapChain(hwnd)) return false;
@@ -794,7 +901,7 @@ index fe65837..e0bc068 100644
      CreateHeaps();
      CreateBackBufferViews();
      if (!CreateRootSignature()) return false;
-@@ -832,14 +1059,38 @@ bool D3D12Backend::CreateDevice() {
+@@ -832,14 +1125,38 @@ bool D3D12Backend::CreateDevice() {
          ComPtr<ID3D12Debug> dbg;
          if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
      }
@@ -837,7 +944,7 @@ index fe65837..e0bc068 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -850,6 +1101,8 @@ bool D3D12Backend::CreateDevice() {
+@@ -850,6 +1167,8 @@ bool D3D12Backend::CreateDevice() {
      D3D12_COMMAND_QUEUE_DESC qd{};
      qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
      dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue_));
@@ -846,7 +953,7 @@ index fe65837..e0bc068 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -871,6 +1124,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1190,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -858,7 +965,7 @@ index fe65837..e0bc068 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -899,9 +1157,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1223,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -867,11 +974,11 @@ index fe65837..e0bc068 100644
 +    srv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvCount + kMaterialViews, true, srv_heap_);
      smp_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, kSamplerCount, true, smp_heap_);
 -    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames, false, rtv_heap_);
-+    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kAaRtv + 2, false, rtv_heap_);
++    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kAoRtv + 1, false, rtv_heap_);
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,7 +1170,7 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,7 +1236,7 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -880,7 +987,7 @@ index fe65837..e0bc068 100644
      ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
      ranges[1].NumDescriptors = 4;
      D3D12_ROOT_PARAMETER params[4] = {};
-@@ -958,8 +1217,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1283,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -893,7 +1000,14 @@ index fe65837..e0bc068 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -1069,6 +1332,8 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1392,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+     b.Transition.StateBefore = cur;
+     b.Transition.StateAfter = want;
+     cl_->ResourceBarrier(1, &b);
++    g_perf.barriers++;
+     cur = want;
+ }
+ 
  // a resized target gives back its view and its resources
  void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator it) {
      if (bound_rt_ == &it->second || bound_ds_ == &it->second) bound_rt_ = bound_ds_ = nullptr;
@@ -902,7 +1016,7 @@ index fe65837..e0bc068 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1344,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1411,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -911,7 +1025,7 @@ index fe65837..e0bc068 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,6 +1462,13 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,6 +1529,13 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -925,7 +1039,7 @@ index fe65837..e0bc068 100644
      if (rt) {
          if (LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
          Transition(rt->res.Get(), rt->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-@@ -1205,17 +1477,117 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1205,17 +1544,151 @@ bool D3D12Backend::BindTargets(const State& s) {
      if (ds) {
          Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          ds->drawn = true;
@@ -940,19 +1054,53 @@ index fe65837..e0bc068 100644
 +    // frame generation's motion, drawn by the frame's own 3D draws beside its colour (PrevPositionHlsl, MotionOut)
 +    bool mv = (fg_ || aa_on_) && rt && s.rt_back_buffer && EnsureObjectMotion(*rt);
 +    if (mv) Transition(fg_objmv_.Get(), fg_objmv_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
-+    if (rt != bound_rt_ || ds != bound_ds_ || mv != bound_mv_) {
-+        D3D12_CPU_DESCRIPTOR_HANDLE rh[2] = {rt ? Cpu(rtv_heap_.Get(), rt->view, rtv_inc_) : D3D12_CPU_DESCRIPTOR_HANDLE{},
-+                                             Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_)};
++    // anti-aliasing's reactive mask beside them, which the frame's effects write (Extension::Reactive)
++    bool rx = mv && aa_on_ && diag::AaReactive() && EnsureReactive(*rt);
++    if (rx) Transition(aa_rx_.Get(), aa_rx_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    if (rt != bound_rt_ || ds != bound_ds_ || mv != bound_mv_ || rx != bound_rx_) {
++        D3D12_CPU_DESCRIPTOR_HANDLE rh[3] = {rt ? Cpu(rtv_heap_.Get(), rt->view, rtv_inc_) : D3D12_CPU_DESCRIPTOR_HANDLE{},
++                                             Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_),
++                                             Cpu(rtv_heap_.Get(), kAaRxRtv, rtv_inc_)};
          D3D12_CPU_DESCRIPTOR_HANDLE dh = ds ? Cpu(dsv_heap_.Get(), ds->view, dsv_inc_) : D3D12_CPU_DESCRIPTOR_HANDLE{};
 -        cl_->OMSetRenderTargets(rt ? 1 : 0, rt ? &rh : nullptr, FALSE, ds ? &dh : nullptr);
-+        cl_->OMSetRenderTargets(rt ? (mv ? 2 : 1) : 0, rt ? rh : nullptr, FALSE, ds ? &dh : nullptr);
++        cl_->OMSetRenderTargets(rt ? (mv ? (rx ? 3 : 2) : 1) : 0, rt ? rh : nullptr, FALSE, ds ? &dh : nullptr);
          bound_rt_ = rt;
          bound_ds_ = ds;
 +        bound_mv_ = mv;
++        bound_rx_ = rx;
 +    }
 +    return true;
 +}
 +
++// anti-aliasing's reactive mask at the frame target's size, cleared to 0 (nothing reactive) once a frame; false when it
++// can't be made
++bool D3D12Backend::EnsureReactive(const Target& rt) {
++    if (!aa_rx_ || aa_rx_w_ != rt.w || aa_rx_h_ != rt.h) {
++        if (aa_rx_) Release(std::move(aa_rx_));
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++        D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_R8_UNORM, rt.w, rt.h);
++        td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++        D3D12_CLEAR_VALUE cv{};
++        cv.Format = DXGI_FORMAT_R8_UNORM;
++        aa_rx_state_ = D3D12_RESOURCE_STATE_RENDER_TARGET;
++        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, aa_rx_state_, &cv, IID_PPV_ARGS(&aa_rx_)))) {
++            aa_rx_w_ = aa_rx_h_ = 0;
++            return false;
++        }
++        dev_->CreateRenderTargetView(aa_rx_.Get(), nullptr, Cpu(rtv_heap_.Get(), kAaRxRtv, rtv_inc_));
++        aa_rx_w_ = rt.w;
++        aa_rx_h_ = rt.h;
++        aa_rx_frame_ = UINT64_MAX;
++    }
++    if (aa_rx_frame_ != presents_) {
++        Transition(aa_rx_.Get(), aa_rx_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
++        float none[4] = {};
++        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kAaRxRtv, rtv_inc_), none, 0, nullptr);
++        aa_rx_frame_ = presents_;
+     }
+     return true;
+ }
+ 
 +// the motion target at the frame target's size, cleared to kNoMotion once a frame; false when it can't be made
 +bool D3D12Backend::EnsureObjectMotion(const Target& rt) {
 +    if (!fg_objmv_ || fg_objmv_w_ != rt.w || fg_objmv_h_ != rt.h) {
@@ -979,10 +1127,10 @@ index fe65837..e0bc068 100644
 +        float none[4] = {kNoMotion, kNoMotion, 0, 0};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_), none, 0, nullptr);
 +        fg_objmv_frame_ = presents_;
-     }
-     return true;
- }
- 
++    }
++    return true;
++}
++
 +// A 3D draw found again in the next frame by what it draws, as the game streams its meshes into buffers that move from
 +// frame to frame: its program, its first vertices and indices, its counts and first texture. A skinned mesh's vertices
 +// are its pose at rest, so it is found as its bones move.
@@ -1046,7 +1194,7 @@ index fe65837..e0bc068 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1260,6 +1632,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,6 +1733,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -1055,7 +1203,7 @@ index fe65837..e0bc068 100644
      DrawFullScreen(pso, cb.gpu, slot);
      dst.drawn = true;
      bound_rt_ = bound_ds_ = nullptr;
-@@ -1282,6 +1656,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +1757,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -1063,7 +1211,7 @@ index fe65837..e0bc068 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +1702,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +1803,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -1071,7 +1219,7 @@ index fe65837..e0bc068 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1397,23 +1773,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +1874,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -1165,7 +1313,7 @@ index fe65837..e0bc068 100644
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +1863,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +1964,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -1187,7 +1335,7 @@ index fe65837..e0bc068 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +1882,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +1983,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -1195,7 +1343,7 @@ index fe65837..e0bc068 100644
      return code.Get();
  }
  
-@@ -1477,6 +1926,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +2027,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -1225,12 +1373,12 @@ index fe65837..e0bc068 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2082,21 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2183,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
 -    d.NumRenderTargets = k.has_rt ? 1 : 0;
-+    d.NumRenderTargets = k.has_rt ? (k.mv ? 2 : 1) : 0;
++    d.NumRenderTargets = k.has_rt ? (k.mv ? (k.rx ? 3 : 2) : 1) : 0;
      d.RTVFormats[0] = k.has_rt ? DXGI_FORMAT(k.rtfmt) : DXGI_FORMAT_UNKNOWN;
 +    if (k.has_rt && k.mv) {
 +        // frame generation's motion: written as is by a draw that writes depth, kept by the others
@@ -1245,10 +1393,22 @@ index fe65837..e0bc068 100644
 +        m.LogicOp = D3D12_LOGIC_OP_NOOP;
 +        m.RenderTargetWriteMask = k.mv == 2 ? UINT8(D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN) : UINT8(0);
 +    }
++    if (k.has_rt && k.mv && k.rx) {
++        // anti-aliasing's reactive mask: the most of the effects drawn over each pixel, kept by the other draws
++        d.RTVFormats[2] = DXGI_FORMAT_R8_UNORM;
++        auto& r = d.BlendState.RenderTarget[2];
++        r.BlendEnable = k.rx == 2;
++        r.LogicOpEnable = FALSE;
++        r.SrcBlend = r.SrcBlendAlpha = D3D12_BLEND_ONE;
++        r.DestBlend = r.DestBlendAlpha = D3D12_BLEND_ONE;
++        r.BlendOp = r.BlendOpAlpha = D3D12_BLEND_OP_MAX;
++        r.LogicOp = D3D12_LOGIC_OP_NOOP;
++        r.RenderTargetWriteMask = k.rx == 2 ? UINT8(D3D12_COLOR_WRITE_ENABLE_RED) : UINT8(0);
++    }
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2136,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +2249,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -1260,7 +1420,7 @@ index fe65837..e0bc068 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,6 +2160,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +2273,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -1268,7 +1428,7 @@ index fe65837..e0bc068 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1692,6 +2179,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +2292,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -1278,7 +1438,7 @@ index fe65837..e0bc068 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2193,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +2306,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -1293,7 +1453,7 @@ index fe65837..e0bc068 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2223,9 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +2336,9 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -1303,7 +1463,7 @@ index fe65837..e0bc068 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2342,49 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +2455,49 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -1353,7 +1513,7 @@ index fe65837..e0bc068 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,7 +2412,40 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,8 +2525,41 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -1367,8 +1527,8 @@ index fe65837..e0bc068 100644
 +                }
 +                tx.repl_id = id;
 +            }
-+        }
-+    }
+         }
+     }
 +    if (tx.repl_id && !tx.repl && repl_budget_) MakeReplacement(tx);
 +    // an extension's replacement is drawn before the texture pack's image
 +    if (tx.repl) {
@@ -1388,13 +1548,26 @@ index fe65837..e0bc068 100644
 +                stages.res[4 + j] = tx.mat[j].Get();
 +            }
 +            std::memcpy(stages.mat, tx.mat_params, sizeof(stages.mat));
-         }
++        }
 +        if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
 +        return tx.repl.Get();
-     }
++    }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
-@@ -1982,8 +2557,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+     const Tex& drawn = tx.swap ? *tx.swap : tx;
+@@ -1969,7 +2657,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+ constexpr uint32_t kTaddressWrap = 1;
+ constexpr uint32_t kTaddressClamp = 3;
+ 
+-D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stages, bool clamp, uint32_t aniso) {
++// bias: added to the level of detail of a picture's reads (not a target's, not a shadow's): the upscaling scene's,
++// so textures drawn at the part's size are read as sharp as at the whole
++D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stages, bool clamp, uint32_t aniso,
++                                float bias) {
+     D3D12_SAMPLER_DESC sd = {};
+     const auto& t = s.tss[size_t(i)];
+     uint32_t mag = t[kTssMagFilter];
+@@ -1982,8 +2673,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -1412,16 +1585,28 @@ index fe65837..e0bc068 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2575,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2691,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
 -    sd.MinLOD = float(t[kTssMaxMipLevel]);
++    if (bias != 0 && !stages.rt[i] && !stages.info[i].shadow)
++        sd.MipLODBias = std::clamp(sd.MipLODBias + bias, -16.0f, 15.99f);
 +    sd.MinLOD = stages.replaced[i] ? 0.0f : float(t[kTssMaxMipLevel]);
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2144,9 +2726,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2009,7 +2709,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+ uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
+     D3D12_SAMPLER_DESC sd[4];
+     uint32_t aniso = app::Get().aniso;
+-    for (int i = 0; i < 4; i++) sd[i] = StageSampler(s, i, stages, clamp, aniso);
++    float bias = SceneMipBias();
++    for (int i = 0; i < 4; i++) sd[i] = StageSampler(s, i, stages, clamp, aniso, bias);
+     uint64_t key = Hash(sd, sizeof(sd));
+     auto it = samplers_.find(key);
+     if (it != samplers_.end()) return it->second;
+@@ -2144,9 +2845,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -1434,7 +1619,7 @@ index fe65837..e0bc068 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +2747,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +2866,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -1443,7 +1628,7 @@ index fe65837..e0bc068 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +2800,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +2919,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -1466,7 +1651,7 @@ index fe65837..e0bc068 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +2838,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +2957,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -1477,30 +1662,41 @@ index fe65837..e0bc068 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2434,9 +3036,11 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +3154,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+     c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
- // a fresh copy of the draw's vertex constants, kept as the last upload
+-// a fresh copy of the draw's vertex constants, kept as the last upload
 -uint8_t* D3D12Backend::UploadVertexConstants(const State& s) {
 -    Alloc vc = Upload(sizeof(s.vsc), 256);
-+uint8_t* D3D12Backend::UploadVertexConstants(const State& s, const float* prev) {
+-    std::memcpy(vc.cpu, s.vsc.data(), sizeof(s.vsc));
++// a fresh copy of the draw's vertex constants as edited, kept as the last upload (by the title's, s.vsc)
++void D3D12Backend::UploadVertexConstants(const State& s, const void* edited, const float* prev) {
 +    // with the frame before's after them (VC's cp) for a draw's motion, else only the draw's
 +    Alloc vc = Upload(prev ? 2 * sizeof(s.vsc) : sizeof(s.vsc), 256);
-     std::memcpy(vc.cpu, s.vsc.data(), sizeof(s.vsc));
++    std::memcpy(vc.cpu, edited, sizeof(s.vsc));
 +    if (prev) std::memcpy(vc.cpu + sizeof(s.vsc), prev, sizeof(s.vsc));
      std::memcpy(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
      last_vsc_gpu_ = vc.gpu;
-     return vc.cpu;
-@@ -2445,16 +3049,44 @@ uint8_t* D3D12Backend::UploadVertexConstants(const State& s) {
+-    return vc.cpu;
+ }
+ 
  void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                                     GuestExtent size, DrawConstants& c) {
-     // the extension edits the uploaded copy, so its draws always get their own
+-    // the extension edits the uploaded copy, so its draws always get their own
 -    bool same = !ext_ && last_vsc_gpu_ && !std::memcmp(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
 -    uint8_t* vsc = same ? nullptr : UploadVertexConstants(s);
++    // the extension edits a copy, so its draws always get their own upload
++    DrawLap lap;
 +    bool motion = k.mv == 2;
 +    const float* prev = motion ? PrevMotionConstants(draw_mv_key_, &s.vsc[0][0]) : nullptr;
++    lap.Into(g_perf.clap, 0);
 +    bool same = !ext_ && !prev && last_vsc_gpu_ && !std::memcmp(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
-+    uint8_t* vsc = same ? nullptr : UploadVertexConstants(s, prev);
++    float(*vsc)[4] = nullptr;
++    if (!same) {
++        std::memcpy(vsc_edit_.data(), s.vsc.data(), sizeof(s.vsc));
++        vsc = reinterpret_cast<float(*)[4]>(vsc_edit_.data());
++    }
 +    c.motion[0] = prev ? 1.0f : 0.0f;
 +    if (draw_jitter_ && bound_rt_ && aa_jitter_w_ && aa_jitter_h_) {
 +        c.motion[2] = 2 * aa_jitter_[0] / float(aa_jitter_w_);
@@ -1511,13 +1707,20 @@ index fe65837..e0bc068 100644
      if (k.topo == uint32_t(Topology::Points)) c.surf[3] = TargetScale();
      FillFogConstants(s, sh.prog, c);
      FillCombinerConstants(s, c);
-     if (ext_) ext_->Constants(reinterpret_cast<float(*)[4]>(vsc), c.ext, bound_rt_, k.blend ? k.src : 1);
-+    if (motion) KeepMotionConstants(draw_mv_key_, vsc ? vsc : reinterpret_cast<const uint8_t*>(s.vsc.data()));
+-    if (ext_) ext_->Constants(reinterpret_cast<float(*)[4]>(vsc), c.ext, bound_rt_, k.blend ? k.src : 1);
++    lap.Into(g_perf.clap, 4);
++    if (ext_) ext_->Constants(vsc, c.ext, bound_rt_, k.blend ? k.src : 1);
++    lap.Into(g_perf.clap, 2);
++    if (motion) KeepMotionConstants(draw_mv_key_, reinterpret_cast<const uint8_t*>(vsc ? vsc[0] : s.vsc[0].data()));
++    lap.Into(g_perf.clap, 3);
++    if (vsc) UploadVertexConstants(s, vsc, prev);
++    lap.Into(g_perf.clap, 1);
      FillDepthConstants(s, sh, k, c);
      FillTextureConstants(s, sh, stages, c);
 +    if (draw_texbox_) std::memcpy(c.uvbox, draw_uvbox_, sizeof(c.uvbox));
 +    if (stages.mat_stage >= 0) {
 +        std::memcpy(c.mtl, stages.mat, sizeof(stages.mat));
++        c.motion[1] = SceneMipBias();  // which the parallax's reads take back out
 +        // parallax (g_surface_depth): the deepest point's depth, a part of the picture's width, and the most layers
 +        // the view ray steps through
 +        uint32_t depth = g_surface_depth.load(std::memory_order_relaxed);
@@ -1538,7 +1741,15 @@ index fe65837..e0bc068 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2577,6 +3209,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2469,6 +3231,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+     if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
+     binds_.vsc = last_vsc_gpu_;
+     binds_.dc = last_dc_gpu_;
++    lap.Into(g_perf.clap, 4);
+ }
+ 
+ void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
+@@ -2577,6 +3340,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -1562,7 +1773,7 @@ index fe65837..e0bc068 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3243,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3374,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -1573,7 +1784,7 @@ index fe65837..e0bc068 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3258,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3389,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -1630,7 +1841,15 @@ index fe65837..e0bc068 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2815,6 +3480,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +3604,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+         return;
+     }
+     PerfScope perf_draw{g_perf.draw};
++    DrawLap lap;
+     g_perf.draws++;
+     if (cap_) CapStep(s.rt);
+     if (DepthCopy(s)) return;
+@@ -2815,10 +3612,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -1638,7 +1857,12 @@ index fe65837..e0bc068 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -2831,14 +3497,57 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+     if (ext_ && ext_->Bound(*this, s, bound_rt_, bound_ds_, a.pretransformed) && !BindTargets(s)) return;
++    lap(0);
+ 
+     // vertex shader
+     DrawShaders sh = ClassifyShaders(s, a, count);
+@@ -2831,26 +3630,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -1647,6 +1871,15 @@ index fe65837..e0bc068 100644
 +                  s.rs[kRsZEnable] && SimpleState(s, kMZWriteEnable);
 +    pk.motion = motion;
 +    if (motion) draw_mv_key_ = MotionKey(s, a, sh.vkey);
++    // anti-aliasing's reactive mask: a blended effect drawn into the frame before it is anti-aliased that writes no depth
++    // (a spark, fire, a glow, as the extension says), its share of the pixel by how it blends
++    constexpr uint32_t kBlendOne = 1, kBlendSrcAlpha = 0x302;  // D3DBLEND_ONE, D3DBLEND_SRCALPHA (the XDK's values)
++    if (bound_rx_ && aa_done_frame_ != presents_ && SimpleState(s, kMBlendEnable) &&
++        !(s.rs[kRsZEnable] && SimpleState(s, kMZWriteEnable)) && ext_ && ext_->Reactive()) {
++        uint32_t src = SimpleState(s, kMSrcBlend), dst = SimpleState(s, kMDestBlend);
++        pk.reactive = dst == kBlendOne ? (src == kBlendSrcAlpha ? 3 : 2) : 1;
++        rx_draws_++;
++    }
 +    // anti-aliasing's offset: the frame's 3D, until it is anti-aliased (Extension::Jitter); in pixels of the size
 +    // drawn, the scene's part when upscaling
 +    bool world = bound_rt_ && s.rt_back_buffer && ext_ && ext_->Jitter();
@@ -1676,6 +1909,7 @@ index fe65837..e0bc068 100644
      sh.pkey = Hash(&pk, sizeof(pk));
      EnsurePixelShader(pk, sh);
      if (!sh.vs_code || !sh.ps_code) return;
++    lap(1);
  
 -    // pipeline
 +    // the frame's UI starts: its 3D anti-aliased first (and upscaled, its scene closed), so the HUD-less copy is the
@@ -1694,10 +1928,18 @@ index fe65837..e0bc068 100644
 +    // pipeline
      k.sprite = sh.sprite;
 +    k.mv = bound_mv_ ? (motion ? 2 : 1) : 0;
++    k.rx = bound_mv_ && bound_rx_ ? (pk.reactive ? 2 : 1) : 0;
      ID3D12PipelineState* pso = EnsurePipeline(k, sh.vs_code, sh.ps_code);
      if (!pso) return;
      if (ext_) binds_ = {};  // the extension may set anything
-@@ -2848,6 +3557,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+-    if (pso != binds_.pso) cl_->SetPipelineState(pso);
++    if (pso != binds_.pso) {
++        cl_->SetPipelineState(pso);
++        g_perf.pso_sets++;
++    }
+     binds_.pso = pso;
++    lap(2);
+ 
      // constants
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
@@ -1705,16 +1947,25 @@ index fe65837..e0bc068 100644
      DrawConstants c{};
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
-@@ -2860,7 +3570,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
++    lap(3);
+ 
+     if (cap_) {
+         CaptureDraw(s, prim, count, k, c, stages);
+@@ -2860,20 +3719,22 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
 -    SetViewportScissor(s, size.w);
 +    SetViewportScissor(s, size);
      SetBlendFactorStencilRef(s);
++    lap(4);
  
      // geometry, counted while the title runs a visibility test
-@@ -2871,9 +3581,9 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+     uint32_t query = BeginCountedDraw(s);
+     DrawGeometry(a);
+     EndCountedDraw(query);
++    lap(5);
+ }
  
  // a guest rect scaled to the target and clamped to it
  D3D12_RECT ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
@@ -1727,7 +1978,7 @@ index fe65837..e0bc068 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +3599,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +3750,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -1743,7 +1994,7 @@ index fe65837..e0bc068 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2961,7 +3680,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +3831,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -1754,7 +2005,7 @@ index fe65837..e0bc068 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +3764,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +3915,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -1774,7 +2025,7 @@ index fe65837..e0bc068 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +3782,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +3933,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -1783,7 +2034,7 @@ index fe65837..e0bc068 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,7 +3791,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,7 +3942,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -1793,7 +2044,7 @@ index fe65837..e0bc068 100644
          uint32_t taps = uint32_t(std::ceil(std::max(src_scale / dst_scale, 1.0f) - kTapsSlack));
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
-@@ -3084,7 +3809,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +3960,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -1802,7 +2053,7 @@ index fe65837..e0bc068 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +3819,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +3970,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -1821,7 +2072,7 @@ index fe65837..e0bc068 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3136,6 +3861,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +4012,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -1837,7 +2088,7 @@ index fe65837..e0bc068 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3155,16 +3889,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -3155,16 +4040,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -1928,7 +2179,7 @@ index fe65837..e0bc068 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +3985,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +4136,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -1938,7 +2189,7 @@ index fe65837..e0bc068 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +3995,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +4146,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -1948,7 +2199,7 @@ index fe65837..e0bc068 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,22 +4031,619 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,22 +4182,837 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -2101,6 +2352,197 @@ index fe65837..e0bc068 100644
 +    return true;
 +}
 +
++// Ambient occlusion (AmbientOcclusion): how much of the sky above each point of the frame's 3D its surroundings hide,
++// from the depth alone. Each pixel's place in the view and its surface's normal come from the depth buffer (reversed,
++// 1 at the near plane); samples on a spiral within a radius in the view, turned per pixel and per frame (the
++// anti-aliasing gathers the frames), count where they stand above the surface. aoapply then blurs it among neighbours
++// at a like depth and multiplies the frame by it, less under the frame's effects (the reactive mask)
++const char* const kAoHlsl = R"(
++cbuffer P : register(b1) {
++    float4 cam;   // near, far, tan of half the view across, down
++    float4 part;  // the depth's part the frame is in (uv scale), and one of its texels in the frame's uv
++    float4 ao;    // radius in view units, strength, distance where it has faded out, samples
++    float4 fr;    // the frame's number, reactive mask (1) or none, one ambient occlusion texel in the frame's uv
++    float4 aop;   // the ambient occlusion's part of its texture (uv scale)
++};
++Texture2D<float> depth : register(t0);
++Texture2D<float> aot : register(t1);
++Texture2D<float> rx : register(t2);
++SamplerState ls : register(s0);
++SamplerState ps : register(s1);
++struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
++O vs(uint id : SV_VertexID) {
++    O o;
++    float2 t = float2((id << 1) & 2, id & 2);
++    o.p = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
++    o.uv = t;
++    return o;
++}
++float Depth(float2 uv) { return depth.SampleLevel(ps, uv * part.xy, 0); }
++float ViewZ(float d) { return cam.x * cam.y / (d * (cam.y - cam.x) + cam.x); }
++float3 ViewPos(float2 uv, float d) {
++    float z = ViewZ(d);
++    return float3((uv.x * 2 - 1) * cam.z * z, (1 - uv.y * 2) * cam.w * z, z);
++}
++// interleaved gradient noise: a turn per pixel that differs from its neighbours
++float Noise(float2 px) { return frac(52.9829189 * frac(dot(px, float2(0.06711056, 0.00583715)))); }
++float4 aomain(O i) : SV_Target {
++    float d = Depth(i.uv);
++    if (d <= 0) return 1;  // nothing drawn there: the far plane
++    float3 p = ViewPos(i.uv, d);
++    if (p.z >= ao.z) return 1;
++    // the surface's slope from the nearer neighbour each way, so an edge doesn't bend it
++    float2 du = float2(part.z, 0), dv = float2(0, part.w);
++    float3 pr = ViewPos(i.uv + du, Depth(i.uv + du)) - p, pl = p - ViewPos(i.uv - du, Depth(i.uv - du));
++    float3 pd = ViewPos(i.uv + dv, Depth(i.uv + dv)) - p, pu = p - ViewPos(i.uv - dv, Depth(i.uv - dv));
++    float3 dx = abs(pr.z) < abs(pl.z) ? pr : pl, dy = abs(pd.z) < abs(pu.z) ? pd : pu;
++    float3 n = normalize(cross(dx, dy));
++    if (n.z > 0) n = -n;  // facing the camera, which looks along +z
++    // the radius on the screen at the point's distance, in the frame's uv
++    float2 r = ao.x / (2 * p.z * cam.zw);
++    if (max(r.x, r.y) < 0.75 * part.z) return 1;  // under a pixel: too far for any
++    int count = int(ao.w);
++    float turn = (Noise(i.p.xy) + fr.x * 0.618034) * 6.2831853, hidden = 0;
++    [loop] for (int k = 0; k < count; k++) {
++        float t = (k + 0.5) / count;
++        float a = turn + k * 2.3999632;  // the golden angle: a spiral that fills the disc evenly
++        float2 su = i.uv + float2(cos(a), sin(a)) * r * sqrt(t);
++        if (any(su < 0) || any(su > 1)) continue;
++        float sd = Depth(su);
++        if (sd <= 0) continue;
++        float3 v = ViewPos(su, sd) - p;
++        float len = length(v);
++        // above the surface, by its angle to it, less the farther within the radius
++        float near = saturate(1 - len * len / (ao.x * ao.x));
++        hidden += max(dot(v, n) / max(len, 1e-3) - 0.1, 0) * near;
++    }
++    float vis = saturate(1 - ao.y * hidden / count);
++    // faded out with distance: the far half of its reach
++    return lerp(vis, 1, saturate((p.z - 0.5 * ao.z) / (0.5 * ao.z)));
++}
++float4 aoapply(O i) : SV_Target {
++    float zc = ViewZ(Depth(i.uv)), sum = 0, wsum = 0;
++    [unroll] for (int y = -1; y <= 1; y++) {
++        [unroll] for (int x = -1; x <= 1; x++) {
++            float2 su = i.uv + float2(x, y) * fr.zw;
++            float a = aot.SampleLevel(ls, saturate(su) * aop.xy, 0);
++            float w = exp(-abs(ViewZ(Depth(saturate(su))) - zc) / (0.05 * zc));
++            sum += a * w;
++            wsum += w;
++        }
++    }
++    float v = sum / max(wsum, 1e-4);
++    // an effect over the pixel (a spark, a glow) keeps its own light
++    if (fr.y > 0) v = lerp(v, 1, saturate(rx.SampleLevel(ps, i.uv * part.xy, 0) / 0.9));
++    return float4(v, v, v, 1);
++}
++)";
++
++// the frame multiplied by ambient occlusion's: colour times the pass's, alpha kept
++ID3D12PipelineState* D3D12Backend::EnsureAoApplyPipeline(DXGI_FORMAT rtv) {
++    auto& pso = blit_psos_[Hash("aoapply", 7, uint64_t(rtv))];
++    if (pso) return pso.Get();
++    uint64_t h;
++    ID3DBlob* vs = Compile(kAoHlsl, "vs", "vs_5_0", h);
++    ID3DBlob* ps = Compile(kAoHlsl, "aoapply", "ps_5_0", h);
++    if (!vs || !ps) return nullptr;
++    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = FullScreenPipelineDesc(vs, ps, rtv);
++    auto& b = d.BlendState.RenderTarget[0];
++    b.BlendEnable = TRUE;
++    b.SrcBlend = b.SrcBlendAlpha = D3D12_BLEND_ZERO;
++    b.DestBlend = D3D12_BLEND_SRC_COLOR;
++    b.DestBlendAlpha = D3D12_BLEND_ONE;
++    b.BlendOp = b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
++    b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE;
++    if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) return nullptr;
++    return pso.Get();
++}
++
++// ambient occlusion's quality (g_ambient_occlusion): its radius in view units (the title's are about centimetres), its
++// strength, the distance where it has faded out, its samples, and the part of the frame's size it is worked out at
++struct AoQuality {
++    float radius, strength, reach, samples, scale;
++};
++// (strength 2.4: a right-angled corner at about 0.72 after the blur, a flat floor or wall at 1, checked on a made-up
++// depth buffer of one)
++constexpr AoQuality kAoLow{90, 2.4f, 6000, 8, 0.5f};
++constexpr AoQuality kAoHigh{110, 2.4f, 8000, 16, 1.0f};
++
++// Ambient occlusion over the frame's 3D (rw x rh of t from the top left), from anti-aliasing's copy of its depth: worked
++// out into ao_ at its quality's part of that size, then multiplied into the frame, before the anti-aliasing's pass
++// gathers it with the frames before. A frame without a view found takes the last one's camera
++void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const FrameView& view, bool rx) {
++    uint32_t q = g_ambient_occlusion.load(std::memory_order_relaxed);
++    if (!q) return;
++    if (view.valid) {
++        ao_view_ = view;
++        ao_view_ok_ = true;
++    }
++    if (!ao_view_ok_ || ao_view_.near_w <= 0 || ao_view_.far_w <= ao_view_.near_w || ao_view_.fov_y <= 0) return;
++    const AoQuality& aq = q >= 2 ? kAoHigh : kAoLow;
++    if (!ao_ || ao_w_ != t.w || ao_h_ != t.h) {
++        if (ao_) Release(std::move(ao_));
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++        D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_R8_UNORM, t.w, t.h);
++        td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++        D3D12_CLEAR_VALUE cv{};
++        cv.Format = DXGI_FORMAT_R8_UNORM;
++        ao_state_ = D3D12_RESOURCE_STATE_RENDER_TARGET;
++        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, ao_state_, &cv, IID_PPV_ARGS(&ao_)))) {
++            ao_w_ = ao_h_ = 0;
++            return;
++        }
++        dev_->CreateRenderTargetView(ao_.Get(), nullptr, Cpu(rtv_heap_.Get(), kAoRtv, rtv_inc_));
++        ao_w_ = t.w;
++        ao_h_ = t.h;
++    }
++    ID3D12PipelineState* opso = EnsurePassPipeline(kAoHlsl, "aomain", DXGI_FORMAT_R8_UNORM, -1);
++    ID3D12PipelineState* apso = EnsureAoApplyPipeline(t.fmt);
++    if (!opso || !apso) return;
++    uint32_t aw = std::max(1u, uint32_t(float(rw) * aq.scale)), ah = std::max(1u, uint32_t(float(rh) * aq.scale));
++    const D3D12_RESOURCE_STATES kRead =
++        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++    Transition(aa_depth_.Get(), aa_depth_state_, kRead);
++    if (rx) Transition(aa_rx_.Get(), aa_rx_state_, kRead);
++    uint32_t slot = AllocSrvSlots(4);
++    ID3D12Resource* src[4] = {aa_depth_.Get(), ao_.Get(), rx ? aa_rx_.Get() : nullptr, nullptr};
++    DXGI_FORMAT fmt[4] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_UNORM, kBgra};
++    for (int i = 0; i < 4; i++) {
++        D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
++        sv.Format = fmt[i];
++        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++        sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++        sv.Texture2D.MipLevels = 1;
++        dev_->CreateShaderResourceView(src[i], &sv, Cpu(srv_heap_.Get(), slot + i, srv_inc_));
++    }
++    float tan_y = std::tan(0.5f * ao_view_.fov_y);
++    float p[20] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
++                   float(rw) / float(t.w), float(rh) / float(t.h), 1.0f / float(rw), 1.0f / float(rh),
++                   aq.radius, aq.strength, aq.reach, aq.samples,
++                   float(presents_ % 1024), rx ? 1.0f : 0.0f, 1.0f / float(aw), 1.0f / float(ah),
++                   float(aw) / float(t.w), float(ah) / float(t.h), 0, 0};
++    Alloc cb = Upload(256, 256);
++    std::memcpy(cb.cpu, p, sizeof(p));
++    // worked out at its part of the frame's size
++    Transition(ao_.Get(), ao_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    D3D12_CPU_DESCRIPTOR_HANDLE oh = Cpu(rtv_heap_.Get(), kAoRtv, rtv_inc_);
++    cl_->OMSetRenderTargets(1, &oh, FALSE, nullptr);
++    SetFullViewport(aw, ah);
++    DrawFullScreen(opso, cb.gpu, slot);
++    // then multiplied into the frame's part
++    Transition(ao_.Get(), ao_state_, kRead);
++    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    D3D12_CPU_DESCRIPTOR_HANDLE th = Cpu(rtv_heap_.Get(), t.view, rtv_inc_);
++    cl_->OMSetRenderTargets(1, &th, FALSE, nullptr);
++    SetFullViewport(rw, rh);
++    DrawFullScreen(apso, cb.gpu, slot);
++    bound_rt_ = bound_ds_ = nullptr;
++    if (!ao_said_) {
++        LOGR("ambient occlusion: %s, worked out at %ux%u for the 3D at %ux%u", q >= 2 ? "high" : "low", aw, ah, rw, rh);
++        ao_said_ = true;
++    }
++}
++
 +// The frame's 3D anti-aliased in place, before its UI: its motion (each 3D draw's own, else the camera's from depth)
 +// and its depth drawn at its size as frame generation's are, then AMD's pass over it, written back. The world's
 +// draws took this frame's offset (Extension::Jitter), which it takes back out
@@ -2119,6 +2561,7 @@ index fe65837..e0bc068 100644
 +    ID3D12PipelineState* mpso = EnsurePassPipeline(kFrameGenHlsl, "motion", DXGI_FORMAT_R16G16_FLOAT, -1);
 +    ID3D12PipelineState* dpso = EnsurePassPipeline(kFrameGenHlsl, "depthcopy", DXGI_FORMAT_R32_FLOAT, -1);
 +    if (!mpso || !dpso) return false;
++    GpuMark(kGpuAa);
 +    // upscaling: the scene's part drawn, its depth and motion at that size from the top left, as the colour's
 +    bool scene = scene_ == &t;
 +    uint32_t rw = scene ? scene_w_ : t.w, rh = scene ? scene_h_ : t.h;
@@ -2161,13 +2604,21 @@ index fe65837..e0bc068 100644
 +        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 +    Transition(aa_motion_.Get(), aa_motion_state_, kRead);
 +    Transition(aa_depth_.Get(), aa_depth_state_, kRead);
++    // the frame's effects, when they were drawn into this frame at its size
++    bool rx = aa_rx_ && aa_rx_frame_ == presents_ && aa_rx_w_ == t.w && aa_rx_h_ == t.h;
++    // ambient occlusion into the frame, which the vendor's pass then gathers with the frames before
++    GpuMark(kGpuAo);
++    AmbientOcclusion(t, rw, rh, view.valid ? view : FrameView{}, rx);
++    GpuMark(kGpuVendor);
 +    Transition(t.res.Get(), t.state, kRead);
++    if (rx) Transition(aa_rx_.Get(), aa_rx_state_, kRead);
 +    Transition(aa_out_.Get(), aa_out_state_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 +    auto now = std::chrono::steady_clock::now();
 +    framegen::AntiAlias::Frame f;
 +    f.color = t.res.Get();
 +    f.depth = aa_depth_.Get();
 +    f.motion = aa_motion_.Get();
++    f.reactive = rx ? aa_rx_.Get() : nullptr;
 +    f.output = aa_out_.Get();
 +    f.w = t.w;
 +    f.h = t.h;
@@ -2181,6 +2632,7 @@ index fe65837..e0bc068 100644
 +    f.reset = !aa_had_view_ || !have || view.cut;
 +    f.view = view;
 +    f.frame_ms = float(std::chrono::duration<double, std::milli>(now - aa_t_).count());
++    f.sharpness = float(std::min<uint32_t>(g_aa_sharpness.load(std::memory_order_relaxed), 100)) / 100.0f;
 +    aa_t_ = now;
 +    aa_had_view_ = have;
 +    bool ran = aa_->Run(cl_.Get(), f);
@@ -2191,6 +2643,10 @@ index fe65837..e0bc068 100644
 +            aa_said_ = true;
 +        }
 +        aa_ran_frame_ = presents_;
++        if (rx && rx_draws_ && !rx_said_) {
++            LOGR("antialias: %u effects drawn into the reactive mask (sparks, fire, glows: taken from this frame)", rx_draws_);
++            rx_said_ = true;
++        }
 +        g_antialias_drawn.store(rw << 16 | rh, std::memory_order_relaxed);
 +        g_antialias_output.store(t.w << 16 | t.h, std::memory_order_relaxed);
 +        if (aa_out_fmt_ == t.fmt) {
@@ -2207,6 +2663,7 @@ index fe65837..e0bc068 100644
 +            Blit(aa_out_.Get(), aa_out_fmt_, uv, BlitOptions{.alpha = true, .rtv = t.fmt});
 +        }
 +    }
++    GpuMark(kGpuAfter);
 +    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
 +    // upscaling: the scene's depth and motion made whole too, or when the pass did not run, its colour stretched
 +    if (scene) {
@@ -2247,6 +2704,18 @@ index fe65837..e0bc068 100644
 +Target* D3D12Backend::SceneDepth() const { return scene_ && fg_ds_frame_ == presents_ ? fg_ds_ : nullptr; }
 +
 +bool D3D12Backend::SceneTarget(const Target* t) const { return scene_ && t && (t == scene_ || t == SceneDepth()); }
++
++// upscaling's texture bias, in levels: at Quality the drawn size over the output's (log2), so the textures are as sharp
++// as the whole size draws them; at Balanced half that, at Performance none. AMD's formula takes a level more
++// (log2(render / display) - 1), but the reads are then most of the 3D's cost on a GPU that shares its memory: on the
++// Radeon 890M the HD pack's textures and their parallax took 10.4 ms of a frame with half a level more, 9.6 as sharp
++// as the whole size, 6.5 at the drawn size's own, at 1280x800 and 960x600 alike. Its guide warns too that fine, high
++// contrast pictures shimmer with more, which the pack's stone and brick are
++float D3D12Backend::SceneMipBias() const {
++    if (!InScene() || !bound_rt_ || !bound_rt_->w || !scene_w_) return 0;
++    float k = up_quality_ == framegen::kUpQuality ? 1.0f : up_quality_ == framegen::kUpBalanced ? 0.5f : 0.0f;
++    return std::log2(float(scene_w_) / float(bound_rt_->w)) * k + diag::AaMipBias(0.0f);
++}
 +
 +bool D3D12Backend::InScene() const {
 +    if (!scene_) return false;
@@ -2573,7 +3042,7 @@ index fe65837..e0bc068 100644
  }
  
  void D3D12Backend::RenderUi() {
-@@ -3253,19 +4658,202 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5027,202 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -2777,7 +3246,7 @@ index fe65837..e0bc068 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +4863,9 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5232,9 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -2787,7 +3256,7 @@ index fe65837..e0bc068 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,6 +4882,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5251,12 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -2795,7 +3264,12 @@ index fe65837..e0bc068 100644
      f.used = 0;
      f.srv = 0;
      cl_->Reset(f.alloc.Get(), nullptr);
-@@ -3305,6 +4897,21 @@ void D3D12Backend::CountFps() {
+     Begin();
++    GpuFrameStart();
+ }
+ 
+ void D3D12Backend::CountFps() {
+@@ -3305,6 +5267,21 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -2817,7 +3291,7 @@ index fe65837..e0bc068 100644
      }
  }
  
-@@ -3317,12 +4924,14 @@ void LogPerf() {
+@@ -3317,12 +5294,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -2836,7 +3310,7 @@ index fe65837..e0bc068 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,13 +4940,13 @@ void LogPerf() {
+@@ -3331,25 +5310,98 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -2850,10 +3324,85 @@ index fe65837..e0bc068 100644
               p.targets / n, p.rtups / n, p.shrinks / n, p.syncs / n, p.lates / n,
 -             (unsigned long long)p.shaders, (unsigned long long)p.psos);
 +             (unsigned long long)p.shaders, (unsigned long long)p.shaders_kept, (unsigned long long)p.psos);
++        LOGR("perf: draw steps per frame: targets %.2f, shaders %.2f, pipeline %.2f, constants %.2f, views %.2f, "
++             "geometry %.2f ms | %.0f barriers, %.0f pipeline changes",
++             p.lap[0] / n, p.lap[1] / n, p.lap[2] / n, p.lap[3] / n, p.lap[4] / n, p.lap[5] / n, p.barriers / n,
++             p.pso_sets / n);
++        LOGR("perf: constants per frame: the frame before's found %.2f, uploaded %.2f, extension %.2f, kept %.2f, "
++             "the rest %.2f ms",
++             p.clap[0] / n, p.clap[1] / n, p.clap[2] / n, p.clap[3] / n, p.clap[4] / n);
++        if (p.gpu_frames) {
++            double g = double(p.gpu_frames);
++            LOGR("perf: GPU per frame %.2f ms: 3D %.2f, motion and depth %.2f, ambient occlusion %.2f, "
++                 "anti-aliasing %.2f, after it (UI, output) %.2f",
++                 p.gpu[kGpuParts] / g, p.gpu[0] / g, p.gpu[1] / g, p.gpu[2] / g, p.gpu[3] / g, p.gpu[4] / g);
++        }
          g_perf = Perf{};
          perf_start = PerfClock::now();
          perf_frames = 0;
-@@ -3348,8 +4957,9 @@ void D3D12Backend::Present(const Surface& front) {
+     }
+ }
+ 
++void D3D12Backend::GpuMark(uint32_t mark) {
++    if (!diag::Perf() || ts_failed_) return;
++    if (!ts_heap_) {
++        D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, kFrames * kGpuMarks, 0};
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
++        D3D12_RESOURCE_DESC bd = BufferDesc(uint64_t(kFrames) * kGpuMarks * sizeof(uint64_t));
++        uint64_t freq = 0;
++        void* p = nullptr;
++        bool made = SUCCEEDED(dev_->CreateQueryHeap(&qd, IID_PPV_ARGS(&ts_heap_))) &&
++                    SUCCEEDED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd,
++                                                            D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++                                                            IID_PPV_ARGS(&ts_rb_))) &&
++                    SUCCEEDED(queue_->GetTimestampFrequency(&freq)) && freq && SUCCEEDED(ts_rb_->Map(0, nullptr, &p));
++        if (!made) {
++            LOGR("perf: no GPU timestamps");
++            ts_failed_ = true;
++            ts_heap_.Reset();
++            return;
++        }
++        ts_map_ = static_cast<uint64_t*>(p);
++        ts_ms_ = 1000.0 / double(freq);
++    }
++    uint32_t slot = uint32_t(frame_ % kFrames);
++    cl_->EndQuery(ts_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * kGpuMarks + mark);
++    ts_marked_[slot] |= 1u << mark;
++}
++
++void D3D12Backend::GpuFrameEnd() {
++    if (!diag::Perf() || !ts_heap_) return;
++    uint32_t slot = uint32_t(frame_ % kFrames);
++    // a frame begun before the timestamps were: not counted
++    bool whole = ts_marked_[slot] & 1u;
++    if (!whole) GpuMark(kGpuStart);
++    // the parts the frame did not have (no anti-aliasing) take no time: marked at its end
++    for (uint32_t m = kGpuStart + 1; m < kGpuMarks; m++)
++        if (!(ts_marked_[slot] & 1u << m)) GpuMark(m);
++    cl_->ResolveQueryData(ts_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * kGpuMarks, kGpuMarks, ts_rb_.Get(),
++                          uint64_t(slot) * kGpuMarks * sizeof(uint64_t));
++    ts_resolved_[slot] = whole;
++}
++
++void D3D12Backend::GpuFrameStart() {
++    if (!diag::Perf()) return;
++    uint32_t slot = uint32_t(frame_ % kFrames);
++    if (ts_resolved_[slot] && ts_map_) {
++        const uint64_t* t = ts_map_ + slot * kGpuMarks;
++        bool ordered = true;
++        for (uint32_t m = 1; m < kGpuMarks; m++) ordered = ordered && t[m] >= t[m - 1];
++        if (ordered) {
++            for (uint32_t m = 0; m < kGpuParts; m++) g_perf.gpu[m] += double(t[m + 1] - t[m]) * ts_ms_;
++            g_perf.gpu[kGpuParts] += double(t[kGpuMarks - 1] - t[0]) * ts_ms_;
++            g_perf.gpu_frames++;
++        }
++    }
++    ts_resolved_[slot] = false;
++    ts_marked_[slot] = 0;
++    GpuMark(kGpuStart);
++}
++
+ void D3D12Backend::Present(const Surface& front) {
      PerfScope perf_present{g_perf.present};
      if (cap_) {
          FinishCapture(front);
@@ -2865,7 +3414,13 @@ index fe65837..e0bc068 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3365,9 +4975,21 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +5412,28 @@ void D3D12Backend::Present(const Surface& front) {
+ 
+     uint32_t bi = swap_->GetCurrentBackBufferIndex();
+     DrawFrame(t, bi);
++    GpuFrameEnd();
+     Submit(false);
+     present_fence_[presents_ % (kFrames + 1)].store(fence_value_);
      DeliverReports();
      bool vsync = app::Get().vsync;
      auto perf_swap = PerfClock::now();
@@ -2884,10 +3439,11 @@ index fe65837..e0bc068 100644
 +             (unsigned long long)presents_, scene_draws_, scene_late_);
 +    }
 +    scene_draws_ = scene_late_ = 0;
++    rx_draws_ = 0;
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +5008,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +5452,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -2933,7 +3489,7 @@ index fe65837..e0bc068 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +5052,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +5496,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -2942,7 +3498,7 @@ index fe65837..e0bc068 100644
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
 diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
-index ce6acda..b4377d4 100644
+index ce6acda..4557d99 100644
 --- a/runtime/gpu/ext.h
 +++ b/runtime/gpu/ext.h
 @@ -17,6 +17,7 @@
@@ -2993,7 +3549,7 @@ index ce6acda..b4377d4 100644
  class Extension {
  public:
      virtual ~Extension() = default;
-@@ -74,19 +108,40 @@ public:
+@@ -74,19 +108,44 @@ public:
      virtual void MakeTarget(const Surface&, bool /*depth*/, uint32_t /*gw*/, uint32_t /*gh*/, float& /*scale*/, DXGI_FORMAT& /*fmt*/) {}
      virtual void BeginDraw(const State&) {}
      virtual void EndDraw() {}
@@ -3021,6 +3577,10 @@ index ce6acda..b4377d4 100644
 +    // the draw at hand is the 3D world drawn into the frame: true moves it by anti-aliasing's sub-pixel offset
 +    // (framegen.h, AntiAlias), which only the frame's 3D may take
 +    virtual bool Jitter() { return false; }
++    // the draw at hand, blended into the frame before its UI without writing depth, is an effect the anti-aliasing
++    // takes from this frame rather than from the frames before (a spark, fire, a glow drawn over the world): true
++    // writes its share of each pixel to the reactive mask (framegen.h, AntiAlias::Frame::reactive), so it doesn't smear
++    virtual bool Reactive() { return false; }
      // a draw's constants: the vertex registers as uploaded, DrawConstants::ext; src_blend 1 without blending
      virtual void Constants(float (*/*vsc*/)[4], float* /*ext*/, const Target* /*rt*/, uint32_t /*src_blend*/) {}
 +    // HDR output: true when this draw starts the frame's UI, after the frame's last 3D draw. The frame as it is before
@@ -3036,10 +3596,10 @@ index ce6acda..b4377d4 100644
  inline std::unique_ptr<Extension> g_extension;
 diff --git a/runtime/gpu/framegen.cpp b/runtime/gpu/framegen.cpp
 new file mode 100644
-index 0000000..f242c7c
+index 0000000..0075fe1
 --- /dev/null
 +++ b/runtime/gpu/framegen.cpp
-@@ -0,0 +1,985 @@
+@@ -0,0 +1,990 @@
 +// Frame generation by AMD FSR 3 or NVIDIA DLSS, and anti-aliasing and upscaling by AMD FSR or NVIDIA DLSS (framegen.h). Each vendor's library is loaded at run time from beside
 +// the executable, never linked: without the files the game runs as it did.
 +#include "gpu/framegen.h"
@@ -3711,7 +4271,7 @@ index 0000000..f242c7c
 +// the frame's offset from Halton's (2, 3), a sequence 8 times the upscale squared long (AMD's
 +// ffxQueryDescUpscaleGetJitterPhaseCount; NVIDIA asks for at least as many)
 +void HaltonJitter(uint64_t frame, float ratio, float& x, float& y) {
-+    int32_t phases = std::max(8, int32_t(8.0f * ratio * ratio));
++    int32_t phases = (std::max)(8, int32_t(8.0f * ratio * ratio));
 +    int32_t i = int32_t(frame % uint64_t(phases)) + 1;
 +    x = Halton(i, 2) - 0.5f;
 +    y = Halton(i, 3) - 0.5f;
@@ -3759,8 +4319,8 @@ index 0000000..f242c7c
 +    // AMD's ffxQueryDescUpscaleGetRenderResolutionFromQualityMode: the output's size over the ratio, rounded down
 +    void RenderSize(uint32_t w, uint32_t h, uint32_t quality, uint32_t& rw, uint32_t& rh) override {
 +        float ratio = FsrRatio(quality);
-+        rw = std::max(1u, uint32_t(float(w) / ratio));
-+        rh = std::max(1u, uint32_t(float(h) / ratio));
++        rw = (std::max)(1u, uint32_t(float(w) / ratio));
++        rh = (std::max)(1u, uint32_t(float(h) / ratio));
 +    }
 +
 +    void Jitter(uint64_t frame, float ratio, float& x, float& y) const override { HaltonJitter(frame, ratio, x, y); }
@@ -3779,6 +4339,7 @@ index 0000000..f242c7c
 +        d.color = ffxApiGetResourceDX12(f.color, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 +        d.depth = ffxApiGetResourceDX12(f.depth, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 +        d.motionVectors = ffxApiGetResourceDX12(f.motion, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
++        if (f.reactive) d.reactive = ffxApiGetResourceDX12(f.reactive, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 +        d.output = ffxApiGetResourceDX12(f.output, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
 +        d.jitterOffset = {f.jitter[0], f.jitter[1]};
 +        d.motionVectorScale = {float(f.rw), float(f.rh)};  // UV units to pixels of the size drawn
@@ -3882,8 +4443,8 @@ index 0000000..f242c7c
 +            rh = s.optimalRenderHeight;
 +        } else {
 +            float ratio = FsrRatio(quality);
-+            rw = std::max(1u, uint32_t(float(w) / ratio));
-+            rh = std::max(1u, uint32_t(float(h) / ratio));
++            rw = (std::max)(1u, uint32_t(float(w) / ratio));
++            rh = (std::max)(1u, uint32_t(float(h) / ratio));
 +        }
 +        size_w_ = w;
 +        size_h_ = h;
@@ -3923,6 +4484,7 @@ index 0000000..f242c7c
 +        sl::Resource color(sl::ResourceType::eTex2d, f.color, kRead);
 +        sl::Resource depth(sl::ResourceType::eTex2d, f.depth, kRead);
 +        sl::Resource motion(sl::ResourceType::eTex2d, f.motion, kRead);
++        sl::Resource reactive(sl::ResourceType::eTex2d, f.reactive, kRead);
 +        sl::Resource out(sl::ResourceType::eTex2d, f.output, uint32_t(D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 +        // the inputs' top left part, the output whole
 +        sl::Extent drawn{0, 0, f.rw, f.rh}, whole{0, 0, f.w, f.h};
@@ -3931,8 +4493,11 @@ index 0000000..f242c7c
 +            sl::ResourceTag(&out, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &whole),
 +            sl::ResourceTag(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &drawn),
 +            sl::ResourceTag(&motion, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &drawn),
++            // the effects' share: DLSS's bias toward this frame's colour, lerp(history, current, bias)
++            sl::ResourceTag(&reactive, sl::kBufferTypeBiasCurrentColorHint, sl::ResourceLifecycle::eValidUntilEvaluate,
++                            &drawn),
 +        };
-+        r = g_sl->tag_(*token, viewport_, tags, 4, cl);
++        r = g_sl->tag_(*token, viewport_, tags, f.reactive ? 5 : 4, cl);
 +        if (r != sl::Result::eOk) {
 +            FG_FIRST(4, "antialias: DLSS tags %d", int(r));
 +            return false;
@@ -4027,10 +4592,10 @@ index 0000000..f242c7c
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/framegen.h b/runtime/gpu/framegen.h
 new file mode 100644
-index 0000000..e1e432a
+index 0000000..4a3d203
 --- /dev/null
 +++ b/runtime/gpu/framegen.h
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,136 @@
 +// Frame generation: a frame made between each two the title draws, by AMD FidelityFX Super Resolution 3 frame
 +// generation (any Direct3D 12 card) or NVIDIA DLSS frame generation through Streamline (GeForce RTX 40 and 50). And
 +// the frame's anti-aliasing and upscaling (AntiAlias), by AMD FSR or NVIDIA DLSS.
@@ -4136,6 +4701,9 @@ index 0000000..e1e432a
 +        ID3D12Resource* color = nullptr;   // the frame's colour, in ALL_SHADER_RESOURCE
 +        ID3D12Resource* depth = nullptr;   // R32_FLOAT, the colour's size, reversed (1 near), ALL_SHADER_RESOURCE
 +        ID3D12Resource* motion = nullptr;  // R16G16_FLOAT, the colour's size: to the frame before in UV units
++        // R8_UNORM, the colour's size, ALL_SHADER_RESOURCE: the effects' share of each pixel (sparks, fire, glows: no
++        // depth or motion of their own), 0 to 0.9, taken from this frame rather than gathered; may be null
++        ID3D12Resource* reactive = nullptr;
 +        ID3D12Resource* output = nullptr;  // the colour's size, in UNORDERED_ACCESS
 +        uint32_t w = 0, h = 0;             // the output's size, and the colour's
 +        uint32_t rw = 0, rh = 0;           // the part of the colour, depth and motion drawn, from the top left
@@ -4165,7 +4733,7 @@ index 0000000..e1e432a
 +
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 6d263d6..cbc11aa 100644
+index 6d263d6..04be33a 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
 @@ -32,8 +32,13 @@ struct VOut {
@@ -4452,7 +5020,7 @@ index 6d263d6..cbc11aa 100644
      o.d1 = saturate(oD1);
      o.b0 = o.d0;
      o.b1 = o.d1;
-@@ -857,21 +980,178 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -857,21 +980,186 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      o.tc2 = oT2;
      o.tc3 = oT3;
      o.fogamt = fogfactor(abs(cp.z));
@@ -4504,12 +5072,18 @@ index 6d263d6..cbc11aa 100644
 +    int layers = (int)clamp(lerp(mtl[0].x * 0.5, mtl[0].x, 1 - vn), 4, 48);
 +    float layer = 1.0 / layers;
 +    float2 duv = reach * layer, at = uv;
-+    float ray = 0, here = saturate((1 - mto.SampleGrad(sm, at, dx, dy).r) * 2.27), before = here;
++    // the march's reads at one level of detail, the pixel's footprint by its area: trilinear, without the sampler's
++    // anisotropic taps (up to 16 a read, each step) or upscaling's texture bias (motion.y, which SampleLevel takes too)
++    float mw, mh;
++    mto.GetDimensions(mw, mh);
++    float2 fx = dx * float2(mw, mh), fy = dy * float2(mw, mh);
++    float lod = 0.25 * log2(max(dot(fx, fx) * dot(fy, fy), 1e-12)) - motion.y;
++    float ray = 0, here = saturate((1 - mto.SampleLevel(sm, at, lod).r) * 2.27), before = here;
 +    [loop] for (int k = 0; k < layers && ray < here; k++) {
 +        before = here;
 +        at += duv;
 +        ray += layer;
-+        here = saturate((1 - mto.SampleGrad(sm, at, dx, dy).r) * 2.27);
++        here = saturate((1 - mto.SampleLevel(sm, at, lod).r) * 2.27);
 +    }
 +    if (ray <= 0) return uv;
 +    // between the last two layers, where the ray went under the surface
@@ -4625,15 +5199,17 @@ index 6d263d6..cbc11aa 100644
 +    return float4((before - here) * float2(0.5, -0.5), 0, 0);
 +}
 +)";
-+        s += "float4 main(VOut i, bool front : SV_IsFrontFace, out float4 mvout : SV_Target1) : SV_Target0 {\n";
-+        s += "    mvout = MotionOut(i);\n";
-+    } else {
-+        s += F("float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n");
 +    }
++    // the outputs past the colour: frame generation's motion (SV_Target1), anti-aliasing's reactive mask (SV_Target2)
++    std::string outs;
++    if (k.motion) outs += ", out float4 mvout : SV_Target1";
++    if (k.reactive) outs += ", out float rxout : SV_Target2";
++    s += "float4 main(VOut i, bool front : SV_IsFrontFace" + outs + (outs.empty() ? ") : SV_Target {\n" : ") : SV_Target0 {\n");
++    if (k.motion) s += "    mvout = MotionOut(i);\n";
      s += "    float4 tc0 = i.tc0, tc1 = i.tc1, tc2 = i.tc2, tc3 = i.tc3;\n";
      s += k.two_sided ? "    float4 v0 = front ? i.d0 : i.b0, v1 = front ? i.d1 : i.b1;\n" : "    float4 v0 = i.d0, v1 = i.d1;\n";
      s += "    if (misc.w == 0) v1 = float4(0, 0, 0, 1);\n";
-@@ -899,6 +1179,7 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -899,6 +1187,7 @@ std::string PixelHlsl(const PixelKey& k) {
              ps.code += wc + wa + "}\n";
          }
          body += ps.code;
@@ -4641,7 +5217,7 @@ index 6d263d6..cbc11aa 100644
          if (k.final_abcd || k.final_efg) {
              ps.stage = 8;
              uint32_t fl = k.final_efg & 0xFF;
-@@ -922,13 +1203,16 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -922,13 +1211,16 @@ std::string PixelHlsl(const PixelKey& k) {
              const uint32_t* f = k.ff[i];
              if (f[0] <= 1) break;
              const TexInfo& t = k.tex[i];
@@ -4659,7 +5235,7 @@ index 6d263d6..cbc11aa 100644
              else if (t.kind == kTex2D) body += F("float4 t%d = tex%d.Sample(smp%d, %s);\n", i, i, i, uv.c_str());
              else if (t.kind == kTexCube && !(cube = Hooks().Cube(t, i, F("tc%d.xyz", i))).empty()) body += F("float4 t%d = %s;\n", i, cube.c_str());
              else if (t.kind) body += F("float4 t%d = tex%d.Sample(smp%d, tc%d.xyz);\n", i, i, i, i);
-@@ -940,6 +1224,7 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -940,11 +1232,17 @@ std::string PixelHlsl(const PixelKey& k) {
              std::string a = f[4] <= 1 ? std::string("cur.a") : FfOp(f[4], FfArg(f[5], i, true), FfArg(f[6], i, true), FfArg(f[7], i, true), i, true);
              body += F("{ float3 c3 = saturate(%s); float c1 = saturate(%s); %s = float4(c3, c1); }\n", rgb.c_str(), a.c_str(), dst);
          }
@@ -4667,8 +5243,19 @@ index 6d263d6..cbc11aa 100644
          body += "cur.rgb = saturate(cur.rgb + v1.rgb);\n";
          body += "float4 outc = float4(lerp(fogin.rgb, cur.rgb, fogin.a), cur.a);\n";
      }
+     if (k.alphatest) body += "alphatest(outc.a);\n";
+-    body += Hooks().Output() + "return outc;\n}\n";
++    body += Hooks().Output();
++    // the effect's share of what the pixel shows, at most 0.9 (AMD: the upscaler keeps a little history even there)
++    if (k.reactive == 1) body += "rxout = min(outc.a, 0.9);\n";
++    if (k.reactive == 2) body += "rxout = min(max(outc.r, max(outc.g, outc.b)), 0.9);\n";
++    if (k.reactive == 3) body += "rxout = min(max(outc.r, max(outc.g, outc.b)) * outc.a, 0.9);\n";
++    body += "return outc;\n}\n";
+     s += body;
+     return k.quad ? QuadHlsl(std::move(s)) : s;
+ }
 diff --git a/runtime/gpu/shaders.h b/runtime/gpu/shaders.h
-index 08d9bff..6b358ed 100644
+index 08d9bff..2796d19 100644
 --- a/runtime/gpu/shaders.h
 +++ b/runtime/gpu/shaders.h
 @@ -15,6 +15,9 @@ struct TexInfo {
@@ -4681,17 +5268,20 @@ index 08d9bff..6b358ed 100644
  };
  enum : uint8_t {
      kTexWide = 4,    // an upscaled target shrunk by the pass: each tap averaged over console texels
-@@ -34,6 +37,9 @@ struct PixelKey {
+@@ -34,6 +37,12 @@ struct PixelKey {
      uint32_t proj = 0;       // fixed function: bit per stage sampled at coordinates divided by w
      uint32_t quad = 0;       // a screen quad: QuadHlsl
      uint32_t alphatest = 0;  // alpha test on: only then may the shader discard, which turns off early depth tests
 +    uint32_t material = 0;   // 1 + the stage whose replacement has material maps (t4, t5, DrawConstants::mtl), else 0
 +    uint32_t motion = 0;     // frame generation's motion to SV_Target1 (MotionOut), for a 3D draw that writes depth
++    // anti-aliasing's reactive mask to SV_Target2, for a blended effect in the frame's 3D (Extension::Reactive): its
++    // share of the pixel, 1 its alpha, 2 its colour (added as is), 3 its colour times its alpha (added by alpha)
++    uint32_t reactive = 0;
 +    uint32_t texbox = 0;     // stage 0 read only inside DrawConstants::uvbox (Extension::TexelBox): a 2D quad's
      bool operator==(const PixelKey& o) const;
  };
  
-@@ -46,6 +52,11 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]);
+@@ -46,6 +55,11 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]);
  std::string VertexProgramHlsl(const std::vector<uint32_t>& program, uint16_t regs, uint64_t decode = 0);
  // the program reads c-37, the viewport offset that carries the XDK's half pixel screen space offset
  bool ReadsViewportOffset(const std::vector<uint32_t>& program);
@@ -4703,7 +5293,7 @@ index 08d9bff..6b358ed 100644
  // fixed function vertex state a shader is built for
  struct FixedKey {
      uint32_t light = 0;    // bit 0 lighting, 1 specular, 2 local viewer, 3 normalize, then D3DMCS 2 bits each from bit 8:
-@@ -56,6 +67,8 @@ struct FixedKey {
+@@ -56,6 +70,8 @@ struct FixedKey {
  FixedKey MakeFixedKey(const State& s);
  std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode = 0, const FixedKey& f = {});
  std::string PixelHlsl(const PixelKey& k);
@@ -4712,7 +5302,7 @@ index 08d9bff..6b358ed 100644
  // a screen quad's vertex or pixel shader: texture coordinates as the quad was drawn, before its far edges were pulled out
  std::string QuadHlsl(std::string s);
  // depth stored reversed (1 at the near clip, 0 at the far one) from DrawConstants::zparams, for a vertex shader
-@@ -78,6 +91,8 @@ struct ShaderHooks {
+@@ -78,6 +94,8 @@ struct ShaderHooks {
      virtual std::string Fetched(const TexInfo&, int) const { return {}; }
      // outc to the target, after the alpha test
      virtual std::string Output() const;
@@ -4721,7 +5311,7 @@ index 08d9bff..6b358ed 100644
  };
  inline const ShaderHooks* g_shader_hooks = nullptr;
  inline bool g_reversed_depth = false;  // the renderer stores depth reversed: shadow compares turn r with it
-@@ -103,8 +118,17 @@ struct DrawConstants {
+@@ -103,8 +121,18 @@ struct DrawConstants {
      float mat[5][4];     // material diffuse, ambient, specular, emissive, power
      float amb[4];        // D3DRS_AMBIENT
      float lt[8][7][4];   // per light: diffuse, specular, ambient, position range, direction falloff, attenuation, cos theta/2 phi/2
@@ -4730,6 +5320,7 @@ index 08d9bff..6b358ed 100644
 +                         // negative up and left
      float zparams[4];    // ReversedDepthHlsl: a w buffer's scale (0 for a z buffer), its far w, the polygon offset
 +    float motion[4];     // x: 1 when the vertex constants' second half (cp) holds the same draw's of the frame before;
++                         // y: a material's draw, upscaling's texture bias (its parallax's reads take it back out);
 +                         // zw: anti-aliasing's sub-pixel offset in clip units, for the frame's 3D (0 otherwise)
 +    // PixelKey::material: Material::params, then the view's tangents of half its angles across and down and the
 +    // target's size in host pixels; only a material's shaders declare it
