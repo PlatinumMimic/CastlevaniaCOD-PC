@@ -50,7 +50,6 @@ uint32_t g_ambient_occlusion = 1;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern uint32_t g_button_layout;    // texpack.cpp
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
-extern std::atomic<bool> g_sky_backdrops;   // widescreen.cpp: the rampart's sky with its room's own fog
 extern std::atomic<bool> g_wide_trace_frame;  // widescreen.cpp: log the next frame's draws
 
 namespace {
@@ -443,8 +442,7 @@ void ControlsTab(bool& save) {
     }
 }
 
-// for looking into how a screen is drawn: a capture of the frame behind the menu, and the rampart sky's special case
-// switched for comparing (not saved)
+// for looking into how a screen is drawn: a capture of the frame behind the menu
 void ToolsTab() {
     if (!BeginRows("tools")) return;
     Row("Frame capture", "Saves the game's next frame, the one behind this menu: how each part of it was drawn and "
@@ -470,13 +468,6 @@ void ToolsTab() {
             else
                 ImGui::TextDisabled("saving...");
         }
-    }
-    Row("Rampart sky fog", "On: the sky of the Abandoned Castle's rampart keeps its room's own fog, and its parts "
-                           "past the room's far plane are not drawn. Off (as it starts): it is drawn as the rest of "
-                           "the room is, with the fog and draw distance as set. For comparing; not saved.");
-    {
-        bool on = g_sky_backdrops;
-        if (Check("##skyfog", &on)) g_sky_backdrops = on;
     }
     ImGui::EndTable();
 }
@@ -664,14 +655,17 @@ void MenuUi(double fps) {
     ImVec2 size{std::min(io.DisplaySize.y * 0.8f, io.DisplaySize.x * 0.45f), io.DisplaySize.y - 2 * margin};
     ImGui::SetNextWindowPos({io.DisplaySize.x - margin, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {1.0f, 0.5f});
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    // the menu keeps the keyboard and controller, except while a drop-down's list is open: focusing the menu then
-    // would close the list the moment it opened
-    if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) ImGui::SetNextWindowFocus();
     bool open = true;
     g_focus_help = nullptr;
     if (ImGui::Begin("Castlevania: Curse of Darkness - Settings", &open,
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                          ImGuiWindowFlags_NoSavedSettings)) {
+        // the menu keeps the keyboard and controller: focused when it has lost the focus, not each frame, which put
+        // the D-pad's and arrow keys' place back to the window itself every frame (its pages are a child window), so
+        // they moved nothing; nor while a drop-down's list is open, which focusing the menu would close
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))
+            ImGui::SetWindowFocus();
         bool save = false;
         const ImGuiStyle& st = ImGui::GetStyle();
         float line = ImGui::GetTextLineHeightWithSpacing();
