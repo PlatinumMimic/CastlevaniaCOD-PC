@@ -301,6 +301,11 @@ public:
     // menus and the frame pass, never
     bool Jitter() override { return back_buffer_ && d_.world; }
 
+    // the anti-aliasing's reactive mask (the SDK's Reactive), for a blended draw that writes no depth: the frame's
+    // effects, sparks, fire, magic and the light flares drawn as 2D sprites over the world, which have no motion of their
+    // own and would smear. Not a tint over the whole frame, nor the frame drawn back over itself
+    bool Reactive() override { return back_buffer_ && !d_.whole && !d_.target; }
+
     // a 2D quad reads its texture only inside its coordinates (the SDK's TexelBox): sprites, words and figures cut
     // from a sheet, whose edges upscaled blend in the sheet's next picture (a faint line under each of the pause
     // menu's figures, beside "Weapon"). Not a whole frame quad (a fill, the frame pass, a picture widened to the

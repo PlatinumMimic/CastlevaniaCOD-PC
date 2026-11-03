@@ -41,6 +41,10 @@ uint32_t g_surface_depth = 2;
 uint32_t g_antialias = 1;
 // and drawn below the frame's size, made up to it: 0 native, 1 quality, 2 balanced, 3 performance (gpu::g_upscale)
 uint32_t g_upscale = 0;
+// AMD FSR's sharpening after it, percent (gpu::g_aa_sharpness)
+uint32_t g_sharpening = 30;
+// the 3D darkened where surfaces meet: 0 off, 1 low, 2 high (gpu::g_ambient_occlusion)
+uint32_t g_ambient_occlusion = 1;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern uint32_t g_button_layout;    // texpack.cpp
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
@@ -222,9 +226,10 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled(running ? "AMD FSR in its place (logs\\castlevania.log)" : "not running (logs\\castlevania.log)");
     }
     Row("Upscaling", "The 3D world drawn below the screen's resolution and rebuilt to it by the anti-aliasing above, "
-                     "for a higher frame rate on a slower graphics card: Quality draws two thirds of it across, "
-                     "Performance half. The HUD, menus and text stay at the screen's resolution. Native draws it "
-                     "whole.");
+                     "for a higher frame rate on a slower graphics card: Quality draws two thirds of it across with "
+                     "textures as sharp as the full resolution's, Balanced a little less of both, Performance half "
+                     "with textures at that size's own detail, the lightest on a handheld. The HUD, menus and text "
+                     "stay at the screen's resolution. Native draws it whole.");
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
         save |= Choice<uint32_t>("##up", g_upscale, {0, 1, 2, 3}, {"Native", "Quality", "Balanced", "Performance"});
@@ -237,6 +242,31 @@ void GraphicsTab(bool& save) {
             char text[64];
             std::snprintf(text, sizeof(text), "3D at %ux%u of %ux%u", drawn >> 16, drawn & 0xFFFF, out >> 16, out & 0xFFFF);
             ImGui::TextDisabled("%s", text);
+        }
+    }
+    Row("Sharpening", "AMD FSR's sharpening of the 3D after it is smoothed: more brings back fine texture detail, too much "
+                      "outlines edges. NVIDIA DLSS has no sharpening of its own.");
+    {
+        int sharp = int(g_sharpening);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        if (ImGui::SliderInt("##sharp", &sharp, 0, 100, sharp ? "%d%%" : "Off", ImGuiSliderFlags_AlwaysClamp)) {
+            g_sharpening = uint32_t(sharp);
+            save = true;
+        }
+        if (gpu::g_antialias_running.load(std::memory_order_relaxed) == 2) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("not used by DLSS");
+        }
+    }
+    Row("Ambient occlusion", "Soft shadow where surfaces meet: corners, the gaps between stones, under railings, where "
+                             "feet touch the floor. Worked out from the 3D's depth before the anti-aliasing smooths it, "
+                             "so it needs anti-aliasing on. Low is lighter on the graphics card.");
+    {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##ao", g_ambient_occlusion, {0, 1, 2}, {"Off", "Low", "High"});
+        if (g_ambient_occlusion && !g_antialias) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("needs anti-aliasing");
         }
     }
     Row("Frame generation", "A frame made between each two the game draws, for twice the frame rate on a 120 Hz or "
@@ -420,6 +450,8 @@ void Defaults() {
     g_surface_depth = 2;
     g_antialias = 1;
     g_upscale = 0;
+    g_sharpening = 30;
+    g_ambient_occlusion = 1;
     app::ApplyDisplay();
 }
 
@@ -528,6 +560,8 @@ void MenuToRenderer() {
     gpu::g_surface_depth.store(std::min<uint32_t>(g_surface_depth, 2), std::memory_order_relaxed);
     gpu::g_antialias.store(std::min<uint32_t>(g_antialias, 2), std::memory_order_relaxed);
     gpu::g_upscale.store(std::min<uint32_t>(g_upscale, 3), std::memory_order_relaxed);
+    gpu::g_aa_sharpness.store(std::min<uint32_t>(g_sharpening, 100), std::memory_order_relaxed);
+    gpu::g_ambient_occlusion.store(std::min<uint32_t>(g_ambient_occlusion, 2), std::memory_order_relaxed);
 }
 
 void MenuUi(double fps) {
