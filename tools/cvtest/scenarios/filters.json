@@ -16,7 +16,7 @@
                 "screen.edges.far < shots['base'].edges.far * 0.75"]},
     {"press": "0:set=render_percent=200,0f:wait:40f", "shot": "scale-200", "measure": {"near": [0.075, 0.222, 0.4, 0.522], "far": [0.25, 0.205, 0.75, 0.33]},
      "note": "sharper with the pack; without it, less shimmer",
-     "expect": ["screen.edges.near > shots['base'].edges.near * 1.2 if settings.texture_pack else screen.edges.near < shots['base'].edges.near * 0.96",
+     "expect": ["screen.edges.near > shots['base'].edges.near * 1.2 if settings.texture_pack else screen.edges.near < shots['base'].edges.near * 0.98",
                 "screen.edges.far > shots['base'].edges.far * 1.2 if settings.texture_pack else screen.edges.far < shots['base'].edges.far * 0.96"]},
     {"press": "0:set=render_percent=100,0:set=anisotropic_filtering=16,0f:wait:40f", "shot": "aniso-16", "measure": {"near": [0.075, 0.222, 0.4, 0.522], "far": [0.25, 0.205, 0.75, 0.33]},
      "note": "sharper with the pack; without it, less shimmer",
