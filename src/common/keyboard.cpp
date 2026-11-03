@@ -11,7 +11,8 @@
 // CV_PAD_SCRIPT="<ms>:<button>[+<button>...][:<hold ms>],..." presses buttons at times measured from the game's
 // first read of the pad (default hold 150 ms). A time ending in f counts the game's frames instead, its hold too
 // ("120f:a:10f", default hold 9 frames), so a run does not drift when frames take longer. Buttons: up down left
-// right start back a b x y black white lt rt lsu lsd lsl lsr (left stick) rsu rsd rsl rsr (right stick). "@file"
+// right start back a b x y black white lt rt l3 r3 (the sticks clicked in: l3+r3 opens the settings menu, as on a
+// controller) lsu lsd lsl lsr (left stick) rsu rsd rsl rsr (right stick). "@file"
 // reads the same entries from a file, one per line or comma separated.
 //
 // CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
@@ -22,11 +23,17 @@
 //   0:heal                            his HP back to full at the command's start
 //   0:capture                         the frame after the command's start into XBE_CAPTURE_DIR, as F3 captures one:
 //                                     each draw's state and textures (the SDK's gpu/d3d12.cpp)
+//   0:unplug, 0:plug                  the virtual controller unplugged, plugged in again
+//   0:click=<control>                 the settings menu's control of that name clicked (CV_MENU_STATE, menu.cpp)
+// With XBE_VIRTUAL_PAD=1 the presses go to the SDK's virtual controller (core/input.cpp), which the game reads through
+// SDL as it reads a real one: SDL's mapping, the PS2 layout and the stick response take them, a frame later, and the
+// rumble the game sends reaches it (telemetry "vpad").
 //   0:walk=<x>/<z>[/<r>]:<hold>       the bot (bot.cpp) walks him there; fight[=<r>] fights the enemies near
 //                                     him. The command ends once its goals are done, or at the hold at most
 //   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
 //   0:set=<setting>=<value>           a setting changed at the command's start, as the in-game menu changes it
-//                                     (render_percent, anisotropic_filtering, widescreen, vsync, or a game option
+//                                     (display_mode, width, height, render_percent, anisotropic_filtering,
+//                                     widescreen, vsync, or a game option
 //                                     such as lament_save): the renderer takes it after the frame it presents. One
 //                                     read only at the start (texture_pack) is an error: give it with --set instead
 //   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
@@ -60,6 +67,7 @@ std::string RoomListJson();          // telemetry.cpp
 void TelemetryFrame(const input::Pad& p);        // telemetry.cpp
 void RequestWarp(int map, int room, int entry);  // game/warp.cpp
 void HealPlayer();                               // telemetry.cpp
+void MenuClick(const std::string& name);         // menu.cpp
 struct BotGoal {                                 // bot.cpp
     bool fight;
     float x, z, radius;
@@ -73,7 +81,7 @@ namespace {
 
 HWND g_hwnd = nullptr;
 
-enum : uint16_t { kUp = 1, kDown = 2, kLeft = 4, kRight = 8, kStart = 0x10, kBack = 0x20 };
+enum : uint16_t { kUp = 1, kDown = 2, kLeft = 4, kRight = 8, kStart = 0x10, kBack = 0x20, kL3 = 0x40, kR3 = 0x80 };
 enum { kA, kB, kX, kY, kBlack, kWhite, kLT, kRT };
 
 bool Down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
@@ -136,6 +144,8 @@ struct Step {
     int map = -1, room = 0, entry = 0;  // warp=<map>.<room>[.<entry>]: live commands send Hector there at their start
     bool goal = false, heal = false;    // walk=, fight (bot.cpp) and heal, live commands too
     bool capture = false;               // capture, a live command's too
+    int plug = -1;                      // unplug 0, plug 1: the virtual controller
+    std::string click;                  // click=<control>: the settings menu's
     BotGoal bot{};
     float guard = 0;  // guard=<r>, for the bot's walks
     std::string set;  // set=<setting>=<value>
@@ -175,6 +185,8 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b == "right") s.buttons |= kRight;
             else if (b == "start") s.buttons |= kStart;
             else if (b == "back") s.buttons |= kBack;
+            else if (b == "l3") s.buttons |= kL3;  // the sticks clicked in
+            else if (b == "r3") s.buttons |= kR3;
             else if (b == "a") s.analog |= 1u << kA;
             else if (b == "b") s.analog |= 1u << kB;
             else if (b == "x") s.analog |= 1u << kX;
@@ -196,6 +208,9 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b.rfind("rs=", 0) == 0) Stick(b.substr(3), s.rx, s.ry);
             else if (b == "heal") s.heal = true;
             else if (b == "capture") s.capture = true;
+            else if (b.rfind("click=", 0) == 0) s.click = b.substr(6);
+            else if (b == "unplug") s.plug = 0;
+            else if (b == "plug") s.plug = 1;
             else if (b.rfind("guard=", 0) == 0) s.guard = float(std::atof(b.c_str() + 6));
             else if (b.rfind("set=", 0) == 0) s.set = b.substr(4);
             else if (b.rfind("walk=", 0) == 0) {
@@ -228,7 +243,15 @@ void ApplySetting(const std::string& entry) {
     uint32_t n = uint32_t(std::strtoul(value.c_str(), nullptr, 10));
     bool on = value == "true" || value == "1";
     app::Settings& st = app::Get();
-    if (key == "render_percent") st.render_percent = n;
+    if (key == "display_mode") {
+        static const char* const kModes[] = {"fullscreen", "borderless", "windowed"};
+        for (uint32_t i = 0; i < 3; i++)
+            if (value == kModes[i]) st.display_mode = app::DisplayMode(i);
+        app::ApplyDisplay();
+    } else if (key == "width" || key == "height") {
+        (key == "width" ? st.width : st.height) = n;
+        app::ApplyDisplay();
+    } else if (key == "render_percent") st.render_percent = n;
     else if (key == "anisotropic_filtering") st.aniso = n;
     else if (key == "widescreen") st.widescreen = on;
     else if (key == "vsync") st.vsync = on;
@@ -373,6 +396,8 @@ void LiveWait() {
                 if (s.map >= 0) RequestWarp(s.map, s.room, s.entry);
                 if (s.heal) HealPlayer();
                 if (s.capture) gpu::g_capture = true;
+                if (s.plug >= 0) input::VirtualPlug(s.plug == 1);
+                if (!s.click.empty()) MenuClick(s.click);
                 if (!s.set.empty()) ApplySetting(s.set);
                 if (s.goal) goals.push_back(s.bot);
                 guard = (std::max)(guard, s.guard);
@@ -447,18 +472,6 @@ void KeyboardPad(int port, input::Pad& p) {
     }
     if (LiveOn()) LiveWait();
     p.connected = true;
-    // both sticks clicked in together: the menu from a controller
-    static bool sticks = false;
-    bool both = (p.buttons & 0xC0) == 0xC0;
-    if (both && !sticks) MenuToggle();
-    sticks = both;
-    if (MenuOpen()) {
-        // the menu has the keyboard and controller
-        p = input::Pad{};
-        p.connected = true;
-        TelemetryFrame(p);
-        return;
-    }
     // the PS2 layout: a controller's shoulders do what the Xbox's triggers do and its triggers what white and black
     // do, as on the PS2 (L1 resets the camera, R1 guards) and as its icons say (texpack.cpp); the keyboard keeps its
     // own keys
@@ -472,12 +485,28 @@ void KeyboardPad(int port, input::Pad& p) {
         Rest(p.rx, p.ry);
     }
     Keyboard(p);
-    Scripted(p);
+    // a test's presses: into the pad, or with the virtual controller into it, which SDL reads back the frame after
+    input::Pad scripted{};
+    input::Pad& to = input::VirtualOn() ? scripted : p;
+    Scripted(to);
     if (LiveOn()) {
         std::lock_guard lock(g_live_m);
         const Live& l = LiveState();
-        if (l.running) Press(p, l.steps, MsSince(l.start), int64_t(d3d::Swaps() - l.start_frame));
-        if (l.running && l.goals) BotPad(p);
+        if (l.running) Press(to, l.steps, MsSince(l.start), int64_t(d3d::Swaps() - l.start_frame));
+        if (l.running && l.goals && !MenuOpen()) BotPad(to);
+    }
+    if (input::VirtualOn()) input::VirtualSet(scripted);
+    // both sticks clicked in together: the menu, from a controller or a test's script; once a press, of the threads the
+    // game reads the pad on (each sees it, one turns it)
+    static std::atomic<bool> sticks{false};
+    bool both = (p.buttons & (kL3 | kR3)) == (kL3 | kR3);
+    if (!sticks.exchange(both) && both) MenuToggle();
+    if (MenuOpen()) {
+        // the menu has the keyboard and controller
+        p = input::Pad{};
+        p.connected = true;
+        TelemetryFrame(p);
+        return;
     }
     // the camera turned the other way for a push of the right stick: a controller's, the keyboard's arrows and a test's
     if (g_invert_camera_x) p.rx = Flip(p.rx);

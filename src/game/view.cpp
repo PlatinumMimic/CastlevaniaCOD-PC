@@ -23,8 +23,10 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "common/release.h"
 #include "core/log.h"
@@ -163,6 +165,21 @@ bool ViewFov(double& game, double& drawn) {
     game = 2 * std::atan(224 / (g_view.screen * y)) * 180 / kPi;
     drawn = 2 * std::atan(224 / (d * y)) * 180 / kPi;
     return true;
+}
+
+// for tests (telemetry.cpp: "view"), as the game set them and as they are drawn: the vertical field of view in degrees,
+// the far plane, the fog's coefficient b (128 * near * far / (far - near), which the fog's distances scale)
+std::string ViewJson() {
+    const uint8_t* base = g_view.base;
+    if (!base) return "";
+    double fov_game = 0, fov_drawn = 0;
+    ViewFov(fov_game, fov_drawn);
+    float a, b;
+    Coefficients(g_view.fog_near, g_view.fog_far, a, b);
+    char out[256];
+    std::snprintf(out, sizeof(out), "{\"fov\":[%.2f,%.2f],\"far\":[%d,%d],\"fog\":[%.6g,%.6g]}", fov_game,
+                  fov_drawn, g_view.far_z, Get<int32_t>(base, kFarZ), g_view.fog_set ? b : 0.0f, Get<float>(base, kFogB));
+    return out;
 }
 
 // the screen distance, each frame of play from the active camera: shorter for a wider field of view, but in story

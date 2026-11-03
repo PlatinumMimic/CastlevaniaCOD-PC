@@ -1,5 +1,5 @@
 // First start: the game files. No game found: the assets folder is made beside the exe and opened, and the player is
-// told what goes in it. (A release's game code is the SDK's: runtime/app/game_code.cpp builds Castlevania.dll from
+// told what goes in it (CV_NO_OPEN set, for tests: not opened). (A release's game code is the SDK's: runtime/app/game_code.cpp builds Castlevania.dll from
 // the player's own default.xbe on the first start.)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -11,6 +11,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -60,10 +61,10 @@ void AskForGame() {
         fs::create_directories(assets, ec);
     }
     LOGR("setup: no game in %s, asking for it", assets.string().c_str());
-    ShellExecuteW(nullptr, L"open", assets.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    Fail(L"Put your copy of Castlevania: Curse of Darkness (USA, original Xbox) in the assets folder that just "
-         L"opened:\n\n  - its disc image (.iso), or\n  - the extracted disc: default.xbe with its data, movie and "
-         L"sound folders.\n\nThen start the game again.");
+    if (!std::getenv("CV_NO_OPEN")) ShellExecuteW(nullptr, L"open", assets.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    Fail(L"Put your copy of Castlevania: Curse of Darkness (the original Xbox's, USA or European) in the assets folder "
+         L"that just opened:\n\n  - its disc image (.iso), or\n  - the extracted disc: default.xbe with its data, movie "
+         L"and sound folders.\n\nThen start the game again.");
 }
 
 }  // namespace

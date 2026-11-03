@@ -77,6 +77,9 @@ struct Seen2D {
 std::mutex g_seen_m;
 Seen2D g_marker, g_hud;
 uint64_t g_frame = 0;
+// the sky's draws of the frame before (Backdrop): given back the room's own fog, and not drawn, wholly past its far
+// plane
+uint32_t g_sky_fogged = 0, g_sky_held = 0;
 
 constexpr float kSqueeze = (4.0f / 3.0f) / (16.0f / 9.0f);
 
@@ -209,6 +212,12 @@ public:
             hud_ = false;
             hud_free_ = g_hud_edges && !PauseMenuUp() && !ModalUp() && !(SceneWord() & 0x20000);
             HudPieces();
+            {
+                std::lock_guard lock(g_seen_m);
+                g_sky_fogged = sky_fogged_;
+                g_sky_held = sky_held_;
+            }
+            sky_fogged_ = sky_held_ = 0;
         }
         return false;
     }
@@ -417,12 +426,16 @@ private:
         auto same = [](float a, float b) { return b != 0 && std::fabs(a - b) <= 1e-4f * std::fabs(b); };
         float* fog = vsc[kFog];
         // c91 holds them over 128 (the PS2's fog units): (A / 128, B / 128, 0, 0)
+        bool fogged = false;
         for (int i = 0; i < 4; i++)
             for (int k = 0; k < 2; k++)
                 if (same(fog[i], fog_drawn_[k] / 128)) {
                     fog[i] = fog_game_[k] / 128;
+                    fogged = true;
                     break;
                 }
+        sky_fogged_ += fogged;
+        sky_held_ += d_.w.lo > far_z_;
         return d_.w.lo > far_z_;
     }
 
@@ -489,6 +502,7 @@ private:
     bool picture_ = false;
     bool hud_ = false;       // the frame's HUD has begun
     bool hud_free_ = false;  // the HUD may go to the edges this frame
+    uint32_t sky_fogged_ = 0, sky_held_ = 0;  // this frame's sky draws, Backdrop's
     std::vector<Rect> rects_, pieces_;  // this frame's HUD draws; the pieces of the frame before's
     float gw_ = 640;
     // backdrops (Backdrop): the room's own fog coefficients and far plane, the fog drawn, the backdrops' textures
@@ -513,7 +527,7 @@ private:
 }  // namespace
 
 // "wide" for telemetry.cpp: {"marker": {"x": [lo, hi], "move": m, "ago": frames since drawn}, "hud": {...}}, each
-// once drawn
+// once drawn, and "sky": the frame before's draws of a sky given back the room's own fog, and those held back
 std::string WideJson() {
     std::lock_guard lock(g_seen_m);
     std::string out;
@@ -523,6 +537,12 @@ std::string WideJson() {
         std::snprintf(b, sizeof(b), "%s\"%s\":{\"x\":[%.1f,%.1f],\"move\":%.4f,\"ago\":%llu}",
                       out.empty() ? "" : ",", name, seen->x0, seen->x1, seen->move,
                       (unsigned long long)(g_frame - seen->frame));
+        out += b;
+    }
+    if (g_frame) {
+        char b[96];
+        std::snprintf(b, sizeof(b), "%s\"sky\":{\"fogged\":%u,\"held\":%u}", out.empty() ? "" : ",", g_sky_fogged,
+                      g_sky_held);
         out += b;
     }
     return out.empty() ? out : "{" + out + "}";

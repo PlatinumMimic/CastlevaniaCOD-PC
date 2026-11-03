@@ -417,7 +417,7 @@ index 0582ed9..08f503e 100644
  }  // namespace app
 +#endif
 diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
-index 4570d3b..43e9eec 100644
+index 4570d3b..86906e6 100644
 --- a/runtime/app/game_files.cpp
 +++ b/runtime/app/game_files.cpp
 @@ -7,8 +7,16 @@
@@ -594,14 +594,16 @@ index 4570d3b..43e9eec 100644
          if (other_name.empty()) {
              other = {assets, std::move(xbe)};
              other_disc = std::move(disc);
-@@ -110,6 +238,7 @@ bool FindGame(GameFiles& game) {
+@@ -110,7 +238,9 @@ bool FindGame(GameFiles& game) {
          if (consider(iso, std::move(xbe), std::move(disc))) return true;
      }
  
 +    if (release) RunRelease(*release);  // returns only when it could not start
      if (other_name.empty()) {
++        LOGR("Game: no copy of the game in %s", assets.empty() ? "a folder named assets" : assets.string().c_str());
          MessageBoxW(nullptr, kGame.missing, kGame.short_title, MB_ICONERROR);
          return false;
+     }
 diff --git a/runtime/app/handover.cpp b/runtime/app/handover.cpp
 index bf8e3b9..0e3215b 100644
 --- a/runtime/app/handover.cpp
@@ -891,8 +893,39 @@ index a739de7..41b16c4 100644
 +
 +}  // namespace app
 +#endif
+diff --git a/runtime/audio/audio.h b/runtime/audio/audio.h
+index 6daa1dd..e1c9700 100644
+--- a/runtime/audio/audio.h
++++ b/runtime/audio/audio.h
+@@ -1,4 +1,7 @@
+ #pragma once
++#include <algorithm>
++#include <atomic>
++#include <cmath>
+ #include <cstdint>
+ #include <functional>
+ 
+@@ -9,4 +12,18 @@ constexpr uint32_t kRate = 48000;
+ // the platform output pulls interleaved stereo float frames from render
+ void StartOutput(std::function<void(float* out, uint32_t frames)> render);
+ 
++// what the output has played, for tests (a game's telemetry): the frames it rendered, and those of its blocks with
++// sound in them (a sample over -60 dB)
++struct Played {
++    uint64_t frames = 0, loud = 0;
++};
++inline std::atomic<uint64_t> g_played_frames{0}, g_played_loud{0};
++inline void Count(const float* b, uint32_t frames) {
++    float peak = 0;
++    for (uint32_t i = 0; i < frames * 2; i++) peak = std::max(peak, std::fabs(b[i]));
++    g_played_frames += frames;
++    if (peak > 0.001f) g_played_loud += frames;
++}
++inline Played PlayedSoFar() { return {g_played_frames, g_played_loud}; }
++
+ }  // namespace audio
 diff --git a/runtime/audio/xaudio2.cpp b/runtime/audio/xaudio2.cpp
-index f95ebf5..f6ccc97 100644
+index f95ebf5..96eff60 100644
 --- a/runtime/audio/xaudio2.cpp
 +++ b/runtime/audio/xaudio2.cpp
 @@ -1,4 +1,5 @@
@@ -902,16 +935,48 @@ index f95ebf5..f6ccc97 100644
  #ifndef WIN32_LEAN_AND_MEAN
  #define WIN32_LEAN_AND_MEAN
  #endif
-@@ -68,3 +69,4 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+@@ -58,6 +59,7 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+             }
+             float* b = &bufs[(n % kSlots) * kFrames * 2];
+             render(b, kFrames);
++            Count(b, kFrames);
+             XAUDIO2_BUFFER xb{};
+             xb.AudioBytes = kFrames * 8;
+             xb.pAudioData = reinterpret_cast<const BYTE*>(b);
+@@ -68,3 +70,4 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
  }
  
  }  // namespace audio
 +#endif
 diff --git a/runtime/core/input.cpp b/runtime/core/input.cpp
-index bb7f3a9..98496e1 100644
+index bb7f3a9..ecc720a 100644
 --- a/runtime/core/input.cpp
 +++ b/runtime/core/input.cpp
-@@ -27,7 +27,18 @@ void AddPad(SDL_JoystickID id) {
+@@ -2,6 +2,8 @@
+ #include "core/input.h"
+ 
+ #include <algorithm>
++#include <atomic>
++#include <cstdlib>
+ #include <iterator>
+ #include <mutex>
+ #include <utility>
+@@ -20,14 +22,92 @@ std::mutex g_lock;
+ bool g_sdl = false;
+ SDL_Gamepad* g_pads[4] = {};
+ 
++bool IsVirtual(SDL_JoystickID id);
++bool LeftOut(SDL_JoystickID id);
++
+ void AddPad(SDL_JoystickID id) {
+     for (SDL_Gamepad* pad : g_pads)
+         if (pad && SDL_GetGamepadID(pad) == id) return;
++    if (LeftOut(id)) {
++        const char* name = SDL_GetGamepadNameForID(id);
++        LOGR("input: %s left out: a test's run", name ? name : "a controller");
++        return;
++    }
+     SDL_Gamepad** slot = std::find(std::begin(g_pads), std::end(g_pads), nullptr);
      if (slot == std::end(g_pads)) return;
      *slot = SDL_OpenGamepad(id);
      const char* name = *slot ? SDL_GetGamepadName(*slot) : SDL_GetError();
@@ -928,10 +993,69 @@ index bb7f3a9..98496e1 100644
 +         SDL_GetGamepadStringForType(SDL_GetGamepadType(*slot)) ? SDL_GetGamepadStringForType(SDL_GetGamepadType(*slot)) : "?",
 +         link == SDL_JOYSTICK_CONNECTION_WIRED ? "wired" : link == SDL_JOYSTICK_CONNECTION_WIRELESS ? "wireless" : "connection unknown",
 +         SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? "yes" : "no");
++}
++
++// tests: a virtual controller (XBE_VIRTUAL_PAD=1), attached at the start and read through SDL as a real one is; its
++// buttons and sticks set by VirtualSet, the motors the game drives kept for VirtualState. Its joystick's buttons and
++// axes are SDL's gamepad buttons and axes in their own order, so SDL maps it as a gamepad of all of them.
++struct Virtual {
++    SDL_JoystickID id = 0;
++    SDL_Joystick* js = nullptr;
++    std::atomic<uint16_t> low{0}, high{0}, peak_low{0}, peak_high{0};
++    std::atomic<uint32_t> rumbles{0};
++} g_virtual;
++const bool kVirtual = [] {
++    const char* v = std::getenv("XBE_VIRTUAL_PAD");
++    return v && *v && *v != '0';
++}();
++// tests: XBE_NO_PADS, no controller at all; with the virtual one, no other (a controller plugged into the PC would
++// press its buttons into the run)
++const bool kNoPads = [] {
++    const char* v = std::getenv("XBE_NO_PADS");
++    return v && *v && *v != '0';
++}();
++
++bool IsVirtual(SDL_JoystickID id) { return g_virtual.id && id == g_virtual.id; }
++bool LeftOut(SDL_JoystickID id) { return kVirtual ? !IsVirtual(id) : kNoPads; }
++
++bool SDLCALL VirtualRumble(void*, Uint16 low, Uint16 high) {
++    g_virtual.low = low;
++    g_virtual.high = high;
++    if (low > g_virtual.peak_low) g_virtual.peak_low = low;
++    if (high > g_virtual.peak_high) g_virtual.peak_high = high;
++    g_virtual.rumbles++;
++    return true;
++}
++
++void AttachVirtual() {
++    SDL_VirtualJoystickDesc desc;
++    SDL_INIT_INTERFACE(&desc);
++    desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
++    desc.nbuttons = SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1;  // south to the d-pad's right, the standard pad's
++    desc.button_mask = (1u << desc.nbuttons) - 1;
++    desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
++    desc.axis_mask = (1u << desc.naxes) - 1;
++    desc.name = "Virtual test controller";
++    desc.Rumble = VirtualRumble;
++    g_virtual.id = SDL_AttachVirtualJoystick(&desc);
++    g_virtual.js = g_virtual.id ? SDL_OpenJoystick(g_virtual.id) : nullptr;
++    // the triggers at rest: a trigger axis reads from its most negative
++    if (g_virtual.js)
++        for (SDL_GamepadAxis a : {SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER})
++            SDL_SetJoystickVirtualAxis(g_virtual.js, a, -32768);
++    LOGR("input: virtual controller %s", g_virtual.js ? "attached" : SDL_GetError());
++}
++
++void DetachVirtual() {
++    if (g_virtual.js) SDL_CloseJoystick(g_virtual.js);
++    if (g_virtual.id) SDL_DetachVirtualJoystick(g_virtual.id);
++    g_virtual.js = nullptr;
++    g_virtual.id = 0;
++    LOGR("input: virtual controller detached");
  }
  
  void RemovePad(SDL_JoystickID id) {
-@@ -45,12 +56,17 @@ void UpdatePads() {
+@@ -45,12 +125,17 @@ void UpdatePads() {
      uint64_t now = SDL_GetTicks();
      if (!g_sdl || now == last) return;
      last = now;
@@ -949,7 +1073,15 @@ index bb7f3a9..98496e1 100644
  }
  
  }  // namespace
-@@ -126,11 +142,38 @@ uint16_t HeldOnAnyController() {
+@@ -73,6 +158,7 @@ void Init() {
+     LOGI("input: SDL %d.%d.%d", SDL_VERSIONNUM_MAJOR(v), SDL_VERSIONNUM_MINOR(v), SDL_VERSIONNUM_MICRO(v));
+     std::lock_guard lock(g_lock);
+     g_sdl = true;
++    if (kVirtual) AttachVirtual();
+     int count = 0;
+     if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
+         for (int i = 0; i < count; i++) AddPad(ids[i]);
+@@ -126,11 +212,78 @@ uint16_t HeldOnAnyController() {
      return held;
  }
  
@@ -969,6 +1101,46 @@ index bb7f3a9..98496e1 100644
 +    return port >= 0 && port < 4 ? g_pads[port] : nullptr;
 +}
 +#endif
++
++bool VirtualOn() { return kVirtual; }
++
++// the controller's report as SDL's buttons and axes, which Poll reads back (the frame after)
++void VirtualSet(const Pad& p) {
++    std::lock_guard lock(g_lock);
++    SDL_Joystick* js = g_virtual.js;
++    if (!js) return;
++    constexpr SDL_GamepadButton kButtons[] = {
++        SDL_GAMEPAD_BUTTON_DPAD_UP,   SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_BUTTON_DPAD_LEFT,
++        SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_START,     SDL_GAMEPAD_BUTTON_BACK,
++        SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK};
++    for (int i = 0; i < 8; i++) SDL_SetJoystickVirtualButton(js, kButtons[i], (p.buttons >> i) & 1);
++    constexpr SDL_GamepadButton kAnalog[] = {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST,
++                                             SDL_GAMEPAD_BUTTON_WEST,  SDL_GAMEPAD_BUTTON_NORTH,
++                                             SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER};
++    for (int i = 0; i < 6; i++) SDL_SetJoystickVirtualButton(js, kAnalog[i], p.analog[i] != 0);
++    auto trigger = [](uint8_t v) { return int16_t(v ? (v << 7) | 0x7F : -32768); };
++    SDL_SetJoystickVirtualAxis(js, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, trigger(p.analog[6]));
++    SDL_SetJoystickVirtualAxis(js, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, trigger(p.analog[7]));
++    SDL_SetJoystickVirtualAxis(js, SDL_GAMEPAD_AXIS_LEFTX, p.lx);
++    SDL_SetJoystickVirtualAxis(js, SDL_GAMEPAD_AXIS_LEFTY, int16_t(-1 - p.ly));  // SDL's sticks have y down
++    SDL_SetJoystickVirtualAxis(js, SDL_GAMEPAD_AXIS_RIGHTX, p.rx);
++    SDL_SetJoystickVirtualAxis(js, SDL_GAMEPAD_AXIS_RIGHTY, int16_t(-1 - p.ry));
++}
++
++// the virtual controller unplugged, or plugged in again
++void VirtualPlug(bool plugged) {
++    std::lock_guard lock(g_lock);
++    if (!kVirtual || plugged == (g_virtual.js != nullptr)) return;
++    plugged ? AttachVirtual() : DetachVirtual();
++}
++
++VirtualReport VirtualState() {
++    std::lock_guard lock(g_lock);
++    bool open = std::any_of(std::begin(g_pads), std::end(g_pads),
++                            [](SDL_Gamepad* pad) { return pad && g_virtual.id && SDL_GetGamepadID(pad) == g_virtual.id; });
++    return {g_virtual.js != nullptr, open, g_virtual.low, g_virtual.high, g_virtual.peak_low, g_virtual.peak_high,
++            g_virtual.rumbles};
++}
 +
  // the motors run until set again
  void Rumble(int port, uint16_t left, uint16_t right) {
@@ -990,13 +1162,24 @@ index bb7f3a9..98496e1 100644
  
  }  // namespace input
 diff --git a/runtime/core/input.h b/runtime/core/input.h
-index 2255f8d..018ea9f 100644
+index 2255f8d..d03694f 100644
 --- a/runtime/core/input.h
 +++ b/runtime/core/input.h
-@@ -16,5 +16,11 @@ uint16_t HeldOnAnyController();  // face buttons as XINPUT_GAMEPAD_A/B/X/Y masks
+@@ -16,5 +16,22 @@ uint16_t HeldOnAnyController();  // face buttons as XINPUT_GAMEPAD_A/B/X/Y masks
  // the controller on that port, then GameInfo::pad
  Pad Poll(int port);
  void Rumble(int port, uint16_t left, uint16_t right);
++// tests: a virtual controller, XBE_VIRTUAL_PAD=1, the only controller then; XBE_NO_PADS=1 none (input.cpp)
++bool VirtualOn();
++void VirtualSet(const Pad& p);       // its buttons and sticks, which the next Poll reads through SDL
++void VirtualPlug(bool plugged);      // unplugged, or plugged in again
++struct VirtualReport {
++    bool attached = false, open = false;  // plugged in; a port took it
++    uint16_t low = 0, high = 0;           // the motors as the game last drove them through SDL
++    uint16_t peak_low = 0, peak_high = 0;  // the most of each since the start
++    uint32_t rumbles = 0;                 // how many times
++};
++VirtualReport VirtualState();
 +#ifndef _WIN32
 +// Linux: the main loop takes SDL's events, so it hands the controllers plugged in or out here (an SDL_JoystickID)
 +void PadAdded(uint32_t id);
@@ -2275,10 +2458,10 @@ index bec6e36..088429d 100644
              W32(value + 0x58, 0x00400100);            // factory video standard
 diff --git a/runtime/linux/audio.cpp b/runtime/linux/audio.cpp
 new file mode 100644
-index 0000000..ff62a4d
+index 0000000..63981d5
 --- /dev/null
 +++ b/runtime/linux/audio.cpp
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,54 @@
 +// Linux: mixer output through SDL's audio (PipeWire, PulseAudio or ALSA, whichever the system has)
 +#ifndef _WIN32
 +#include <SDL3/SDL.h>
@@ -2305,6 +2488,7 @@ index 0000000..ff62a4d
 +    constexpr int kBlockBytes = int(kFrames * 2 * sizeof(float));
 +    for (int added = 0; added < additional; added += kBlockBytes) {
 +        out->render(out->buffer.data(), kFrames);
++        Count(out->buffer.data(), kFrames);
 +        SDL_PutAudioStreamData(stream, out->buffer.data(), kBlockBytes);
 +    }
 +}

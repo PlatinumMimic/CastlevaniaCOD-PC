@@ -19,6 +19,12 @@
 //   game                 0xB23700, what sub_002F7180 returns: the mode u32 at +0 (0 Hector, 1 Crazy, 2 Trevor) and the
 //                        save's name at +0x10, which sub_002F7240 returns
 //
+// Beside the game's own, for the regression suite (tools/cvtest/SUITE.md): "pad", the buttons and sticks as the game
+// last got them; "audio", the frames the sound output played and those with sound; "window_size", the game window's
+// pixels; "view", the field of view, far plane and fog as the game set them and as drawn (game/view.cpp); "wide",
+// widescreen's moves of the lock-on marker and the HUD and the sky's fogged draws (widescreen.cpp); "settings_menu";
+// "vpad", the virtual controller (XBE_VIRTUAL_PAD).
+//
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
 // the pad, with "pad": the buttons held as the game got them; a button pressed or let go also writes the state right
 // then, with "pressed" or "released". Recorded play becomes a route this way (tools/cvtest). Turn by turn play
@@ -34,6 +40,21 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+#include "app/app.h"
+#include "audio/audio.h"
+#ifndef _WIN32
+#include "sdl_app.h"
+#endif
 #include "common/release.h"
 #include "core/input.h"
 #include "kernel/memory.h"
@@ -169,6 +190,8 @@ struct EnemyInfo {  // game/enemies.cpp
 std::vector<EnemyInfo> Enemies();
 std::string BotJson();   // bot.cpp
 std::string WideJson();  // widescreen.cpp
+std::string ViewJson();  // game/view.cpp
+bool MenuOpen();         // menu.cpp
 
 // for the bot (bot.cpp), each frame: Hector's position and facing, the camera's heading (the direction stick up
 // walks), the scene word and the pause menu
@@ -223,6 +246,8 @@ int RoomId() {
 }
 
 // the state now, one JSON object on one line
+std::string PadJson();  // the pad as the game last got it, below
+
 std::string GameStateJson() {
     Json j;
     j.Int("frame", d3d::Swaps());
@@ -277,6 +302,38 @@ std::string GameStateJson() {
     // widescreen's moves: the lock-on marker's and the HUD's, as last drawn
     std::string wide = WideJson();
     if (!wide.empty()) out += ",\"wide\":" + wide;
+    out += ",\"pad\":" + PadJson();
+    // the game window's size in pixels, as drawn into (fullscreen and borderless: the display's)
+    uint32_t ww = 0, wh = 0;
+#ifdef _WIN32
+    RECT rc{};
+    if (HWND w = HWND(app::Window()); w && GetClientRect(w, &rc)) {
+        ww = uint32_t(rc.right - rc.left);
+        wh = uint32_t(rc.bottom - rc.top);
+    }
+#else
+    ww = linuxapp::g_pixel_w;
+    wh = linuxapp::g_pixel_h;
+#endif
+    out += ",\"window_size\":[" + std::to_string(ww) + "," + std::to_string(wh) + "]";
+    // what the sound output played: frames, and those with sound in them
+    audio::Played played = audio::PlayedSoFar();
+    out += ",\"audio\":{\"frames\":" + std::to_string(played.frames) + ",\"loud\":" + std::to_string(played.loud) +
+           "}";
+    // the field of view, far plane and fog, the game's and as drawn; the in-game settings menu
+    std::string view = ViewJson();
+    if (!view.empty()) out += ",\"view\":" + view;
+    out += MenuOpen() ? ",\"settings_menu\":true" : ",\"settings_menu\":false";
+    // the virtual controller (XBE_VIRTUAL_PAD): plugged in, taken by a port, the motors the game drove it with
+    if (input::VirtualOn()) {
+        input::VirtualReport v = input::VirtualState();
+        char b[192];
+        snprintf(b, sizeof(b),
+                 ",\"vpad\":{\"attached\":%s,\"open\":%s,\"rumble\":[%u,%u],\"peak\":[%u,%u],\"rumbles\":%u}",
+                 v.attached ? "true" : "false", v.open ? "true" : "false", v.low, v.high, v.peak_low, v.peak_high,
+                 v.rumbles);
+        out += b;
+    }
     return out + "}";
 }
 
@@ -337,10 +394,34 @@ std::string PadNames(uint32_t bits) {
     return out;
 }
 
+// the pad as the game last got it (TelemetryFrame)
+struct LastPad {
+    uint32_t bits = 0;
+    int16_t lx = 0, ly = 0, rx = 0, ry = 0;
+};
+std::mutex g_pad_m;
+LastPad g_pad;
+
 }  // namespace
+
+// "pad" of the state: the buttons held as names (a+white) and the sticks
+std::string PadJson() {
+    LastPad p;
+    {
+        std::lock_guard lock(g_pad_m);
+        p = g_pad;
+    }
+    char sticks[64];
+    snprintf(sticks, sizeof(sticks), ",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d}", p.lx, p.ly, p.rx, p.ry);
+    return "{\"held\":\"" + PadNames(p.bits) + "\"" + sticks;
+}
 
 // CV_TELEMETRY: at a pad read, the state once every CV_TELEMETRY_EVERY frames, and when a button goes down or up
 void TelemetryFrame(const input::Pad& p) {
+    {
+        std::lock_guard lock(g_pad_m);
+        g_pad = {PadBits(p), p.lx, p.ly, p.rx, p.ry};
+    }
     static const std::string path = [] {
         const char* v = std::getenv("CV_TELEMETRY");
         return std::string(v ? v : "");
@@ -359,11 +440,8 @@ void TelemetryFrame(const input::Pad& p) {
     held = bits;
     if (!down && !up && last != ~0u && frame - last < every) return;
     last = frame;
-    std::string out = GameStateJson();
+    std::string out = GameStateJson();  // with this read's pad
     out.pop_back();
-    char sticks[64];
-    snprintf(sticks, sizeof(sticks), ",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d}", p.lx, p.ly, p.rx, p.ry);
-    out += ",\"pad\":{\"held\":\"" + PadNames(bits) + "\"" + sticks;
     if (down) out += ",\"pressed\":\"" + PadNames(down) + "\"";
     if (up) out += ",\"released\":\"" + PadNames(up) + "\"";
     std::ofstream(path, std::ios::app) << out << "}\n";

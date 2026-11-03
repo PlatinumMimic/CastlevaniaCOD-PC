@@ -64,6 +64,7 @@ extern char** environ;
 
 #include "app/app.h"
 #include "kernel/disc.h"
+#include "../common/marks.h"
 #include "words.h"
 
 #ifdef _WIN32
@@ -953,10 +954,30 @@ void Banner(ImDrawList* dl, ImVec2 a, float w, float h) {
 }
 
 // an on/off switch; true when flipped
+// CV_LAUNCHER_STATE=<file>, for tests (tools/cvtest/launcher_test.py): where the controls are, a switch, list or
+// slider by its id (a list's choices and a row of choices by their index after it: "mode.2"), a button by its words,
+// a page of the sidebar as page.<n>, a status line as status:<its words>. A control named in <file>.click is clicked
+// (activated, Marks::Click) at the next frame, and the file goes.
+Marks g_marks("CV_LAUNCHER_STATE");
+
+// <CV_LAUNCHER_STATE>.click's control clicked, once read
+void TestClick() {
+    static const std::string file = [] {
+        const char* f = std::getenv("CV_LAUNCHER_STATE");
+        return f ? std::string(f) + ".click" : std::string();
+    }();
+    std::error_code ec;
+    if (file.empty() || !fs::exists(file, ec)) return;
+    std::string name;
+    std::getline(std::ifstream(file), name);
+    if (g_marks.Click(name)) fs::remove(file, ec);
+}
+
 bool Toggle(const char* id, bool& v) {
     ImVec2 size{S(46), S(22)};
     ImVec2 a = ImGui::GetCursorScreenPos();
     bool pressed = ImGui::InvisibleButton(id, size);
+    g_marks.Mark(id);
     if (pressed) v = !v;
     float t = Ease(ImGui::GetItemID(), v);
     bool hover = ImGui::IsItemHovered();
@@ -993,6 +1014,7 @@ bool Segmented(const char* id, T& value, const std::vector<T>& values, const std
             value = values[i];
             changed = true;
         }
+        g_marks.Mark(std::string(id) + "." + std::to_string(i));
         bool on = values[i] == value, hover = ImGui::IsItemHovered();
         float t = Ease(ImGui::GetItemID(), on, 16);
         ImVec2 in{S(3), S(3)};
@@ -1027,6 +1049,7 @@ bool Slider(const char* id, uint32_t& value, uint32_t lo, uint32_t hi, const std
     float avail = ImGui::GetContentRegionAvail().x, h = S(32);
     ImVec2 a = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("track", {avail, h});
+    g_marks.Mark(id);
     bool hover = ImGui::IsItemHovered(), changed = false;
     uint32_t v = std::clamp(value, lo, hi);
     if (ImGui::IsItemActive()) {
@@ -1060,9 +1083,13 @@ void Combo(const char* id, T& value, const std::vector<T>& values, const std::ve
     for (size_t i = 0; i < values.size(); i++)
         if (values[i] == value) cur = i;
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(id, names[cur].c_str())) {
+    std::string name = id + (id[0] == '#' && id[1] == '#' ? 2 : 0);
+    bool open = ImGui::BeginCombo(id, names[cur].c_str());
+    g_marks.Mark(name);
+    if (open) {
         for (size_t i = 0; i < values.size(); i++) {
             if (ImGui::Selectable(names[i].c_str(), i == cur)) value = values[i];
+            g_marks.Mark(name + "." + std::to_string(i));
             if (i == cur) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
@@ -1080,6 +1107,7 @@ bool Button(const char* label, ImVec2 size, Kind kind = Kind::Secondary, ImFont*
     if (size.x < 0) size.x = ImGui::GetContentRegionAvail().x;
     ImVec2 a = ImGui::GetCursorScreenPos();
     bool pressed = ImGui::InvisibleButton(label, size);
+    g_marks.Mark(label);
     bool disabled = ImGui::GetItemFlags() & ImGuiItemFlags_Disabled;
     float hv = Ease(ImGui::GetItemID(), ImGui::IsItemHovered() && !disabled, 14);
     bool held = ImGui::IsItemActive();
@@ -1214,6 +1242,7 @@ void Status(uint32_t icon, ImU32 col, const std::string& text) {
     ImGui::PopStyleColor();
     ImGui::SameLine(0, S(10));
     ImGui::TextUnformatted(text.c_str());
+    g_marks.Mark("status:" + text);
     ImGui::PopFont();
 }
 
@@ -1357,34 +1386,15 @@ void Fonts() {
     g_button = load(italic, 26, false);
 }
 
-// CV_LAUNCHER_STATE=<file>, for tests (tools/cvtest/launcher_test.py): where the marked controls are, each one's
-// rectangle in the window's pixels, and the page shown; JSON, written again when it changes
-struct Marks {
-    std::string file;
-    std::string frame, written;
-    Marks() {
-        if (const char* f = std::getenv("CV_LAUNCHER_STATE")) file = f;
-    }
-    // the control just drawn
-    void Mark(const std::string& name) {
-        if (file.empty()) return;
-        ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-        char rect[96];
-        std::snprintf(rect, sizeof(rect), "[%d, %d, %d, %d]", int(a.x), int(a.y), int(b.x), int(b.y));
-        frame += (frame.empty() ? "\"" : ", \"") + name + "\": " + rect;
-    }
-    void Write(int page) {
-        if (file.empty()) return;
-        std::string json = "{\"page\": " + std::to_string(page) + ", \"controls\": {" + frame + "}}\n";
-        frame.clear();
-        if (json == written) return;
-        written = json;
-        std::error_code ec;
-        std::ofstream(file + ".tmp") << json;
-        fs::rename(file + ".tmp", file, ec);
-    }
-};
-Marks g_marks;
+
+// --list-gpus: the graphics cards the launcher offers, a line each: d3d12 (Vulkan on Linux) or none, then the name,
+// as the game takes it in its gpu setting
+int ListGpus() {
+    for (const Gpu& g : Gpus())
+        std::printf("%s %s%s\n", g.d3d12 ? "d3d12" : "none", g.name.c_str(), g.software ? " (software)" : "");
+    std::fflush(stdout);
+    return 0;
+}
 
 // --check-fonts: every letter of every phrase in every language, as each font that writes them has it (a font without
 // a language's letters, or kTextRanges without them, shows ? for them); the title's fonts write only Latin words.
@@ -1634,6 +1644,7 @@ public:
         Backdrop(bg, io.DisplaySize, S(232));
         ImGui::SetNextWindowPos({0, 0});
         ImGui::SetNextWindowSize(io.DisplaySize);
+        TestClick();
         ImGui::Begin("launcher", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
@@ -1732,6 +1743,7 @@ private:
             }
             if (i == 5) ImGui::Dummy({0, S(6)});
             if (NavItem(T(kPages[i]), page_ == i)) page_ = i;
+            g_marks.Mark("page." + std::to_string(i));
         }
 
         // at the bottom: the language, the save note (two lines at most, a language's can be long) and a reset
@@ -1764,9 +1776,12 @@ private:
         std::string preview = Icon(kIconGlobe) + "  " + words::kLanguages[cur].name;
         ImGui::PushFont(g_body);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::BeginCombo("##language", preview.c_str())) {
+        bool open = ImGui::BeginCombo("##language", preview.c_str());
+        g_marks.Mark("language");
+        if (open) {
             for (int i : words::kMenu) {
                 if (ImGui::Selectable(words::kLanguages[i].name, i == cur)) settings_.language = words::kLanguages[i].code;
+                g_marks.Mark(std::string("language.") + words::kLanguages[i].code);
                 if (i == cur) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
@@ -2385,6 +2400,7 @@ private:
 #ifdef _WIN32
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     if (std::wcsstr(GetCommandLineW(), L"--check-fonts")) return CheckFonts();
+    if (std::wcsstr(GetCommandLineW(), L"--list-gpus")) return ListGpus();
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC, for the pack's logo
     float scale = float(GetDpiForSystem()) / 96.0f;
@@ -2480,6 +2496,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
 int main(int argc, char** argv) {
     for (int a = 1; a < argc; a++)
         if (!std::strcmp(argv[a], "--check-fonts")) return CheckFonts();
+        else if (!std::strcmp(argv[a], "--list-gpus")) return ListGpus();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL failed to start: %s\n", SDL_GetError());
         return 1;

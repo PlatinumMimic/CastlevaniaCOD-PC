@@ -14,12 +14,15 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include <imgui.h>
 
 #include "app/app.h"
+#include "common/marks.h"
+#include "core/log.h"
 
 // game settings beside the runtime's, in the settings file (game_info.cpp lists them)
 bool g_fps_counter = false;
@@ -41,6 +44,16 @@ namespace {
 
 std::atomic<bool> g_open{false};
 bool g_scaled = false;
+// CV_MENU_STATE=<file>, for tests (tools/cvtest): where the menu's controls are, by their ids without the ## (a
+// drop-down's choices by their names after it: "mode.Windowed"), a tab as tab.<name>, a button by its words
+Marks g_marks("CV_MENU_STATE");
+// the control just drawn, by its id
+void Mark(const char* id) { g_marks.Mark(id + (id[0] == '#' && id[1] == '#' ? 2 : 0)); }
+
+// tests (MenuClick): a control to activate by its name, at the menu's next frame (Marks::Click)
+std::mutex g_click_m;
+std::string g_click;
+int g_click_wait = -1;  // frames waited for the control, -1 none to click
 
 std::string KeyName(uint32_t vk);  // the key as the keyboard labels it
 
@@ -90,12 +103,15 @@ bool Choice(const char* label, T& value, const std::vector<T>& values, const std
     for (size_t i = 0; i < values.size(); i++)
         if (values[i] == value) cur = i;
     bool changed = false;
-    if (ImGui::BeginCombo(label, names[cur].c_str())) {
+    bool open = ImGui::BeginCombo(label, names[cur].c_str());
+    Mark(label);
+    if (open) {
         for (size_t i = 0; i < values.size(); i++) {
             if (ImGui::Selectable(names[i].c_str(), i == cur) && i != cur) {
                 value = values[i];
                 changed = true;
             }
+            g_marks.Mark(std::string(label + 2) + "." + names[i]);
             if (i == cur) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
@@ -149,6 +165,7 @@ void DisplayTab(bool& save) {
     // no frame rate cap here: the game's logic steps once a frame, so it is held at the 60 it was made for
     Row("V-Sync", "Off can tear, and lowers input latency a little.");
     save |= ImGui::Checkbox("##vsync", &s.vsync);
+    Mark("##vsync");
     ImGui::EndTable();
 }
 
@@ -163,9 +180,11 @@ void GraphicsTab(bool& save) {
     Row("Widescreen", "16:9 with more of the world at the sides; the HUD, menus and movies stay 4:3 in the middle. "
                       "Off shows the game 4:3, as on a 4:3 TV. Needs a 16:9 or wider resolution.");
     save |= ImGui::Checkbox("##wide", &s.widescreen);
+    Mark("##wide");
     Row("HUD at the screen edges", "Widescreen: the health and magic bars and the rest of the HUD in the screen's "
                                    "corners, as on a 4:3 screen, rather than at the corners of the 4:3 middle.");
     save |= ImGui::Checkbox("##hud", &g_hud_edges);
+    Mark("##hud");
     Row("Field of view", "How much of the world the camera takes in: 100% is the game's own, which each room's camera "
                          "sets; more is wider. Story scenes keep the game's.");
     {
@@ -203,11 +222,14 @@ void GameTab(bool& save) {
     if (!BeginRows("game")) return;
     Row("FPS counter", nullptr);
     save |= ImGui::Checkbox("##fpsc", &g_fps_counter);
+    Mark("##fpsc");
     Row("Pause on focus loss", "Stops the game while another window is in front.");
     save |= ImGui::Checkbox("##pause", &g_pause_on_focus_loss);
+    Mark("##pause");
     Row("Lament of Innocence save", "As the PS2 game with a Lament of Innocence save on the memory card: a Moai "
                                     "at the far end of the room behind the first courtyard, beside the potion.");
     save |= ImGui::Checkbox("##lament", &g_lament_save);
+    Mark("##lament");
     ImGui::EndTable();
 }
 
@@ -222,8 +244,10 @@ void ControlsTab(bool& save) {
         save |= Choice<bool>("##stick", g_ps2_stick, {true, false}, {"PS2", "Xbox"});
         Row("Invert camera left / right", "The right stick (and the arrow keys) turn the camera the other way across.");
         save |= ImGui::Checkbox("##invx", &g_invert_camera_x);
+        Mark("##invx");
         Row("Invert camera up / down", "The right stick (and the arrow keys) move the camera the other way up and down.");
         save |= ImGui::Checkbox("##invy", &g_invert_camera_y);
+        Mark("##invy");
         ImGui::EndTable();
     }
     ImGui::Spacing();
@@ -339,6 +363,13 @@ void Style(float scale) {
 bool MenuOpen() { return g_open; }
 void MenuToggle() { g_open = !g_open; }
 
+// keyboard.cpp's live entry click=<control>: the menu's control of that name (CV_MENU_STATE's) clicked
+void MenuClick(const std::string& name) {
+    std::lock_guard lock(g_click_m);
+    g_click = name;
+    g_click_wait = 0;
+}
+
 // the game window is up, before the first frame: the font, sized for the monitor
 void MenuWindow() {
     std::lock_guard lock(app::UiLock());
@@ -372,6 +403,15 @@ void MenuUi(double fps) {
     if (!g_scaled) return;
     PollKeys();
     ImGuiIO& io = ImGui::GetIO();
+    {
+        std::lock_guard lock(g_click_m);
+        if (g_click_wait >= 0 && g_marks.Click(g_click)) {
+            g_click_wait = -1;
+        } else if (g_click_wait >= 0 && ++g_click_wait > 60) {
+            LOGE("menu: no %s to click", g_click.c_str());
+            g_click_wait = -1;
+        }
+    }
     if (g_fps_counter) {
         char text[32];
         std::snprintf(text, sizeof(text), "%.0f FPS", fps);
@@ -381,7 +421,10 @@ void MenuUi(double fps) {
         dl->AddText(at, IM_COL32(255, 230, 140, 255), text);
     }
     io.MouseDrawCursor = false;
-    if (!g_open) return;
+    if (!g_open) {
+        g_marks.Write(0);
+        return;
+    }
 
     ImVec2 size{io.DisplaySize.y * 0.75f, io.DisplaySize.y * 0.55f};
     ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {0.5f, 0.5f});
@@ -397,19 +440,27 @@ void MenuUi(double fps) {
         float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
         if (ImGui::BeginChild("tabs", {0, -footer})) {
             if (ImGui::BeginTabBar("tabbar")) {
-                if (ImGui::BeginTabItem("Display")) {
+                bool display = ImGui::BeginTabItem("Display");
+                g_marks.Mark("tab.Display");
+                if (display) {
                     DisplayTab(save);
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Graphics")) {
+                bool graphics = ImGui::BeginTabItem("Graphics");
+                g_marks.Mark("tab.Graphics");
+                if (graphics) {
                     GraphicsTab(save);
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Game")) {
+                bool game = ImGui::BeginTabItem("Game");
+                g_marks.Mark("tab.Game");
+                if (game) {
                     GameTab(save);
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Controls")) {
+                bool controls = ImGui::BeginTabItem("Controls");
+                g_marks.Mark("tab.Controls");
+                if (controls) {
                     ControlsTab(save);
                     ImGui::EndTabItem();
                 }
@@ -418,7 +469,9 @@ void MenuUi(double fps) {
         }
         ImGui::EndChild();
         ImGui::Separator();
-        if (ImGui::Button("Reset to defaults")) {
+        bool reset = ImGui::Button("Reset to defaults");
+        g_marks.Mark("Reset to defaults");
+        if (reset) {
             Defaults();
             save = true;
         }
@@ -427,8 +480,10 @@ void MenuUi(double fps) {
         float close_w = ImGui::CalcTextSize(close.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
         ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - close_w);
         if (ImGui::Button(close.c_str())) open = false;
+        g_marks.Mark("Close");
         if (save) app::Save();
     }
     ImGui::End();
     if (!open) g_open = false;
+    g_marks.Write(1);
 }
