@@ -37,6 +37,8 @@ uint32_t g_fog_distance = 100;   // percent of the game's fog distance, 0 for no
 bool g_hud_edges = true;         // widescreen: the HUD at the screen's corners rather than the 4:3 middle (widescreen.cpp)
 // surfaces with an HD texture pack's material maps seen into: 0 off, 1 low, 2 high (the SDK's gpu::g_surface_depth)
 uint32_t g_surface_depth = 2;
+// the frame's 3D anti-aliased before its UI: 0 off, 1 AMD FSR (the SDK's gpu::g_antialias)
+uint32_t g_antialias = 1;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern uint32_t g_button_layout;    // texpack.cpp
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
@@ -203,6 +205,10 @@ void GraphicsTab(bool& save) {
                              {"50%", "75%", "100%", "150%", "200%"});
     Row("Anisotropic filtering", "Sharper textures at an angle.");
     save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
+    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by AMD FSR (any graphics "
+                         "card), with its sharpening after. Needs AMD's amd_fidelityfx_upscaler_dx12.dll beside the "
+                         "game: the launcher's frame generation download brings it.");
+    save |= Choice<uint32_t>("##aa", g_antialias, {0, 1}, {"Off", "AMD FSR"});
     Row("Frame generation", "A frame made between each two the game draws, for twice the frame rate on a 120 Hz or "
                             "faster screen: AMD FSR 3 on any graphics card, NVIDIA DLSS on a GeForce RTX 40 or 50. Their "
                             "files come from AMD and NVIDIA: the launcher's Graphics page downloads them. From the next "
@@ -382,6 +388,7 @@ void Defaults() {
     g_hud_edges = true;
     g_menu_spread = true;
     g_surface_depth = 2;
+    g_antialias = 1;
     app::ApplyDisplay();
 }
 
@@ -488,6 +495,7 @@ void SettingsWatch();  // keyboard.cpp
 void MenuUi(double fps) {
     SettingsWatch();
     gpu::g_surface_depth.store(std::min<uint32_t>(g_surface_depth, 2), std::memory_order_relaxed);
+    gpu::g_antialias.store(std::min<uint32_t>(g_antialias, 1), std::memory_order_relaxed);
     if (!g_scaled) return;
     PollKeys();
     ImGuiIO& io = ImGui::GetIO();

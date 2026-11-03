@@ -297,6 +297,10 @@ public:
     }
     std::shared_ptr<const gpu::Replacement> Replaced(uint64_t id) override { return TexturePackReplaced(id); }
 
+    // the 3D world drawn into the frame takes anti-aliasing's sub-pixel offset (the SDK's Jitter); its 2D, the HUD,
+    // menus and the frame pass, never
+    bool Jitter() override { return back_buffer_ && d_.world; }
+
     // a 2D quad reads its texture only inside its coordinates (the SDK's TexelBox): sprites, words and figures cut
     // from a sheet, whose edges upscaled blend in the sheet's next picture (a faint line under each of the pause
     // menu's figures, beside "Weapon"). Not a whole frame quad (a fill, the frame pass, a picture widened to the

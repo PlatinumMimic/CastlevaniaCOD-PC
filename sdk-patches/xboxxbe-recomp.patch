@@ -366,10 +366,10 @@ index 7e6507d..d3c271d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/backend.h b/runtime/gpu/backend.h
-index c82ae36..d8ff7d5 100644
+index c82ae36..c7b3a18 100644
 --- a/runtime/gpu/backend.h
 +++ b/runtime/gpu/backend.h
-@@ -66,5 +66,10 @@ inline std::atomic<uint64_t> g_perf_sync_late{0}, g_perf_sync_block{0};  // read
+@@ -66,5 +66,12 @@ inline std::atomic<uint64_t> g_perf_sync_late{0}, g_perf_sync_block{0};  // read
  
  // F3: save the next frame, every draw and target, under diag::CaptureDir
  inline std::atomic<bool> g_capture{false};
@@ -378,10 +378,12 @@ index c82ae36..d8ff7d5 100644
 +inline std::atomic<uint32_t> g_captures_saved{0};  // frame captures finished this run
 +// surfaces with material maps seen into (shaders.cpp, parallax): 0 off, 1 low, 2 high
 +inline std::atomic<uint32_t> g_surface_depth{0};
++// anti-aliasing of the frame's 3D (framegen.h, AntiAlias): 0 off, 1 AMD FSR
++inline std::atomic<uint32_t> g_antialias{0};
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..475fd77 100644
+index fe65837..52d25ae 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -34,6 +34,7 @@
@@ -392,7 +394,7 @@ index fe65837..475fd77 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +53,25 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +53,26 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -413,12 +415,13 @@ index fe65837..475fd77 100644
 +// the 3D draws' own motion (PrevPositionHlsl, MotionOut), after the HUD-less frames
 +constexpr uint32_t kFgObjRtv = kFgRtv + 2 + kFrames;
 +constexpr uint32_t kFgRtvCount = 3 + kFrames;
++constexpr uint32_t kAaRtv = kFgRtv + kFgRtvCount;  // anti-aliasing's depth and motion at the frame's size, after them
 +// the motion target's clear and MotionOut's value where a pixel has no motion of its own: the camera's from depth
 +constexpr float kNoMotion = 1024;
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +88,7 @@ struct Perf {
+@@ -72,6 +89,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -426,7 +429,7 @@ index fe65837..475fd77 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,6 +111,7 @@ struct Perf {
+@@ -94,6 +112,7 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
@@ -434,7 +437,7 @@ index fe65837..475fd77 100644
      uint64_t raw = 0;
      uint64_t lates = 0;
  };
-@@ -140,6 +158,63 @@ float4 psmain(O i) : SV_Target {
+@@ -140,6 +159,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -498,7 +501,7 @@ index fe65837..475fd77 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -345,6 +420,14 @@ struct Tex {
+@@ -345,6 +421,14 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -513,7 +516,7 @@ index fe65837..475fd77 100644
  };
  
  struct PsoKey {
-@@ -377,6 +460,7 @@ struct PsoKey {
+@@ -377,6 +461,7 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
@@ -521,7 +524,7 @@ index fe65837..475fd77 100644
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +471,7 @@ struct BlitOptions {
+@@ -387,6 +472,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -529,7 +532,7 @@ index fe65837..475fd77 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +486,15 @@ struct ShrinkOptions {
+@@ -401,11 +487,15 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -547,7 +550,7 @@ index fe65837..475fd77 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -549,6 +638,8 @@ private:
+@@ -549,6 +639,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -556,8 +559,12 @@ index fe65837..475fd77 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -568,7 +659,7 @@ private:
-     float TargetScale() const;  // host pixels per console pixel of the bound target
+@@ -565,10 +657,10 @@ private:
+     ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
+     void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
+     void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
+-    float TargetScale() const;  // host pixels per console pixel of the bound target
++    float TargetScale() const;  // host pixels per console pixel of the bound target, down (across: times aspect_)
      float RenderTargetShift(const State& s, const DrawShaders& sh) const;
      void FillDepthConstants(const State& s, const DrawShaders& sh, const PsoKey& k, DrawConstants& c) const;
 -    uint8_t* UploadVertexConstants(const State& s);
@@ -565,7 +572,7 @@ index fe65837..475fd77 100644
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,7 +674,7 @@ private:
+@@ -583,7 +675,7 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -574,7 +581,7 @@ index fe65837..475fd77 100644
      void SetBlendFactorStencilRef(const State& s);
      void UpdateTargetUsed(uint32_t data);
      void DrawGeometry(const Assembled& a);
-@@ -598,6 +689,7 @@ private:
+@@ -598,6 +690,7 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -582,7 +589,7 @@ index fe65837..475fd77 100644
      D3D12_GRAPHICS_PIPELINE_STATE_DESC FullScreenPipelineDesc(ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv) const;
      // Init, in order, each callee right after its caller
      bool CreateDevice();
-@@ -613,10 +705,26 @@ private:
+@@ -613,10 +706,30 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -600,6 +607,10 @@ index fe65837..475fd77 100644
 +    D3D12_VIEWPORT FrameViewport() const;
 +    void EnsureFrameGenTargets(uint32_t w, uint32_t h, DXGI_FORMAT bb);
 +    bool EnsureObjectMotion(const Target& rt);
++    // anti-aliasing (framegen.h, AntiAlias): the frame's 3D before its UI, once a frame; true when it recorded
++    // anything, after which the draw at hand's state must be set again
++    bool AntiAliasFrame(Target& t);
++    bool EnsureAaTargets(uint32_t w, uint32_t h, DXGI_FORMAT fmt);
 +    uint64_t MotionKey(const State& s, const Assembled& a, uint64_t vkey);
 +    const float* PrevMotionConstants(uint64_t key, const float* now) const;
 +    void KeepMotionConstants(uint64_t key, const uint8_t* vsc);
@@ -609,7 +620,18 @@ index fe65837..475fd77 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -801,6 +909,73 @@ private:
+@@ -766,6 +879,10 @@ private:
+     uint32_t bb_w_ = 0;
+     uint32_t bb_h_ = 0;
+     float scale_ = 1.0f;
++    // a target's host pixels across per host pixel down, per console pixel: widescreen squeezes the frame into the
++    // console's 4:3 and the present stretches it back, so its targets are that much wider (TargetAspect), and 100%
++    // draws as many pixels across as the screen shows
++    float aspect_ = 1.0f;
+     // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
+     struct Late {
+         ComPtr<ID3D12Resource> rb[kFrames];
+@@ -801,6 +918,85 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -680,10 +702,22 @@ index fe65837..475fd77 100644
 +    uint64_t mv_frame_ = UINT64_MAX;
 +    bool mv_said_ = false;
 +    std::chrono::steady_clock::time_point fg_t_ = std::chrono::steady_clock::now();
++    // anti-aliasing (g_antialias): AMD FSR at the frame's size, its 3D moved by a sub-pixel offset each frame
++    std::unique_ptr<framegen::AntiAlias> aa_;
++    bool aa_on_ = false, aa_tried_ = false, aa_had_view_ = false, aa_said_ = false;
++    bool draw_jitter_ = false;          // the draw at hand takes the offset (Extension::Jitter)
++    float aa_jitter_[2] = {};           // this frame's, in pixels
++    uint64_t aa_jitter_frame_ = UINT64_MAX;  // the frame a draw last took it
++    uint64_t aa_done_frame_ = UINT64_MAX;    // the frame last anti-aliased
++    ComPtr<ID3D12Resource> aa_depth_, aa_motion_, aa_out_;
++    D3D12_RESOURCE_STATES aa_depth_state_{}, aa_motion_state_{}, aa_out_state_{};
++    uint32_t aa_w_ = 0, aa_h_ = 0;
++    DXGI_FORMAT aa_fmt_ = DXGI_FORMAT_UNKNOWN, aa_out_fmt_ = DXGI_FORMAT_UNKNOWN;
++    std::chrono::steady_clock::time_point aa_t_ = std::chrono::steady_clock::now();
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -814,6 +989,7 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -814,6 +1010,7 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      HWND hwnd = static_cast<HWND>(app::Window());
      if (!CreateDevice()) return false;
      if (!CreateSwapChain(hwnd)) return false;
@@ -691,7 +725,7 @@ index fe65837..475fd77 100644
      CreateHeaps();
      CreateBackBufferViews();
      if (!CreateRootSignature()) return false;
-@@ -832,14 +1008,33 @@ bool D3D12Backend::CreateDevice() {
+@@ -832,14 +1029,33 @@ bool D3D12Backend::CreateDevice() {
          ComPtr<ID3D12Debug> dbg;
          if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
      }
@@ -729,7 +763,7 @@ index fe65837..475fd77 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -850,6 +1045,7 @@ bool D3D12Backend::CreateDevice() {
+@@ -850,6 +1066,7 @@ bool D3D12Backend::CreateDevice() {
      D3D12_COMMAND_QUEUE_DESC qd{};
      qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
      dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue_));
@@ -737,7 +771,7 @@ index fe65837..475fd77 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -871,6 +1067,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1088,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -749,7 +783,7 @@ index fe65837..475fd77 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -899,9 +1100,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1121,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -758,11 +792,11 @@ index fe65837..475fd77 100644
 +    srv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvCount + kMaterialViews, true, srv_heap_);
      smp_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, kSamplerCount, true, smp_heap_);
 -    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames, false, rtv_heap_);
-+    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kFgRtv + kFgRtvCount, false, rtv_heap_);
++    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kAaRtv + 2, false, rtv_heap_);
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,7 +1113,7 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,7 +1134,7 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -771,7 +805,20 @@ index fe65837..475fd77 100644
      ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
      ranges[1].NumDescriptors = 4;
      D3D12_ROOT_PARAMETER params[4] = {};
-@@ -1069,6 +1271,7 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -958,8 +1181,12 @@ void D3D12Backend::CreateGammaLut() {
+                                   IID_PPV_ARGS(&lut_));
+ }
+ 
++// widescreen's targets are wider by the screen's shape over the console's 4:3 (aspect_)
++float TargetAspect() { return app::Widescreen() ? app::WideAspect() / (4.0f / 3.0f) : 1.0f; }
++
+ void D3D12Backend::LoadSettings() {
+     scale_ = app::RenderScale(guest_h_);
++    aspect_ = TargetAspect();
+     texturedumper::Update();
+     ext_ = g_extension.get();
+     if (ext_) {
+@@ -1069,6 +1296,7 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
  // a resized target gives back its view and its resources
  void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator it) {
      if (bound_rt_ == &it->second || bound_ds_ == &it->second) bound_rt_ = bound_ds_ = nullptr;
@@ -779,12 +826,21 @@ index fe65837..475fd77 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1205,17 +1408,117 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1079,7 +1307,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+ bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
+     float sc = scale_;
+     if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
+-    t.w = std::max(1u, uint32_t(std::lround(t.gw * sc)));
++    t.w = std::max(1u, uint32_t(std::lround(t.gw * sc * aspect_)));
+     t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
+     D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+     D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
+@@ -1205,17 +1433,117 @@ bool D3D12Backend::BindTargets(const State& s) {
      if (ds) {
          Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          ds->drawn = true;
 +        // the frame's 3D depth, for frame generation's motion: the one drawn with the back buffer
-+        if (fg_ && s.rt_back_buffer && rt) {
++        if ((fg_ || aa_on_) && s.rt_back_buffer && rt) {
 +            fg_ds_ = ds;
 +            fg_ds_frame_ = presents_;
 +        }
@@ -792,7 +848,7 @@ index fe65837..475fd77 100644
 -    if (rt != bound_rt_ || ds != bound_ds_) {
 -        D3D12_CPU_DESCRIPTOR_HANDLE rh = rt ? Cpu(rtv_heap_.Get(), rt->view, rtv_inc_) : D3D12_CPU_DESCRIPTOR_HANDLE{};
 +    // frame generation's motion, drawn by the frame's own 3D draws beside its colour (PrevPositionHlsl, MotionOut)
-+    bool mv = fg_ && rt && s.rt_back_buffer && EnsureObjectMotion(*rt);
++    bool mv = (fg_ || aa_on_) && rt && s.rt_back_buffer && EnsureObjectMotion(*rt);
 +    if (mv) Transition(fg_objmv_.Get(), fg_objmv_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
 +    if (rt != bound_rt_ || ds != bound_ds_ || mv != bound_mv_) {
 +        D3D12_CPU_DESCRIPTOR_HANDLE rh[2] = {rt ? Cpu(rtv_heap_.Get(), rt->view, rtv_inc_) : D3D12_CPU_DESCRIPTOR_HANDLE{},
@@ -803,10 +859,10 @@ index fe65837..475fd77 100644
          bound_rt_ = rt;
          bound_ds_ = ds;
 +        bound_mv_ = mv;
-     }
-     return true;
- }
- 
++    }
++    return true;
++}
++
 +// the motion target at the frame target's size, cleared to kNoMotion once a frame; false when it can't be made
 +bool D3D12Backend::EnsureObjectMotion(const Target& rt) {
 +    if (!fg_objmv_ || fg_objmv_w_ != rt.w || fg_objmv_h_ != rt.h) {
@@ -833,10 +889,10 @@ index fe65837..475fd77 100644
 +        float none[4] = {kNoMotion, kNoMotion, 0, 0};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_), none, 0, nullptr);
 +        fg_objmv_frame_ = presents_;
-+    }
-+    return true;
-+}
-+
+     }
+     return true;
+ }
+ 
 +// A 3D draw found again in the next frame by what it draws, as the game streams its meshes into buffers that move from
 +// frame to frame: its program, its first vertices and indices, its counts and first texture. A skinned mesh's vertices
 +// are its pose at rest, so it is found as its bones move.
@@ -900,7 +956,7 @@ index fe65837..475fd77 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1397,23 +1700,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +1725,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -931,8 +987,8 @@ index fe65837..475fd77 100644
 -    DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
 +    ID3D12PipelineState* pso = o.hdr ? EnsureHdrPipeline(o.hdr) : EnsureBlitPipeline(o.rtv, o.over);
 +    if (pso) DrawFullScreen(pso, cb.gpu, slot, si);
- }
- 
++}
++
 +namespace {
 +
 +constexpr UINT kCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL1;
@@ -987,14 +1043,14 @@ index fe65837..475fd77 100644
 +    std::error_code ec;
 +    if (ok) std::filesystem::rename(tmp, file, ec);
 +    if (!ok || ec) std::filesystem::remove(tmp, ec);
-+}
-+
+ }
+ 
 +}  // namespace
 +
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +1790,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +1815,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -1016,7 +1072,7 @@ index fe65837..475fd77 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +1809,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +1834,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -1024,7 +1080,7 @@ index fe65837..475fd77 100644
      return code.Get();
  }
  
-@@ -1477,6 +1853,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +1878,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -1054,7 +1110,7 @@ index fe65837..475fd77 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2009,21 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2034,21 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -1077,7 +1133,18 @@ index fe65837..475fd77 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1674,6 +2086,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1651,8 +2088,8 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+ 
+ float D3D12Backend::TargetScale() const {
+     const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
+-    if (!t || !t->gw) return 1;
+-    return float(t->w) / float(t->gw);
++    if (!t || !t->gh) return 1;
++    return float(t->h) / float(t->gh);
+ }
+ 
+ // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
+@@ -1674,6 +2111,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -1085,7 +1152,21 @@ index fe65837..475fd77 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1727,6 +2140,9 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1703,7 +2141,12 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+     info.kind = kTex2D;
+     // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
+     Target* rt = FindTarget(s.rt, false);
+-    float k = float(t.w) / (t.gw * stages.k[stage]);
++    float k = float(t.h) / (t.gh * stages.k[stage]);
++    // the shift back to the console's pixel centre (rtshift) is half a pixel of the target drawn into, by axis
++    if (bound_rt_ && bound_rt_->gw && bound_rt_->gh) {
++        float a = (float(bound_rt_->w) / bound_rt_->gw) / (float(bound_rt_->h) / bound_rt_->gh);
++        info.aspect = std::fabs(a - 1) < 1e-3f ? 0 : uint16_t(std::lround(a * 1000));
++    }
+     if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
+         stages.wide[stage] = k;
+         info.flags |= kTexWide;
+@@ -1727,6 +2170,9 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -1095,7 +1176,7 @@ index fe65837..475fd77 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2259,49 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +2289,49 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -1145,7 +1226,7 @@ index fe65837..475fd77 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,7 +2329,40 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,8 +2359,41 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -1159,8 +1240,8 @@ index fe65837..475fd77 100644
 +                }
 +                tx.repl_id = id;
 +            }
-+        }
-+    }
+         }
+     }
 +    if (tx.repl_id && !tx.repl && repl_budget_) MakeReplacement(tx);
 +    // an extension's replacement is drawn before the texture pack's image
 +    if (tx.repl) {
@@ -1180,13 +1261,14 @@ index fe65837..475fd77 100644
 +                stages.res[4 + j] = tx.mat[j].Get();
 +            }
 +            std::memcpy(stages.mat, tx.mat_params, sizeof(stages.mat));
-         }
++        }
 +        if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
 +        return tx.repl.Get();
-     }
++    }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
-@@ -1982,8 +2474,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+     const Tex& drawn = tx.swap ? *tx.swap : tx;
+@@ -1982,8 +2504,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -1204,7 +1286,7 @@ index fe65837..475fd77 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2492,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2522,7 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -1213,7 +1295,16 @@ index fe65837..475fd77 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2218,6 +2717,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2146,7 +2675,7 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+ 
+ // polygon offset slopes are per console pixel, an upscaled target's pixels are smaller
+ float HostSlopeScale(const State& s, const Target* ds) {
+-    return Bits(SimpleState(s, kMSlopeScale)) * (ds ? float(ds->w) / ds->gw : 1.0f);
++    return Bits(SimpleState(s, kMSlopeScale)) * (ds ? float(ds->h) / ds->gh : 1.0f);
+ }
+ 
+ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
+@@ -2218,6 +2747,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -1236,7 +1327,7 @@ index fe65837..475fd77 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +2755,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +2785,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -1247,7 +1338,7 @@ index fe65837..475fd77 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2434,9 +2953,11 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2434,9 +2983,11 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
  }
  
  // a fresh copy of the draw's vertex constants, kept as the last upload
@@ -1261,7 +1352,7 @@ index fe65837..475fd77 100644
      std::memcpy(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
      last_vsc_gpu_ = vc.gpu;
      return vc.cpu;
-@@ -2445,16 +2966,36 @@ uint8_t* D3D12Backend::UploadVertexConstants(const State& s) {
+@@ -2445,16 +2996,40 @@ uint8_t* D3D12Backend::UploadVertexConstants(const State& s) {
  void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                                     GuestExtent size, DrawConstants& c) {
      // the extension edits the uploaded copy, so its draws always get their own
@@ -1272,6 +1363,10 @@ index fe65837..475fd77 100644
 +    bool same = !ext_ && !prev && last_vsc_gpu_ && !std::memcmp(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
 +    uint8_t* vsc = same ? nullptr : UploadVertexConstants(s, prev);
 +    c.motion[0] = prev ? 1.0f : 0.0f;
++    if (draw_jitter_ && bound_rt_) {
++        c.motion[2] = 2 * aa_jitter_[0] / float(bound_rt_->w);
++        c.motion[3] = -2 * aa_jitter_[1] / float(bound_rt_->h);
++    }
      FillSurfaceConstants(s, size, c);
      // points: host pixels per console pixel, also keeps them off the far edge pull out of screen passes
      if (k.topo == uint32_t(Topology::Points)) c.surf[3] = TargetScale();
@@ -1300,7 +1395,7 @@ index fe65837..475fd77 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2577,6 +3118,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +3152,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -1324,7 +1419,7 @@ index fe65837..475fd77 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3152,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3186,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -1335,7 +1430,7 @@ index fe65837..475fd77 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3167,40 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3201,40 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -1387,7 +1482,7 @@ index fe65837..475fd77 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2815,6 +3384,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,6 +3418,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -1395,7 +1490,7 @@ index fe65837..475fd77 100644
      // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
      if (CurrentFrame().used > kUploadSize - kUploadReserve) Submit(true);
      if (!BindTargets(s)) return;
-@@ -2831,6 +3401,21 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,6 +3435,27 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -1404,6 +1499,12 @@ index fe65837..475fd77 100644
 +                  s.rs[kRsZEnable] && SimpleState(s, kMZWriteEnable);
 +    pk.motion = motion;
 +    if (motion) draw_mv_key_ = MotionKey(s, a, sh.vkey);
++    // anti-aliasing's offset: the frame's 3D, until it is anti-aliased (Extension::Jitter)
++    draw_jitter_ = aa_on_ && aa_done_frame_ != presents_ && bound_rt_ && s.rt_back_buffer && ext_ && ext_->Jitter();
++    if (draw_jitter_ && aa_jitter_frame_ != presents_) {
++        aa_->Jitter(presents_, aa_jitter_[0], aa_jitter_[1]);
++        aa_jitter_frame_ = presents_;
++    }
 +    // a 2D quad's stage 0 read only inside its coordinates (Extension::TexelBox)
 +    draw_texbox_ = ext_ && TexcoordsAsGiven(s, a) && ext_->TexelBox(draw_uvbox_);
 +    pk.texbox = draw_texbox_ ? 1 : 0;
@@ -1417,7 +1518,7 @@ index fe65837..475fd77 100644
      sh.pkey = Hash(&pk, sizeof(pk));
      EnsurePixelShader(pk, sh);
      if (!sh.vs_code || !sh.ps_code) return;
-@@ -2839,6 +3424,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2839,6 +3464,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      PsoKey k;
      BuildPipelineKey(s, a, sh.vh, sh.ph, k);
      k.sprite = sh.sprite;
@@ -1425,7 +1526,7 @@ index fe65837..475fd77 100644
      ID3D12PipelineState* pso = EnsurePipeline(k, sh.vs_code, sh.ps_code);
      if (!pso) return;
      if (ext_) binds_ = {};  // the extension may set anything
-@@ -2848,9 +3434,11 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2848,9 +3474,25 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      // constants
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
@@ -1433,11 +1534,25 @@ index fe65837..475fd77 100644
      DrawConstants c{};
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
-+    if ((hdr_ || fg_) && ext_ && bound_rt_ && ext_->UiStart(k.blend && k.dst == 1)) SnapshotUi(*bound_rt_);
++    if ((hdr_ || fg_ || aa_on_) && ext_ && bound_rt_ && ext_->UiStart(k.blend && k.dst == 1)) {
++        // anti-aliasing first, so the HUD-less copy is the anti-aliased frame. Its passes and AMD's dispatch change
++        // the command list's heaps, pipeline and targets: the draw's are set again
++        if (aa_on_ && AntiAliasFrame(*bound_rt_)) {
++            Begin();
++            if (!BindTargets(s)) return;
++            cl_->SetPipelineState(pso);
++            binds_.pso = pso;
++            cl_->SetGraphicsRootConstantBufferView(0, last_vsc_gpu_);
++            cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
++            binds_.vsc = last_vsc_gpu_;
++            binds_.dc = last_dc_gpu_;
++        }
++        if ((hdr_ || fg_) && bound_rt_) SnapshotUi(*bound_rt_);
++    }
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,7 +3448,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,7 +3502,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -1446,7 +1561,66 @@ index fe65837..475fd77 100644
      SetBlendFactorStencilRef(s);
  
      // geometry, counted while the title runs a visibility test
-@@ -3155,16 +3743,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -2871,9 +3513,9 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+ 
+ // a guest rect scaled to the target and clamped to it
+ D3D12_RECT ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
+-    float sc = float(t.w) / t.gw;
+-    return {std::clamp<LONG>(LONG(x0 * sc), 0, t.w), std::clamp<LONG>(LONG(y0 * sc), 0, t.h),
+-            std::clamp<LONG>(LONG(x1 * sc), 0, t.w), std::clamp<LONG>(LONG(y1 * sc), 0, t.h)};
++    float sx = float(t.w) / t.gw, sy = float(t.h) / t.gh;
++    return {std::clamp<LONG>(LONG(x0 * sx), 0, t.w), std::clamp<LONG>(LONG(y0 * sy), 0, t.h),
++            std::clamp<LONG>(LONG(x1 * sx), 0, t.w), std::clamp<LONG>(LONG(y1 * sy), 0, t.h)};
+ }
+ 
+ // rs: the rects buffer, reused across targets
+@@ -3049,7 +3691,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+     D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), dst_t.view, rtv_inc_);
+     cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
+     float src_scale = float(src_t.w) / src_t.gw;
+-    float dst_scale = float(dst_t.w) / dst_t.gw;
++    float dst_scale = float(dst_t.w) / dst_t.gw, dst_down = float(dst_t.h) / dst_t.gh;
+     bool listed = l.count && l.src_rects;
+     uint32_t n = listed ? l.count : 1;
+     for (uint32_t i = 0; i < n; i++) {
+@@ -3058,7 +3700,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+         DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
+         if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
+         if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
+-        D3D12_VIEWPORT vp{r.dx * dst_scale, r.dy * dst_scale, (r.x1 - r.x0) * dst_scale, (r.y1 - r.y0) * dst_scale,
++        D3D12_VIEWPORT vp{r.dx * dst_scale, r.dy * dst_down, (r.x1 - r.x0) * dst_scale, (r.y1 - r.y0) * dst_down,
+                           0, 1};
+         LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
+         LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
+@@ -3084,7 +3726,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+     Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
+     D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+     D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+-    float dst_scale = float(dst_t.w) / dst_t.gw;
++    float dst_scale = float(dst_t.w) / dst_t.gw, dst_down = float(dst_t.h) / dst_t.gh;
+     bool listed = l.count && l.src_rects;
+     uint32_t n = listed ? l.count : 1;
+     for (uint32_t i = 0; i < n; i++) {
+@@ -3094,15 +3736,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+         if (listed) {
+             GuestRect r = ReadGuestRect(l.src_rects, i);
+             b.left = ScaleUnsigned(r.left, dst_scale);
+-            b.top = ScaleUnsigned(r.top, dst_scale);
++            b.top = ScaleUnsigned(r.top, dst_down);
+             b.right = std::min(ScaleUnsigned(r.right, dst_scale), src_t.w);
+-            b.bottom = std::min(ScaleUnsigned(r.bottom, dst_scale), src_t.h);
++            b.bottom = std::min(ScaleUnsigned(r.bottom, dst_down), src_t.h);
+             dx = b.left;
+             dy = b.top;
+             if (l.dst_points) {
+                 GuestPoint p = ReadGuestPoint(l.dst_points, i);
+                 dx = ScaleUnsigned(p.x, dst_scale);
+-                dy = ScaleUnsigned(p.y, dst_scale);
++                dy = ScaleUnsigned(p.y, dst_down);
+             }
+         }
+         if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
+@@ -3155,16 +3797,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -1537,7 +1711,7 @@ index fe65837..475fd77 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +3839,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +3893,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -1547,7 +1721,7 @@ index fe65837..475fd77 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +3849,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +3903,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -1557,7 +1731,7 @@ index fe65837..475fd77 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,22 +3885,275 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,22 +3939,419 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -1665,6 +1839,146 @@ index fe65837..475fd77 100644
 +}
 +)";
 +
++// anti-aliasing's depth and motion at the frame's size (drawn as frame generation's are), and AMD's output in the
++// frame's format when the card can write it so, then copied back; else RGBA and drawn back
++bool D3D12Backend::EnsureAaTargets(uint32_t w, uint32_t h, DXGI_FORMAT fmt) {
++    if (aa_depth_ && aa_motion_ && aa_out_ && aa_w_ == w && aa_h_ == h && aa_fmt_ == fmt) return true;
++    if (aa_depth_) Release(std::move(aa_depth_));
++    if (aa_motion_) Release(std::move(aa_motion_));
++    if (aa_out_) Release(std::move(aa_out_));
++    auto rt = [&](ComPtr<ID3D12Resource>& r, D3D12_RESOURCE_STATES& st, DXGI_FORMAT f, uint32_t rtv) {
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++        D3D12_RESOURCE_DESC td = Texture2DDesc(f, w, h);
++        td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++        D3D12_CLEAR_VALUE cv{};
++        cv.Format = f;
++        st = D3D12_RESOURCE_STATE_RENDER_TARGET;
++        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, st, &cv, IID_PPV_ARGS(&r)))) return false;
++        dev_->CreateRenderTargetView(r.Get(), nullptr, Cpu(rtv_heap_.Get(), rtv, rtv_inc_));
++        return true;
++    };
++    D3D12_FEATURE_DATA_FORMAT_SUPPORT fs{fmt};
++    bool store = SUCCEEDED(dev_->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof(fs))) &&
++                 (fs.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
++                 (fs.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
++    aa_out_fmt_ = store ? fmt : DXGI_FORMAT_R8G8B8A8_UNORM;
++    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++    D3D12_RESOURCE_DESC od = Texture2DDesc(aa_out_fmt_, w, h);
++    od.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    aa_out_state_ = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
++    bool ok = rt(aa_depth_, aa_depth_state_, DXGI_FORMAT_R32_FLOAT, kAaRtv) &&
++              rt(aa_motion_, aa_motion_state_, DXGI_FORMAT_R16G16_FLOAT, kAaRtv + 1) &&
++              SUCCEEDED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &od, aa_out_state_, nullptr,
++                                                      IID_PPV_ARGS(&aa_out_)));
++    if (!ok) {
++        aa_depth_ = aa_motion_ = aa_out_ = nullptr;
++        return false;
++    }
++    aa_w_ = w;
++    aa_h_ = h;
++    aa_fmt_ = fmt;
++    return true;
++}
++
++// The frame's 3D anti-aliased in place, before its UI: its motion (each 3D draw's own, else the camera's from depth)
++// and its depth drawn at its size as frame generation's are, then AMD's pass over it, written back. The world's
++// draws took this frame's offset (Extension::Jitter), which it takes back out
++bool D3D12Backend::AntiAliasFrame(Target& t) {
++    if (aa_done_frame_ == presents_) return false;
++    aa_done_frame_ = presents_;
++    if (!aa_ || aa_jitter_frame_ != presents_) return false;
++    Target* ds = fg_ds_frame_ == presents_ ? fg_ds_ : nullptr;
++    // the frame as the game draws it, 8 bit gamma-encoded colour (AMD's pass is told so)
++    if (!ds || ds->w != t.w || ds->h != t.h || t.fmt != kBgra || !EnsureAaTargets(t.w, t.h, t.fmt)) {
++        LOG_FIRST(4, "antialias: frame %llu not anti-aliased: depth %d, sizes %ux%u %ux%u, format %d",
++                  (unsigned long long)presents_, int(ds != nullptr), t.w, t.h, ds ? ds->w : 0, ds ? ds->h : 0,
++                  int(t.fmt));
++        return false;
++    }
++    ID3D12PipelineState* mpso = EnsurePassPipeline(kFrameGenHlsl, "motion", DXGI_FORMAT_R16G16_FLOAT, -1);
++    ID3D12PipelineState* dpso = EnsurePassPipeline(kFrameGenHlsl, "depthcopy", DXGI_FORMAT_R32_FLOAT, -1);
++    if (!mpso || !dpso) return false;
++    FrameView view;
++    bool have = ext_ && ext_->View(view) && view.valid;
++    if (!have) {
++        // no camera move found: each draw's own motion only, the rest still
++        view = {};
++        for (int i = 0; i < 16; i++) view.clip_to_prev[i] = i % 5 == 0 ? 1.0f : 0.0f;
++    }
++    Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++    bool own = fg_objmv_ && fg_objmv_frame_ == presents_ && fg_objmv_w_ == t.w && fg_objmv_h_ == t.h;
++    if (own) Transition(fg_objmv_.Get(), fg_objmv_state_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++    uint32_t slot = AllocSrvSlots(4);
++    for (int i = 0; i < 4; i++) {
++        D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
++        sv.Format = i == 0 ? kDepthRead : i == 1 ? DXGI_FORMAT_R16G16_FLOAT : kBgra;
++        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++        sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++        sv.Texture2D.MipLevels = 1;
++        ID3D12Resource* r = i == 0 ? ds->res.Get() : i == 1 && own ? fg_objmv_.Get() : nullptr;
++        dev_->CreateShaderResourceView(r, &sv, Cpu(srv_heap_.Get(), slot + i, srv_inc_));
++    }
++    Alloc cb = Upload(256, 256);
++    std::memcpy(cb.cpu, view.clip_to_prev, sizeof(view.clip_to_prev));
++    float opt[4] = {own ? 1.0f : 0.0f, 0, 0, 0};
++    std::memcpy(cb.cpu + sizeof(view.clip_to_prev), opt, sizeof(opt));
++    Transition(aa_motion_.Get(), aa_motion_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    Transition(aa_depth_.Get(), aa_depth_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    D3D12_CPU_DESCRIPTOR_HANDLE mh = Cpu(rtv_heap_.Get(), kAaRtv + 1, rtv_inc_);
++    cl_->OMSetRenderTargets(1, &mh, FALSE, nullptr);
++    SetFullViewport(t.w, t.h);
++    binds_ = {};
++    DrawFullScreen(mpso, cb.gpu, slot);
++    D3D12_CPU_DESCRIPTOR_HANDLE dh = Cpu(rtv_heap_.Get(), kAaRtv, rtv_inc_);
++    cl_->OMSetRenderTargets(1, &dh, FALSE, nullptr);
++    DrawFullScreen(dpso, cb.gpu, slot);
++    bound_rt_ = bound_ds_ = nullptr;
++    const D3D12_RESOURCE_STATES kRead =
++        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++    Transition(aa_motion_.Get(), aa_motion_state_, kRead);
++    Transition(aa_depth_.Get(), aa_depth_state_, kRead);
++    Transition(t.res.Get(), t.state, kRead);
++    Transition(aa_out_.Get(), aa_out_state_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    auto now = std::chrono::steady_clock::now();
++    framegen::AntiAlias::Frame f;
++    f.color = t.res.Get();
++    f.depth = aa_depth_.Get();
++    f.motion = aa_motion_.Get();
++    f.output = aa_out_.Get();
++    f.w = t.w;
++    f.h = t.h;
++    f.jitter[0] = aa_jitter_[0];
++    f.jitter[1] = aa_jitter_[1];
++    f.reset = !aa_had_view_ || !have || view.cut;
++    f.view = view;
++    f.frame_ms = float(std::chrono::duration<double, std::milli>(now - aa_t_).count());
++    aa_t_ = now;
++    aa_had_view_ = have;
++    bool ran = aa_->Run(cl_.Get(), f);
++    if (ran) {
++        if (!aa_said_) {
++            LOGR("antialias: AMD FSR on the frame's 3D at %ux%u%s", t.w, t.h,
++                 aa_out_fmt_ == t.fmt ? "" : ", drawn back from RGBA");
++            aa_said_ = true;
++        }
++        if (aa_out_fmt_ == t.fmt) {
++            Transition(aa_out_.Get(), aa_out_state_, D3D12_RESOURCE_STATE_COPY_SOURCE);
++            Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_DEST);
++            cl_->CopyResource(t.res.Get(), aa_out_.Get());
++        } else {
++            Transition(aa_out_.Get(), aa_out_state_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++            Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
++            ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get(), smp_heap_.Get()};
++            cl_->SetDescriptorHeaps(2, heaps);
++            SetBlitTarget(Cpu(rtv_heap_.Get(), t.view, rtv_inc_), t.w, t.h);
++            float uv[4] = {0, 0, 1, 1};
++            Blit(aa_out_.Get(), aa_out_fmt_, uv, BlitOptions{.alpha = true, .rtv = t.fmt});
++        }
++    }
++    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    return true;
++}
++
 +// the inputs at the frame's size, the HUD-less frames at the back buffer's
 +void D3D12Backend::EnsureFrameGenTargets(uint32_t w, uint32_t h, DXGI_FORMAT bb) {
 +    if (fg_depth_ && fg_w_ == w && fg_h_ == h && fg_bb_w_ == bb_w_ && fg_bb_h_ == bb_h_ && fg_bb_fmt_ == bb) return;
@@ -1771,6 +2085,10 @@ index fe65837..475fd77 100644
 +            }
 +        }
 +    }
++    if (aa_on_ && aa_jitter_frame_ == presents_ && t && t->w && t->h) {
++        in.jitter[0] = aa_jitter_[0] * float(vw) / float(t->w);
++        in.jitter[1] = aa_jitter_[1] * float(vh) / float(t->h);
++    }
 +    in.reset = !fg_had_view_ || view.cut || !ok;
 +    fg_had_view_ = ok;
 +    // XBE_FG_TRACE: why a frame had no inputs
@@ -1838,7 +2156,7 @@ index fe65837..475fd77 100644
  }
  
  void D3D12Backend::RenderUi() {
-@@ -3253,19 +4168,196 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +4366,198 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -1887,6 +2205,8 @@ index fe65837..475fd77 100644
 +}
 +
  void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
++    // a frame whose 3D took anti-aliasing's offset with no UI drawn after it: anti-aliased here
++    if (t && aa_on_ && aa_jitter_frame_ == presents_ && aa_done_frame_ != presents_ && AntiAliasFrame(*t)) Begin();
      D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
      Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
      D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
@@ -2036,7 +2356,7 @@ index fe65837..475fd77 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +4367,9 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +4567,9 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -2046,7 +2366,7 @@ index fe65837..475fd77 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,6 +4386,7 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,6 +4586,7 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -2054,7 +2374,7 @@ index fe65837..475fd77 100644
      f.used = 0;
      f.srv = 0;
      cl_->Reset(f.alloc.Get(), nullptr);
-@@ -3305,6 +4401,21 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +4601,21 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -2076,7 +2396,7 @@ index fe65837..475fd77 100644
      }
  }
  
-@@ -3317,12 +4428,14 @@ void LogPerf() {
+@@ -3317,12 +4628,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -2095,7 +2415,7 @@ index fe65837..475fd77 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,13 +4444,13 @@ void LogPerf() {
+@@ -3331,13 +4644,13 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -2112,7 +2432,7 @@ index fe65837..475fd77 100644
          g_perf = Perf{};
          perf_start = PerfClock::now();
          perf_frames = 0;
-@@ -3348,8 +4461,9 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3348,8 +4661,9 @@ void D3D12Backend::Present(const Surface& front) {
      PerfScope perf_present{g_perf.present};
      if (cap_) {
          FinishCapture(front);
@@ -2124,7 +2444,7 @@ index fe65837..475fd77 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3365,7 +4479,9 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3365,7 +4679,9 @@ void D3D12Backend::Present(const Surface& front) {
      DeliverReports();
      bool vsync = app::Get().vsync;
      auto perf_swap = PerfClock::now();
@@ -2134,8 +2454,32 @@ index fe65837..475fd77 100644
      g_perf.swap += PerfMs(perf_swap);
  
      presents_++;
+@@ -3386,13 +4702,21 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+ 
+ void D3D12Backend::ApplySettings() {
+     if (texturedumper::Update()) ReleasePackTextures();
+-    float want = app::RenderScale(guest_h_);
++    // anti-aliasing: on as set, with AMD's files loaded the first time
++    bool want_aa = g_antialias.load(std::memory_order_relaxed) != 0;
++    if (want_aa && !aa_ && !aa_tried_) {
++        aa_tried_ = true;
++        aa_ = framegen::MakeAntiAlias(dev_.Get());
++    }
++    aa_on_ = want_aa && aa_;
++    float want = app::RenderScale(guest_h_), aspect = TargetAspect();
+     bool remake = ext_ && ext_->Settings();
+-    if (std::fabs(want - scale_) > 1e-4f || remake) {
++    if (std::fabs(want - scale_) > 1e-4f || std::fabs(aspect - aspect_) > 1e-4f || remake) {
+         Flush();
+         for (auto& [key, tg] : targets_) (tg.depth ? free_dsv_ : free_rtv_).push_back(tg.view);
+         targets_.clear();
+         scale_ = want;
++        aspect_ = aspect;
+         if (ext_) ext_->Reset(*this);
+         bound_rt_ = bound_ds_ = nullptr;
+     }
 diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
-index ce6acda..225fbce 100644
+index ce6acda..b4377d4 100644
 --- a/runtime/gpu/ext.h
 +++ b/runtime/gpu/ext.h
 @@ -17,6 +17,7 @@
@@ -2186,7 +2530,7 @@ index ce6acda..225fbce 100644
  class Extension {
  public:
      virtual ~Extension() = default;
-@@ -74,19 +108,37 @@ public:
+@@ -74,19 +108,40 @@ public:
      virtual void MakeTarget(const Surface&, bool /*depth*/, uint32_t /*gw*/, uint32_t /*gh*/, float& /*scale*/, DXGI_FORMAT& /*fmt*/) {}
      virtual void BeginDraw(const State&) {}
      virtual void EndDraw() {}
@@ -2211,6 +2555,9 @@ index ce6acda..225fbce 100644
 +    // sheet's next picture (a faint line under a row of figures). Asked only when the program, if any, passes the
 +    // coordinates on as given (TexcoordsAsGiven)
 +    virtual bool TexelBox(float* /*box*/) { return false; }
++    // the draw at hand is the 3D world drawn into the frame: true moves it by anti-aliasing's sub-pixel offset
++    // (framegen.h, AntiAlias), which only the frame's 3D may take
++    virtual bool Jitter() { return false; }
      // a draw's constants: the vertex registers as uploaded, DrawConstants::ext; src_blend 1 without blending
      virtual void Constants(float (*/*vsc*/)[4], float* /*ext*/, const Target* /*rt*/, uint32_t /*src_blend*/) {}
 +    // HDR output: true when this draw starts the frame's UI, after the frame's last 3D draw. The frame as it is before
@@ -2226,10 +2573,10 @@ index ce6acda..225fbce 100644
  inline std::unique_ptr<Extension> g_extension;
 diff --git a/runtime/gpu/framegen.cpp b/runtime/gpu/framegen.cpp
 new file mode 100644
-index 0000000..46bb296
+index 0000000..4794d00
 --- /dev/null
 +++ b/runtime/gpu/framegen.cpp
-@@ -0,0 +1,601 @@
+@@ -0,0 +1,732 @@
 +// Frame generation by AMD FSR 3 or NVIDIA DLSS (framegen.h). Each vendor's library is loaded at run time from beside
 +// the executable, never linked: without the files the game runs as it did.
 +#include "gpu/framegen.h"
@@ -2251,6 +2598,7 @@ index 0000000..46bb296
 +// the vendors' own headers (third_party, MIT): their structures as their libraries take them
 +#include "framegeneration/include/dx12/ffx_api_framegeneration_dx12.h"
 +#include "framegeneration/include/ffx_framegeneration.h"
++#include "upscalers/include/ffx_upscale.h"
 +#include "sl.h"
 +#include "sl_dlss_g.h"
 +#include "sl_pcl.h"
@@ -2420,7 +2768,7 @@ index 0000000..46bb296
 +            p.frameID = frame_;
 +            p.commandList = cl;
 +            p.renderSize = {rw, rh};
-+            p.jitterOffset = {0, 0};
++            p.jitterOffset = {in.jitter[0], in.jitter[1]};
 +            p.motionVectorScale = {float(rw), float(rh)};  // UV units to pixels
 +            p.frameTimeDelta = in.frame_ms;
 +            p.reset = in.reset;
@@ -2664,7 +3012,7 @@ index 0000000..46bb296
 +            put(c.clipToLensClip, kIdentity);
 +            put(c.clipToPrevClip, in.view.clip_to_prev);
 +            put(c.prevClipToClip, prev_to_clip);
-+            c.jitterOffset = {0, 0};
++            c.jitterOffset = {in.jitter[0], in.jitter[1]};
 +            c.mvecScale = {1, 1};  // UV units
 +            c.cameraPinholeOffset = {0, 0};
 +            c.cameraPos = {in.view.position[0], in.view.position[1], in.view.position[2]};
@@ -2817,6 +3165,130 @@ index 0000000..46bb296
 +    bool ready_ = false, mode_on_ = false, hdr_said_ = false;
 +};
 +
++// Halton's sequence in a base, from index 1: anti-aliasing's offsets, as AMD's own samples take them
++float Halton(int32_t index, int32_t base) {
++    float f = 1, r = 0;
++    for (int32_t i = index; i > 0; i /= base) {
++        f /= float(base);
++        r += f * float(i % base);
++    }
++    return r;
++}
++
++// AMD FSR's upscaler at the frame's own size: its temporal anti-aliasing, with its sharpening after
++class FsrAa final : public AntiAlias {
++public:
++    ~FsrAa() override {
++        if (ctx_ && destroy_) destroy_(&ctx_, nullptr);
++    }
++
++    bool Load(ID3D12Device* dev) {
++        dev_ = dev;
++        fs::path dir = app::ExeDir();
++        std::wstring missing;
++        if (!Have(dir, {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_upscaler_dx12.dll"}, missing)) {
++            LOGR("antialias: AMD FSR needs %ls beside the game (AMD's FidelityFX SDK release, signedbin)",
++                 missing.c_str());
++            return false;
++        }
++        lib_ = LoadLibraryExW((dir / L"amd_fidelityfx_loader_dx12.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
++        if (!lib_) {
++            LOGR("antialias: amd_fidelityfx_loader_dx12.dll does not load (error %lu)", GetLastError());
++            return false;
++        }
++        create_ = reinterpret_cast<PfnFfxCreateContext>(GetProcAddress(lib_, "ffxCreateContext"));
++        destroy_ = reinterpret_cast<PfnFfxDestroyContext>(GetProcAddress(lib_, "ffxDestroyContext"));
++        dispatch_ = reinterpret_cast<PfnFfxDispatch>(GetProcAddress(lib_, "ffxDispatch"));
++        if (!create_ || !destroy_ || !dispatch_) {
++            LOGR("antialias: amd_fidelityfx_loader_dx12.dll lacks the FidelityFX API");
++            return false;
++        }
++        return true;
++    }
++
++    // at the frame's own size the sequence is 8 long (AMD's 8 times the scale squared)
++    void Jitter(uint64_t frame, float& x, float& y) const override {
++        constexpr int32_t kPhases = 8;
++        int32_t i = int32_t(frame % kPhases) + 1;
++        x = Halton(i, 2) - 0.5f;
++        y = Halton(i, 3) - 0.5f;
++    }
++
++    bool Run(ID3D12GraphicsCommandList* cl, const Frame& f) override {
++        if (!f.color || !f.depth || !f.motion || !f.output || !f.w || !f.h) return false;
++        if (ctx_ && (f.w != w_ || f.h != h_)) {
++            destroy_(&ctx_, nullptr);
++            ctx_ = nullptr;
++        }
++        bool fresh = !ctx_;
++        if (!ctx_ && !MakeContext(f.w, f.h)) return false;
++        ffxDispatchDescUpscale d{};
++        d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
++        d.commandList = cl;
++        d.color = ffxApiGetResourceDX12(f.color, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
++        d.depth = ffxApiGetResourceDX12(f.depth, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
++        d.motionVectors = ffxApiGetResourceDX12(f.motion, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
++        d.output = ffxApiGetResourceDX12(f.output, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
++        d.jitterOffset = {f.jitter[0], f.jitter[1]};
++        d.motionVectorScale = {float(f.w), float(f.h)};  // UV units to pixels
++        d.renderSize = {f.w, f.h};
++        d.upscaleSize = {f.w, f.h};
++        d.enableSharpening = f.sharpness > 0;
++        d.sharpness = f.sharpness;
++        d.frameTimeDelta = f.frame_ms;
++        d.preExposure = 1;
++        d.reset = f.reset || fresh;
++        d.cameraNear = f.view.near_w;
++        d.cameraFar = f.view.far_w;
++        d.cameraFovAngleVertical = f.view.fov_y;
++        d.viewSpaceToMetersFactor = 0.01f;  // the title's units are about centimetres
++        d.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
++        ffxReturnCode_t r = dispatch_(&ctx_, &d.header);
++        if (r != FFX_API_RETURN_OK) {
++            FG_FIRST(4, "antialias: AMD FSR dispatch %u at %ux%u", r, f.w, f.h);
++            return false;
++        }
++        return true;
++    }
++
++private:
++    bool MakeContext(uint32_t w, uint32_t h) {
++        ffxCreateBackendDX12Desc be{};
++        be.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
++        be.device = dev_;
++        ffxCreateContextDescUpscaleVersion ver{};
++        ver.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION;
++        ver.version = FFX_UPSCALER_VERSION;
++        ver.header.pNext = &be.header;
++        ffxCreateContextDescUpscale c{};
++        c.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
++        c.header.pNext = &ver.header;
++        // the frame as the game drew it: gamma-encoded colour, depth reversed (1 near), exposure found by AMD
++        c.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DEPTH_INVERTED |
++                  FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
++        c.maxRenderSize = {w, h};
++        c.maxUpscaleSize = {w, h};
++        ffxReturnCode_t r = create_(&ctx_, &c.header, nullptr);
++        if (r != FFX_API_RETURN_OK) {
++            FG_FIRST(4, "antialias: AMD FSR's context was not made (%u) at %ux%u", r, w, h);
++            ctx_ = nullptr;
++            return false;
++        }
++        w_ = w;
++        h_ = h;
++        LOGR("antialias: AMD FSR at %ux%u", w, h);
++        return true;
++    }
++
++    ID3D12Device* dev_ = nullptr;
++    HMODULE lib_ = nullptr;
++    PfnFfxCreateContext create_ = nullptr;
++    PfnFfxDestroyContext destroy_ = nullptr;
++    PfnFfxDispatch dispatch_ = nullptr;
++    ffxContext ctx_ = nullptr;
++    uint32_t w_ = 0, h_ = 0;
++};
++
 +}  // namespace
 +
 +std::unique_ptr<FrameGen> Make(uint32_t kind) {
@@ -2830,13 +3302,19 @@ index 0000000..46bb296
 +    return nullptr;
 +}
 +
++std::unique_ptr<AntiAlias> MakeAntiAlias(ID3D12Device* dev) {
++    auto a = std::make_unique<FsrAa>();
++    if (dev && a->Load(dev)) return a;
++    return nullptr;
++}
++
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/framegen.h b/runtime/gpu/framegen.h
 new file mode 100644
-index 0000000..c9a9970
+index 0000000..f2acdc3
 --- /dev/null
 +++ b/runtime/gpu/framegen.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,107 @@
 +// Frame generation: a frame made between each two the title draws, by AMD FidelityFX Super Resolution 3 frame
 +// generation (any Direct3D 12 card) or NVIDIA DLSS frame generation through Streamline (GeForce RTX 40 and 50).
 +//
@@ -2881,6 +3359,7 @@ index 0000000..c9a9970
 +    bool hdr = false;    // HDR back buffer: scRGB, or HDR10 when Hdr10()
 +    float peak_nits = 1000;
 +    bool menu = false;   // the settings menu is up over the frame
++    float jitter[2] = {};  // anti-aliasing's sub-pixel offset of the frame's 3D (AntiAlias), in pixels at rect's size
 +};
 +
 +class FrameGen {
@@ -2915,9 +3394,36 @@ index 0000000..c9a9970
 +// cannot be (logged). Before the Direct3D device is made.
 +std::unique_ptr<FrameGen> Make(uint32_t kind);
 +
++// Anti-aliasing of the frame's 3D, before its UI: AMD FSR's upscaler at the frame's own size (native AA), from AMD's
++// amd_fidelityfx_loader_dx12.dll and amd_fidelityfx_upscaler_dx12.dll beside the game. The title's 3D draws are moved
++// by a sub-pixel offset each frame (Jitter), which it gathers over the frames into smooth edges.
++class AntiAlias {
++public:
++    struct Frame {
++        ID3D12Resource* color = nullptr;   // the frame's colour, in ALL_SHADER_RESOURCE
++        ID3D12Resource* depth = nullptr;   // R32_FLOAT, the colour's size, reversed (1 near), ALL_SHADER_RESOURCE
++        ID3D12Resource* motion = nullptr;  // R16G16_FLOAT, the colour's size: to the frame before in UV units
++        ID3D12Resource* output = nullptr;  // the colour's size, in UNORDERED_ACCESS
++        uint32_t w = 0, h = 0;
++        float jitter[2] = {};  // pixels, as Jitter gave them for this frame
++        bool reset = false;    // nothing to gather from: a cut, the first frame
++        FrameView view;
++        float frame_ms = 16.7f;
++        float sharpness = 0.3f;  // AMD's sharpening after, 0 none
++    };
++    virtual ~AntiAlias() = default;
++    // the frame's offset in pixels, each -0.5 to 0.5
++    virtual void Jitter(uint64_t frame, float& x, float& y) const = 0;
++    // recorded into cl; false when it can't (logged)
++    virtual bool Run(ID3D12GraphicsCommandList* cl, const Frame& f) = 0;
++};
++
++// null when AMD's files are not beside the game (logged)
++std::unique_ptr<AntiAlias> MakeAntiAlias(ID3D12Device* dev);
++
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 6d263d6..e67100c 100644
+index 6d263d6..cbc11aa 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
 @@ -32,8 +32,13 @@ struct VOut {
@@ -2970,7 +3476,7 @@ index 6d263d6..e67100c 100644
      o.d1 = saturate(oD1);
      o.b0 = saturate(oB0);
      o.b1 = saturate(oB1);
-@@ -242,10 +248,37 @@ const char* kVsEpilogue = R"(
+@@ -242,10 +248,39 @@ const char* kVsEpilogue = R"(
      o.tc2 = oT2;
      o.tc3 = oT3;
      o.fogamt = fogfactor(oFog.x);
@@ -2988,18 +3494,20 @@ index 6d263d6..e67100c 100644
 +}
 +
 +// the epilogue's @MOTION@ mark: a program's clip positions now and in the frame before (PrevPositionHlsl,
-+// MotionOut), else none
++// MotionOut), else none. Then anti-aliasing's sub-pixel offset (motion.zw, clip units; 0 but for the frame's 3D),
++// after the motion is taken, which goes without it
 +std::string WithMotion(std::string s, bool program) {
 +    constexpr std::string_view kMark = "@MOTION@";
 +    size_t at = s.find(kMark);
 +    if (at == std::string::npos) return s;
-+    const char* none = "    o.mvc = o.pos;\n    o.mvp = 0;\n";
++    const char* none = "    o.mvc = o.pos;\n    o.mvp = 0;\n    o.pos.xy += motion.zw * o.pos.w;\n";
 +    // the frame before's position only when the renderer uploaded its constants: a uniform branch, skipped otherwise
 +    const char* prev = "    o.mvc = o.pos;\n    o.mvp = 0;\n"
 +                       "    [branch] if (motion.x != 0) {\n"
 +                       "        o.mvp = HookPos(PrevClip(i));\n"
 +                       "        o.mvp.z = 1;\n"
-+                       "    }\n";
++                       "    }\n"
++                       "    o.pos.xy += motion.zw * o.pos.w;\n";
 +    s.replace(at, kMark.size(), program ? prev : none);
 +    return s;
 +}
@@ -3009,7 +3517,7 @@ index 6d263d6..e67100c 100644
  const char* kVsPrologue = R"(
      int a0 = 0;
      // precise: EQUAL depth passes need bit exact positions
-@@ -381,15 +414,28 @@ std::string DotInput(uint32_t map, uint32_t src) {
+@@ -381,15 +416,29 @@ std::string DotInput(uint32_t map, uint32_t src) {
  
  // stage i's coordinates as the title wrote them, over 0..1. The console draws half a pixel right and down of the
  // host unless a program writes positions raw: a render target is read where the console's offset puts it
@@ -3022,7 +3530,9 @@ index 6d263d6..e67100c 100644
 +        n = F("texbox(%s, %s, texsize[%d].xy, %s)", n.c_str(), box_w, i, t.rect ? "true" : "false");
      n += F(" + texsize[%d].zw", i);
      if (!(t.flags & kTexTarget)) return n;
-     std::string step = "ddx(" + n + ") + ddy(" + n + ")";
+-    std::string step = "ddx(" + n + ") + ddy(" + n + ")";
++    std::string step = t.aspect ? F("ddx(%s) * %.3f + ddy(%s)", n.c_str(), t.aspect / 1000.0, n.c_str())
++                                : "ddx(" + n + ") + ddy(" + n + ")";
      return n + F(" + rtshift[%d] * (", i) + step + ")";
  }
  
@@ -3039,7 +3549,7 @@ index 6d263d6..e67100c 100644
  // texture shader stage i, per its mode
  std::string TexFetch(const PixelKey& k, int i) {
      uint32_t mode = (k.tex_modes >> (i * 5)) & 0x1F;
-@@ -411,8 +457,9 @@ std::string TexFetch(const PixelKey& k, int i) {
+@@ -411,8 +460,9 @@ std::string TexFetch(const PixelKey& k, int i) {
          std::string c = Hooks().Cube(t, i, dir);
          return c.empty() ? F("tex%d.Sample(smp%d, %s)", i, i, dir.c_str()) : c;
      };
@@ -3050,7 +3560,7 @@ index 6d263d6..e67100c 100644
          if (t.kind == kTexCube) return cube("float3(" + uv + ", 1)");
          if (t.kind == kTex3D) return F("tex%d.Sample(smp%d, float3(%s, 0))", i, i, uv.c_str());
          return std::string("float4(0,0,0,1)");
-@@ -428,6 +475,7 @@ std::string TexFetch(const PixelKey& k, int i) {
+@@ -428,6 +478,7 @@ std::string TexFetch(const PixelKey& k, int i) {
          std::string rest = F(", %s, %d, i.pos.xy, texsize[%d].xy)", ref.c_str(), t.shadow, i);
          return put(F("shadow(tex%d, smp%d, ", i, i) + uv + rest);
      };
@@ -3058,7 +3568,7 @@ index 6d263d6..e67100c 100644
      std::string s;
      switch (mode) {
          // PS_TEXTUREMODES: 1 project2d, 2 project3d, 3 cubemap, 4 passthru, 5 clipplane, 6 and 7 bumpenvmap, 9 dot_st, 0xA dot_zw, 0xD dot_str_3d, 0xE dot_str_cube, 0xF dpndnt_ar, 0x10 dpndnt_gb, 0x11 dotproduct
-@@ -667,6 +715,16 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
+@@ -667,6 +718,16 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
          const auto& t = s.tss[size_t(i)];
          uint32_t v[9] = {t[kTssColorOp], t[kTssColorArg1], t[kTssColorArg2], t[kTssColorArg0], t[kTssAlphaOp],
                           t[kTssAlphaArg1],  t[kTssAlphaArg2], t[kTssAlphaArg0], t[kTssResultArg]};
@@ -3075,7 +3585,7 @@ index 6d263d6..e67100c 100644
          std::memcpy(k.ff[i], v, sizeof(v));
          if (!tex[i].kind) PassMissingTexture(k.ff[i]);
          if (program || (t[kTssTextureTransformFlags] & 0x100)) k.proj |= 1u << i;  // D3DTTFF_PROJECTED
-@@ -678,27 +736,48 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
+@@ -678,27 +739,48 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]) {
  constexpr uint32_t kMuxConstant = 3;
  constexpr uint32_t kViewportOffsetConstant = 59;  // c-37: constants start at c-96
  
@@ -3132,7 +3642,7 @@ index 6d263d6..e67100c 100644
              s += "    {\n";
              if (mac) s += "        precise float4 mr = " + MacExpr(mac, a, b, c) + ";\n";
              if (ilu) s += "        precise float4 ir = " + IluExpr(ilu, c) + ";\n";
-@@ -727,7 +806,48 @@ std::string VertexProgramHlsl(const std::vector<uint32_t>& prog, uint16_t regs,
+@@ -727,7 +809,48 @@ std::string VertexProgramHlsl(const std::vector<uint32_t>& prog, uint16_t regs,
          }
          if (k.f(3, 0, 1)) break;  // last instruction
      }
@@ -3182,7 +3692,7 @@ index 6d263d6..e67100c 100644
      return s;
  }
  
-@@ -840,7 +960,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -840,7 +963,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
          s += "    }\n";
      }
      s += "    oFog = " + v(5, "float4(0,0,0,0)") + ";\n";
@@ -3191,7 +3701,7 @@ index 6d263d6..e67100c 100644
      s += R"(
      VOut o;
      // like the pretransformed ones, target sized passes end half a console pixel short of the far edges
-@@ -848,7 +968,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -848,7 +971,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      if (surf.w == 0 && abs(sp.x - (surf.x - 0.5)) < 1e-3) cp.x = cp.w;
      if (surf.w == 0 && abs(sp.y - (surf.y - 0.5)) < 1e-3) cp.y = -cp.w;
      o.pos = cp;
@@ -3200,12 +3710,13 @@ index 6d263d6..e67100c 100644
      o.d1 = saturate(oD1);
      o.b0 = o.d0;
      o.b1 = o.d1;
-@@ -857,21 +977,177 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -857,21 +980,178 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      o.tc2 = oT2;
      o.tc3 = oT3;
      o.fogamt = fogfactor(abs(cp.z));
 +    o.mvc = o.pos;
 +    o.mvp = 0;
++    o.pos.xy += motion.zw * o.pos.w;
      return o;
  }
  )";
@@ -3380,7 +3891,7 @@ index 6d263d6..e67100c 100644
      s += "    float4 tc0 = i.tc0, tc1 = i.tc1, tc2 = i.tc2, tc3 = i.tc3;\n";
      s += k.two_sided ? "    float4 v0 = front ? i.d0 : i.b0, v1 = front ? i.d1 : i.b1;\n" : "    float4 v0 = i.d0, v1 = i.d1;\n";
      s += "    if (misc.w == 0) v1 = float4(0, 0, 0, 1);\n";
-@@ -899,6 +1175,7 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -899,6 +1179,7 @@ std::string PixelHlsl(const PixelKey& k) {
              ps.code += wc + wa + "}\n";
          }
          body += ps.code;
@@ -3388,7 +3899,7 @@ index 6d263d6..e67100c 100644
          if (k.final_abcd || k.final_efg) {
              ps.stage = 8;
              uint32_t fl = k.final_efg & 0xFF;
-@@ -922,13 +1199,16 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -922,13 +1203,16 @@ std::string PixelHlsl(const PixelKey& k) {
              const uint32_t* f = k.ff[i];
              if (f[0] <= 1) break;
              const TexInfo& t = k.tex[i];
@@ -3406,7 +3917,7 @@ index 6d263d6..e67100c 100644
              else if (t.kind == kTex2D) body += F("float4 t%d = tex%d.Sample(smp%d, %s);\n", i, i, i, uv.c_str());
              else if (t.kind == kTexCube && !(cube = Hooks().Cube(t, i, F("tc%d.xyz", i))).empty()) body += F("float4 t%d = %s;\n", i, cube.c_str());
              else if (t.kind) body += F("float4 t%d = tex%d.Sample(smp%d, tc%d.xyz);\n", i, i, i, i);
-@@ -940,6 +1220,7 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -940,6 +1224,7 @@ std::string PixelHlsl(const PixelKey& k) {
              std::string a = f[4] <= 1 ? std::string("cur.a") : FfOp(f[4], FfArg(f[5], i, true), FfArg(f[6], i, true), FfArg(f[7], i, true), i, true);
              body += F("{ float3 c3 = saturate(%s); float c1 = saturate(%s); %s = float4(c3, c1); }\n", rgb.c_str(), a.c_str(), dst);
          }
@@ -3415,10 +3926,20 @@ index 6d263d6..e67100c 100644
          body += "float4 outc = float4(lerp(fogin.rgb, cur.rgb, fogin.a), cur.a);\n";
      }
 diff --git a/runtime/gpu/shaders.h b/runtime/gpu/shaders.h
-index 08d9bff..530d7c7 100644
+index 08d9bff..6b358ed 100644
 --- a/runtime/gpu/shaders.h
 +++ b/runtime/gpu/shaders.h
-@@ -34,6 +34,9 @@ struct PixelKey {
+@@ -15,6 +15,9 @@ struct TexInfo {
+     uint8_t rect = 0;    // linear texture, coordinates in texels
+     uint8_t shadow = 0;  // depth texture: 1 D24, 2 D16
+     uint8_t flags = 0;   // kTexWide, kTexTarget; bits 0 and 1 are a backend extension's
++    // kTexTarget: the target drawn into's host pixels across per host pixel down per console pixel, in thousandths,
++    // 0 for the same (a widescreen target is wider): rtshift's half pixel by axis
++    uint16_t aspect = 0;
+ };
+ enum : uint8_t {
+     kTexWide = 4,    // an upscaled target shrunk by the pass: each tap averaged over console texels
+@@ -34,6 +37,9 @@ struct PixelKey {
      uint32_t proj = 0;       // fixed function: bit per stage sampled at coordinates divided by w
      uint32_t quad = 0;       // a screen quad: QuadHlsl
      uint32_t alphatest = 0;  // alpha test on: only then may the shader discard, which turns off early depth tests
@@ -3428,7 +3949,7 @@ index 08d9bff..530d7c7 100644
      bool operator==(const PixelKey& o) const;
  };
  
-@@ -46,6 +49,11 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]);
+@@ -46,6 +52,11 @@ PixelKey MakePixelKey(const State& s, const TexInfo tex[4]);
  std::string VertexProgramHlsl(const std::vector<uint32_t>& program, uint16_t regs, uint64_t decode = 0);
  // the program reads c-37, the viewport offset that carries the XDK's half pixel screen space offset
  bool ReadsViewportOffset(const std::vector<uint32_t>& program);
@@ -3440,7 +3961,7 @@ index 08d9bff..530d7c7 100644
  // fixed function vertex state a shader is built for
  struct FixedKey {
      uint32_t light = 0;    // bit 0 lighting, 1 specular, 2 local viewer, 3 normalize, then D3DMCS 2 bits each from bit 8:
-@@ -56,6 +64,8 @@ struct FixedKey {
+@@ -56,6 +67,8 @@ struct FixedKey {
  FixedKey MakeFixedKey(const State& s);
  std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode = 0, const FixedKey& f = {});
  std::string PixelHlsl(const PixelKey& k);
@@ -3449,7 +3970,7 @@ index 08d9bff..530d7c7 100644
  // a screen quad's vertex or pixel shader: texture coordinates as the quad was drawn, before its far edges were pulled out
  std::string QuadHlsl(std::string s);
  // depth stored reversed (1 at the near clip, 0 at the far one) from DrawConstants::zparams, for a vertex shader
-@@ -78,6 +88,8 @@ struct ShaderHooks {
+@@ -78,6 +91,8 @@ struct ShaderHooks {
      virtual std::string Fetched(const TexInfo&, int) const { return {}; }
      // outc to the target, after the alpha test
      virtual std::string Output() const;
@@ -3458,11 +3979,16 @@ index 08d9bff..530d7c7 100644
  };
  inline const ShaderHooks* g_shader_hooks = nullptr;
  inline bool g_reversed_depth = false;  // the renderer stores depth reversed: shadow compares turn r with it
-@@ -105,6 +117,13 @@ struct DrawConstants {
+@@ -103,8 +118,17 @@ struct DrawConstants {
+     float mat[5][4];     // material diffuse, ambient, specular, emissive, power
+     float amb[4];        // D3DRS_AMBIENT
      float lt[8][7][4];   // per light: diffuse, specular, ambient, position range, direction falloff, attenuation, cos theta/2 phi/2
-     float rtshift[4];    // per kTexTarget stage: host pixels its reads move along x and y, negative up and left
+-    float rtshift[4];    // per kTexTarget stage: host pixels its reads move along x and y, negative up and left
++    float rtshift[4];    // per kTexTarget stage: host pixels its reads move down and (times TexInfo::aspect) across,
++                         // negative up and left
      float zparams[4];    // ReversedDepthHlsl: a w buffer's scale (0 for a z buffer), its far w, the polygon offset
-+    float motion[4];     // x: 1 when the vertex constants' second half (cp) holds the same draw's of the frame before
++    float motion[4];     // x: 1 when the vertex constants' second half (cp) holds the same draw's of the frame before;
++                         // zw: anti-aliasing's sub-pixel offset in clip units, for the frame's 3D (0 otherwise)
 +    // PixelKey::material: Material::params, then the view's tangents of half its angles across and down and the
 +    // target's size in host pixels; only a material's shaders declare it
 +    float mtl[4][4];
@@ -4960,6 +5486,242 @@ index 0000000..e7e514d
 +    uint32_t hybridSpinTime;                   ///< How long to spin if allowHybridSpin is true, in timer resolution units. Not recommended to go below 2, as it will result in frequent overshoots. Default is 2.
 +    bool     allowWaitForSingleObjectOnFence;  ///< Allows WaitForSingleObject instead of spinning for fence value. Default is false.
 +} FfxApiSwapchainFramePacingTuning;
+diff --git a/third_party/fidelityfx/upscalers/include/ffx_upscale.h b/third_party/fidelityfx/upscalers/include/ffx_upscale.h
+new file mode 100644
+index 0000000..021ac23
+--- /dev/null
++++ b/third_party/fidelityfx/upscalers/include/ffx_upscale.h
+@@ -0,0 +1,230 @@
++// This file is part of the FidelityFX SDK.
++//
++// Copyright (C) 2026 Advanced Micro Devices, Inc.
++//
++// Permission is hereby granted, free of charge, to any person obtaining a copy
++// of this software and associated documentation files(the "Software"), to deal
++// in the Software without restriction, including without limitation the rights
++// to use, copy, modify, merge, publish, distribute, sublicense, and /or sell
++// copies of the Software, and to permit persons to whom the Software is
++// furnished to do so, subject to the following conditions :
++//
++// The above copyright notice and this permission notice shall be included in
++// all copies or substantial portions of the Software.
++//
++// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++// THE SOFTWARE.
++
++#pragma once
++#include "../../api/include/ffx_api.h"
++#include "../../api/include/ffx_api_types.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define FFX_UPSCALER_VERSION_MAJOR 4
++#define FFX_UPSCALER_VERSION_MINOR 1
++#define FFX_UPSCALER_VERSION_PATCH 1
++
++#define FFX_UPSCALER_MAKE_VERSION(major, minor, patch) (((major) << 22) | ((minor) << 12) | (patch))
++#define FFX_UPSCALER_VERSION                           FFX_UPSCALER_MAKE_VERSION(FFX_UPSCALER_VERSION_MAJOR, FFX_UPSCALER_VERSION_MINOR, FFX_UPSCALER_VERSION_PATCH)
++
++enum FfxApiUpscaleQualityMode
++{
++    FFX_UPSCALE_QUALITY_MODE_NATIVEAA          = 0,  ///< Perform upscaling with a per-dimension upscaling ratio of 1.0x.
++    FFX_UPSCALE_QUALITY_MODE_QUALITY           = 1,  ///< Perform upscaling with a per-dimension upscaling ratio of 1.5x.
++    FFX_UPSCALE_QUALITY_MODE_BALANCED          = 2,  ///< Perform upscaling with a per-dimension upscaling ratio of 1.7x.
++    FFX_UPSCALE_QUALITY_MODE_PERFORMANCE       = 3,  ///< Perform upscaling with a per-dimension upscaling ratio of 2.0x.
++    FFX_UPSCALE_QUALITY_MODE_ULTRA_PERFORMANCE = 4   ///< Perform upscaling with a per-dimension upscaling ratio of 3.0x.
++};
++
++enum FfxApiCreateContextUpscaleFlags
++{
++    FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE                 = (1 << 0),  ///< A bit indicating if the input color data provided is using a high-dynamic range.
++    FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS  = (1 << 1),  ///< A bit indicating if the motion vectors are rendered at display resolution.
++    FFX_UPSCALE_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION = (1 << 2),  ///< A bit indicating that the motion vectors have the jittering pattern applied to them.
++    FFX_UPSCALE_ENABLE_DEPTH_INVERTED                     = (1 << 3),  ///< A bit indicating that the input depth buffer data provided is inverted [1..0].
++    FFX_UPSCALE_ENABLE_DEPTH_INFINITE                     = (1 << 4),  ///< A bit indicating that the input depth buffer data provided is using an infinite far plane.
++    FFX_UPSCALE_ENABLE_AUTO_EXPOSURE                      = (1 << 5),  ///< A bit indicating if automatic exposure should be applied to input color data.
++    FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION                 = (1 << 6),  ///< A bit indicating that the application uses dynamic resolution scaling.
++    FFX_UPSCALE_ENABLE_DEBUG_CHECKING                     = (1 << 7),  ///< A bit indicating that the runtime should check some API values and report issues.
++    FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE              = (1 << 8),  ///< A bit indicating that the color resource contains perceptual (gamma corrected) colors
++    FFX_UPSCALE_ENABLE_DEBUG_VISUALIZATION                = (1 << 9),  ///< A bit indicating if debug visualization is allowed. (memory consumption could increase)
++};
++
++enum FfxApiDispatchFsrUpscaleFlags
++{
++    FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW       = (1 << 0),  ///< A bit indicating that the output resource will contain debug views with relevant information.
++    FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB = (1 << 1),  ///< A bit indicating that the input color resource contains perceptual sRGB colors
++    FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_PQ   = (1 << 2),  ///< A bit indicating that the input color resource contains perceptual PQ colors
++};
++
++enum FfxApiDispatchUpscaleAutoreactiveFlags
++{
++    FFX_UPSCALE_AUTOREACTIVEFLAGS_APPLY_TONEMAP        = (1 << 0),  ///< Apply tonemapping function prior to calculating reactivity.
++    FFX_UPSCALE_AUTOREACTIVEFLAGS_APPLY_INVERSETONEMAP = (1 << 1),  ///< Apply inverse tonemapping function prior to calculating reactivity.
++    FFX_UPSCALE_AUTOREACTIVEFLAGS_APPLY_THRESHOLD      = (1 << 2),  ///< Compare to a threshold value and only record reactivity above the threshold.
++    FFX_UPSCALE_AUTOREACTIVEFLAGS_USE_COMPONENTS_MAX   = (1 << 3),  ///< When enabled use the max. component value, otherwise use the length to calculate reactivity.
++};
++
++#define FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x00)
++struct ffxCreateContextDescUpscale
++{
++    ffxCreateContextDescHeader header;          ///< Header descriptor, use type FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE.
++    uint32_t                   flags;           ///< Zero or a combination of values from FfxApiCreateContextUpscaleFlags.
++    struct FfxApiDimensions2D  maxRenderSize;   ///< The maximum size that rendering will be performed at.
++    struct FfxApiDimensions2D  maxUpscaleSize;  ///< The size of the presentation resolution targeted by the upscaling process.
++    ffxApiMessage              fpMessage;       ///< A pointer to a function that can receive messages from the runtime. May be null.
++};
++
++#define FFX_API_DISPATCH_DESC_TYPE_UPSCALE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x01)
++struct ffxDispatchDescUpscale
++{
++    ffxDispatchDescHeader      header;                      ///< Header descriptor, use type FFX_API_DISPATCH_DESC_TYPE_UPSCALE.
++    void*                      commandList;                 ///< Command list to record upscaling rendering commands into.
++    struct FfxApiResource      color;                       ///< Color buffer for the current frame (at render resolution).
++    struct FfxApiResource      depth;                       ///< 32bit depth values for the current frame (at render resolution).
++    struct FfxApiResource      motionVectors;               ///< 2-dimensional motion vectors (at render resolution if <c><i>FFX_FSR_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS</i></c> is not set).
++    struct FfxApiResource      exposure;                    ///< Optional resource containing a 1x1 exposure value.
++    struct FfxApiResource      reactive;                    ///< Optional resource containing alpha value of reactive objects in the scene.
++    struct FfxApiResource      transparencyAndComposition;  ///< Optional resource containing alpha value of special objects in the scene.
++    struct FfxApiResource      output;                      ///< Output color buffer for the current frame (at presentation resolution).
++    struct FfxApiFloatCoords2D jitterOffset;                ///< The subpixel jitter offset applied to the camera.
++    struct FfxApiFloatCoords2D motionVectorScale;           ///< The scale factor to apply to motion vectors.
++    struct FfxApiDimensions2D  renderSize;                  ///< The resolution that was used for rendering the input resources.
++    struct FfxApiDimensions2D  upscaleSize;                 ///< The resolution that the upscaler will upscale to (optional, assumed maxUpscaleSize otherwise).
++    bool                       enableSharpening;            ///< Enable an additional sharpening pass.
++    float                      sharpness;                   ///< The sharpness value between 0 and 1, where 0 is no additional sharpness and 1 is maximum additional sharpness.
++    float                      frameTimeDelta;              ///< The time elapsed since the last frame (expressed in milliseconds).
++    float                      preExposure;                 ///< The pre exposure value (must be > 0.0f)
++    bool                       reset;                       ///< A boolean value which when set to true, indicates the camera has moved discontinuously.
++    float                      cameraNear;                  ///< The distance to the near plane of the camera.
++    float                      cameraFar;                   ///< The distance to the far plane of the camera.
++    float                      cameraFovAngleVertical;      ///< The camera angle field of view in the vertical direction (expressed in radians).
++    float                      viewSpaceToMetersFactor;     ///< The scale factor to convert view space units to meters
++    uint32_t                   flags;                       ///< Zero or a combination of values from FfxApiDispatchFsrUpscaleFlags.
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETUPSCALERATIOFROMQUALITYMODE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x02)
++struct ffxQueryDescUpscaleGetUpscaleRatioFromQualityMode
++{
++    ffxQueryDescHeader header;            ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GETUPSCALERATIOFROMQUALITYMODE.
++    uint32_t           qualityMode;       ///< The desired quality mode for FSR upscaling.
++    float*             pOutUpscaleRatio;  ///< A pointer to a <c>float</c> which will hold the upscaling the per-dimension upscaling ratio.
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETRENDERRESOLUTIONFROMQUALITYMODE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x03)
++struct ffxQueryDescUpscaleGetRenderResolutionFromQualityMode
++{
++    ffxQueryDescHeader header;            ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GETRENDERRESOLUTIONFROMQUALITYMODE.
++    uint32_t           displayWidth;      ///< The target display resolution width.
++    uint32_t           displayHeight;     ///< The target display resolution height.
++    uint32_t           qualityMode;       ///< The desired quality mode for FSR upscaling.
++    uint32_t*          pOutRenderWidth;   ///< A pointer to a <c>uint32_t</c> which will hold the calculated render resolution width.
++    uint32_t*          pOutRenderHeight;  ///< A pointer to a <c>uint32_t</c> which will hold the calculated render resolution height.
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x04)
++struct ffxQueryDescUpscaleGetJitterPhaseCount
++{
++    ffxQueryDescHeader header;          ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT.
++    uint32_t           renderWidth;     ///< The render resolution width.
++    uint32_t           displayWidth;    ///< The output resolution width.
++    int32_t*           pOutPhaseCount;  ///< A pointer to a <c>int32_t</c> which will hold the jitter phase count for the scaling factor between <c><i>renderWidth</i></c> and <c><i>displayWidth</i></c>.
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTEROFFSET FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x05)
++struct ffxQueryDescUpscaleGetJitterOffset
++{
++    ffxQueryDescHeader header;      ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTEROFFSET.
++    int32_t            index;       ///< The index within the jitter sequence.
++    int32_t            phaseCount;  ///< The length of jitter phase. See <c><i>ffxQueryDescFsrGetJitterPhaseCount</i></c>.
++    float*             pOutX;       ///< A pointer to a <c>float</c> which will contain the subpixel jitter offset for the x dimension.
++    float*             pOutY;       ///< A pointer to a <c>float</c> which will contain the subpixel jitter offset for the y dimension.
++};
++
++#define FFX_API_DISPATCH_DESC_TYPE_UPSCALE_GENERATEREACTIVEMASK FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x06)
++struct ffxDispatchDescUpscaleGenerateReactiveMask
++{
++    ffxDispatchDescHeader     header;           ///< Header descriptor, use type FFX_API_DISPATCH_DESC_TYPE_UPSCALE_GENERATEREACTIVEMASK.
++    void*                     commandList;      ///< The <c><i>FfxCommandList</i></c> to record FSRUPSCALE rendering commands into.
++    struct FfxApiResource     colorOpaqueOnly;  ///< A <c><i>FfxApiResource</i></c> containing the opaque only color buffer for the current frame (at render resolution).
++    struct FfxApiResource     colorPreUpscale;  ///< A <c><i>FfxApiResource</i></c> containing the opaque+translucent color buffer for the current frame (at render resolution).
++    struct FfxApiResource     outReactive;      ///< A <c><i>FfxApiResource</i></c> containing the surface to generate the reactive mask into.
++    struct FfxApiDimensions2D renderSize;       ///< The resolution that was used for rendering the input resources.
++    float                     scale;            ///< A value to scale the output
++    float                     cutoffThreshold;  ///< A threshold value to generate a binary reactive mask
++    float                     binaryValue;      ///< A value to set for the binary reactive mask
++    uint32_t                  flags;            ///< Flags to determine how to generate the reactive mask
++};
++
++#define FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x07)
++struct ffxConfigureDescUpscaleKeyValue
++{
++    ffxConfigureDescHeader header;  ///< Header descriptor, use type FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE.
++    uint64_t               key;     ///< Configuration key, member of the FfxApiConfigureUpscaleKey enumeration.
++    uint64_t               u64;     ///< Integer value or enum value to set.
++    void*                  ptr;     ///< Pointer to set or pointer to value to set.
++};
++
++enum FfxApiConfigureUpscaleKey
++{
++    FFX_API_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR              = 0,  ///< Override constant buffer fVelocityFactor. The float value is casted from void * ptr. Value of 0.0f can improve temporal stability of bright pixels. Default value is 1.0f. Value is clamped to [0.0f, 1.0f].
++    FFX_API_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE           = 1,  ///< Override constant buffer fReactivenessScale. The float value is casted from void * ptr. Meant for development purpose to test if writing a larger value to reactive mask, reduces ghosting. Default value is 1.0f. Value is clamped to [0.0f, +infinity].
++    FFX_API_CONFIGURE_UPSCALE_KEY_FSHADINGCHANGESCALE          = 2,  ///< Override fShadingChangeScale. Increasing this scales fsr3.1 computed shading change value at read to have higher reactiveness. Default value is 1.0f. Value is clamped to [0.0f, +infinity].
++    FFX_API_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME   = 3,  ///< Override constant buffer fAccumulationAddedPerFrame. Corresponds to amount of accumulation added per frame at pixel coordinate where disocclusion occured or when reactive mask value is > 0.0f. Decreasing this and drawing the ghosting object (IE no mv) to reactive mask with value close to 1.0f can decrease temporal ghosting. Decreasing this value could result in more thin feature pixels flickering. Default value is 0.333. Value is clamped to [0.0f, 1.0f].
++    FFX_API_CONFIGURE_UPSCALE_KEY_FMINDISOCCLUSIONACCUMULATION = 4,  ///< Override constant buffer fMinDisocclusionAccumulation. Increasing this value may reduce white pixel temporal flickering around swaying thin objects that are disoccluding one another often. Too high value may increase ghosting. A sufficiently negative value means for pixel coordinate at frame N that is disoccluded, add fAccumulationAddedPerFrame starting at frame N+2. Default value is -0.333. Value is clamped to [-1.0f, 1.0f].
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x08)
++struct ffxQueryDescUpscaleGetGPUMemoryUsage
++{
++    ffxQueryDescHeader              header;                 ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE.
++    struct FfxApiEffectMemoryUsage* gpuMemoryUsageUpscaler; ///< Output values by Query() call.
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE_V2 FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x09)
++struct ffxQueryDescUpscaleGetGPUMemoryUsageV2
++{
++    ffxQueryDescHeader              header;                  ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE_V2.
++    void*                           device;                  ///< For DX12: pointer to ID3D12Device. For VK, pointer to VkDeviceContext. App needs to fill out before Query() call.
++    struct FfxApiDimensions2D       maxRenderSize;           ///< App needs to fill out before Query() call.
++    struct FfxApiDimensions2D       maxUpscaleSize;          ///< App needs to fill out before Query() call.
++    uint32_t                        flags;                   ///< Zero or a combination of values from FfxApiCreateContextUpscaleFlags. App needs to fill out before Query() call.
++    struct FfxApiEffectMemoryUsage* gpuMemoryUsageUpscaler;  ///< Output values by Query() call.
++};
++
++enum FfxApiQueryResourceIdentifiers
++{
++    FFX_API_QUERY_RESOURCE_INPUT_COLOR                   = (1 << 0),  ///< Color buffer for the current frame (at render resolution).
++    FFX_API_QUERY_RESOURCE_INPUT_DEPTH                   = (1 << 1),  ///< 32bit depth values for the current frame (at render resolution).
++    FFX_API_QUERY_RESOURCE_INPUT_MV                      = (1 << 2),  ///< 2-dimensional motion vectors (at render resolution if FFX_FSR_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS is not set).
++    FFX_API_QUERY_RESOURCE_INPUT_EXPOSURE                = (1 << 3),  ///< A 1x1 texture containing exposure value or the FFX_UPSCALE_ENABLE_AUTO_EXPOSURE set at context creation.
++    FFX_API_QUERY_RESOURCE_INPUT_REACTIVEMASK            = (1 << 4),  ///< An R8 UNORM texture at render resolution that controls the influence of pixel history on upscaling result.
++    FFX_API_QUERY_RESOURCE_INPUT_TRANSPARENCYCOMPOSITION = (1 << 5),  ///< An R8 UNORM texture at render resolution that controls the blending of color in the upscaling result.
++};
++
++#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x0a)
++struct ffxQueryDescUpscaleGetResourceRequirements
++{
++    ffxQueryDescHeader header;              ///< Header descriptor, use type FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS.
++    uint64_t           required_resources;  ///< resources 64b bitfield, that given current context state, are required for effect correctness.
++    uint64_t           optional_resources;  ///< resources 64b bitfield, that given current context state, will be consumed if provided, but are optional.
++};
++
++#define FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x0b)
++struct ffxCreateContextDescUpscaleVersion
++{
++    ffxCreateContextDescHeader header;   ///< Header descriptor, use type FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION.
++    uint32_t                   version;  ///< The version of the API the application was built against. This must be set to FFX_UPSCALER_VERSION.
++};
++
++#ifdef __cplusplus
++}
++#endif
 diff --git a/third_party/streamline/include/sl.h b/third_party/streamline/include/sl.h
 new file mode 100644
 index 0000000..0e8e010

@@ -453,12 +453,14 @@ struct Import {
 
 // Frame generation's libraries (the SDK's runtime/gpu/framegen.h), which this game's download does not carry: the
 // player's own copy, downloaded from the vendor's official GitHub release into the game's folder with their licences.
-// AMD FSR 3: its two signed DLLs beside the game. NVIDIA DLSS: Streamline's release, its DLSS-G files in streamline\.
+// AMD FSR 3: its signed DLLs beside the game, the loader, frame generation and the upscaler (the game's
+// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G files in streamline\.
 constexpr const wchar_t* kFsrRaw = L"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/";
 constexpr const char* kFsrLicence = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/v2.3.0/Kits/FidelityFX/docs/license.md";
 constexpr const wchar_t* kDlssZip = L"https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip";
 constexpr const char* kDlssLicence = "https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/license.txt";
-const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll"};
+const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll",
+                                    L"amd_fidelityfx_upscaler_dx12.dll"};
 const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
                                      L"sl.pcl.dll", L"nvngx_dlssg.dll"};
 
@@ -569,9 +571,10 @@ struct FrameGenDownload {
             fs::create_directories(game / L"licences", ec);
             if (k == 1) {
                 ok = Fetch(std::wstring(kFsrRaw) + L"docs/license.md", game / L"licences" / L"AMD-FidelityFX-licence.md", 0, 0.02f, hr);
-                for (int i = 0; ok && i < 2; i++)
-                    ok = Fetch(std::wstring(kFsrRaw) + L"signedbin/" + kFsrFiles[i], game / kFsrFiles[i], 0.02f + 0.49f * i,
-                               0.49f, hr);
+                constexpr int n = int(std::size(kFsrFiles));
+                for (int i = 0; ok && i < n; i++)
+                    ok = Fetch(std::wstring(kFsrRaw) + L"signedbin/" + kFsrFiles[i], game / kFsrFiles[i],
+                               0.02f + 0.98f * float(i) / n, 0.98f / n, hr);
             } else {
                 fs::path tmp = game / L"streamline-download";
                 fs::create_directories(tmp, ec);
