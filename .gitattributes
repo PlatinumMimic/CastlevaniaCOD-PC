@@ -1,2 +1,6 @@
 * text=auto
 *.bat text eol=crlf
+# run by bash and podman, in WSL too, or packed into the Linux release, from a Windows checkout
+*.sh text eol=lf
+tools/linux/** text eol=lf
+tools/release/README-linux.txt text eol=lf
