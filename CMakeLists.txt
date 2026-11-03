@@ -65,9 +65,12 @@ foreach(exe ${CV_RELEASES})
     set_property(TARGET ${exe}_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:${exe}>)
     target_include_directories(${exe} SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
     # the exe names its debug symbols by file name only, not the folder it was built in
-    target_link_options(${exe} PRIVATE -Wl,/pdbaltpath:%_PDB%)
+    if(WIN32)
+        target_link_options(${exe} PRIVATE -Wl,/pdbaltpath:%_PDB%)
+    endif()
 endforeach()
 
+if(WIN32)
 # the launcher beside them: game files check, settings, play; no game code, the releases' xbe SHA-1s, the SDK's disc
 # image reader for the xbe on an .iso
 add_executable(CastlevaniaLauncher WIN32
@@ -92,10 +95,46 @@ target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 foreach(exe ${CV_RELEASES})
     add_dependencies(${exe} CastlevaniaLauncher)
 endforeach()
+else()
+# Linux: SDL's window drawn with OpenGL 3, the SDK's Linux layer for its input, pictures and the Win32 names it uses,
+# vkd3d to tell which graphics run the game
+add_executable(CastlevaniaLauncher
+    src/launcher/launcher.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/releases.cpp
+    ${XBE_SDK_DIR}/runtime/kernel/disc.cpp
+    ${XBE_SDK_DIR}/runtime/kernel/crypto.cpp
+    ${XBE_SDK_DIR}/runtime/linux/win32.cpp
+    ${XBE_SDK_DIR}/runtime/linux/imgui_sdl.cpp
+    ${XBE_SDK_DIR}/runtime/linux/image.cpp
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+target_include_directories(CastlevaniaLauncher PRIVATE ${XBE_SDK_DIR}/runtime ${XBE_SDK_DIR}/runtime/linux
+                           ${sdl3_SOURCE_DIR}/include)
+target_include_directories(CastlevaniaLauncher SYSTEM PRIVATE ${imgui_SOURCE_DIR} ${XBE_VKD3D_INCLUDE} ${stb_SOURCE_DIR})
+target_compile_definitions(CastlevaniaLauncher PRIVATE NOMINMAX WIDL_EXPLICIT_AGGREGATE_RETURNS)
+target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall -fconstexpr-steps=8388608)
+target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus SDL3::SDL3-static ${XBE_VKD3D_LIB}
+                      Vulkan::Vulkan dl pthread)
+set_target_properties(CastlevaniaLauncher PROPERTIES BUILD_RPATH "\$ORIGIN/lib;${XBE_VKD3D_LIB_DIR}"
+                      INSTALL_RPATH "\$ORIGIN/lib")
+target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
+# the status icons' font, Google's Material Icons (Apache 2.0), into fonts beside the launcher (Windows has Segoe's)
+file(DOWNLOAD
+    https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/font/MaterialIcons-Regular.ttf
+    ${CMAKE_BINARY_DIR}/fonts/MaterialIcons-Regular.ttf
+    EXPECTED_HASH SHA256=ef149f08bdd2ff09a4e2c8573476b7b0f3fbb15b623954ade59899e7175bedda)
+foreach(exe ${CV_RELEASES})
+    add_dependencies(${exe} CastlevaniaLauncher)
+endforeach()
+endif()
 
 # the exes' version details (their Properties, Task Manager): a program without them looks suspect to antivirus
 # heuristics. release.bat names the zip with the version.
 file(WRITE ${CMAKE_BINARY_DIR}/version.txt "${PROJECT_VERSION}\n")
+if(WIN32)
 foreach(exe ${CV_RELEASES} CastlevaniaLauncher)
     if(exe STREQUAL "Castlevania")
         set(description "Castlevania: Curse of Darkness, PC port")
@@ -137,12 +176,13 @@ END
 ]])
     target_sources(${exe} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/${exe}_version.rc)
 endforeach()
+endif()
 
 # both exes' icon, resource 1 as their windows load it: the game's crest, from the HD texture pack's picture of it (the
 # PS2 menu texture in its blue palette, and in its green one the ring of runes), else from the xbe's title image.
 # Not in a release (release.bat builds the package preset), which packs nothing of the game.
 option(CV_GAME_ICON "the exes' icon, made from the game's crest" ON)
-if(CV_GAME_ICON)
+if(CV_GAME_ICON AND WIN32)
     add_executable(xbe_icon tools/xbe_icon.cpp)
     target_link_libraries(xbe_icon PRIVATE ole32 windowscodecs)
     target_link_options(xbe_icon PRIVATE -fuse-ld=lld)

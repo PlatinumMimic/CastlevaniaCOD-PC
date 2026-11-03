@@ -11,6 +11,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#ifdef _WIN32
 #include <bcrypt.h>
 #include <commdlg.h>
 #include <d3d11.h>
@@ -20,6 +21,21 @@
 #include <shellapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#else
+// Linux: an SDL window drawn with OpenGL, the graphics cards Vulkan's, pictures stb's (the SDK's linux/)
+#include <SDL3/SDL.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <vkd3d.h>
+#include <vulkan/vulkan.h>
+
+#include <mutex>
+
+#include "kernel/crypto.h"
+#include "linux/image.h"
+#include "linux/sdl_app.h"
+extern char** environ;
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -35,15 +51,22 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#ifdef _WIN32
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
+#else
+#include <backends/imgui_impl_opengl3.h>
+#include <backends/imgui_impl_opengl3_loader.h>
+#endif
 #include <toml++/toml.hpp>
 
 #include "app/app.h"
 #include "kernel/disc.h"
 #include "words.h"
 
+#ifdef _WIN32
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
+#endif
 // each release's xbe (its SHA-1, its certificate's title name, media, region and ratings) and the executable it was
 // recompiled into, written by CMake: the USA one first, then the European one
 extern const app::GameInfo::Release kReleases[];
@@ -54,11 +77,22 @@ namespace {
 namespace fs = std::filesystem;
 using words::F;
 using words::T;
+// a phrase as each system has it: Windows's, Linux's (Vulkan for Direct3D 12, no .exe, / in paths)
+#ifdef _WIN32
+#define CV_WIN_LINUX(win, linux_text) win
+#else
+#define CV_WIN_LINUX(win, linux_text) linux_text
+#endif
 
 constexpr char kSettings[] = "castlevania.toml";
 constexpr char kXbe[] = "default.xbe";
+#ifdef _WIN32
 constexpr wchar_t kSaves[] = L"hdd\\E\\UDATA\\4b4e002d";
+#else
+constexpr char kSaves[] = "hdd/E/UDATA/4b4e002d";
+#endif
 
+#ifdef _WIN32
 // D3D11 and the window
 
 ID3D11Device* g_dev = nullptr;
@@ -119,13 +153,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
+#else
+// Linux: SDL's window and an OpenGL context
+SDL_Window* g_window = nullptr;
+bool g_activated = false;  // the window came back to the front: the files are looked at again (a pack added meanwhile)
+#endif
 
 // files
 
 fs::path ExeDir() {
+#ifdef _WIN32
     wchar_t p[MAX_PATH];
     GetModuleFileNameW(nullptr, p, MAX_PATH);
     return fs::path(p).parent_path();
+#else
+    std::error_code ec;
+    return fs::read_symlink("/proc/self/exe", ec).parent_path();
+#endif
 }
 
 // the game's own search: assets beside the exe or in any folder above it
@@ -142,8 +186,15 @@ fs::path FindAssets() {
 
 std::string Sha1(const std::vector<uint8_t>& data) {
     uint8_t digest[20];
+#ifdef _WIN32
     if (BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, const_cast<PUCHAR>(data.data()), ULONG(data.size()), digest, 20) != 0)
         return {};
+#else
+    alignas(8) uint8_t ctx[128];  // the SDK's, as the game hashes it (runtime/kernel/crypto.cpp)
+    crypto::ShaInit(ctx);
+    crypto::ShaUpdate(ctx, data.data(), uint32_t(data.size()));
+    crypto::ShaFinal(ctx, digest);
+#endif
     std::string hex;
     for (uint8_t b : digest) {
         hex += "0123456789abcdef"[b >> 4];
@@ -177,6 +228,7 @@ struct Gpu {
     bool software = false;  // Windows' own renderer on the CPU, no graphics driver installed
 };
 
+#ifdef _WIN32
 // a null device: only whether one would be made; a null adapter is the default one
 bool RunsD3D12(IDXGIAdapter1* a) {
     static const bool none = GetEnvironmentVariableW(L"CV_NO_D3D12", nullptr, 0) != 0;
@@ -224,6 +276,82 @@ Gpu Automatic() {
     factory->EnumAdapters1(0, &adapter);
     return Describe(adapter.Get(), d3d12);
 }
+#else
+// Linux: the Vulkan devices, as the game takes them (the SDK's linux/present.cpp): the card the settings name, else a
+// discrete one over an integrated one over the rest. A card runs the game when vkd3d makes a D3D12 device on it;
+// CV_NO_D3D12=1 pretends none does, to see the warning.
+struct VulkanCards {
+    vkd3d_instance* instance = nullptr;
+    std::vector<VkPhysicalDevice> cards;
+    VulkanCards() {
+        vkd3d_instance_create_info ici{};
+        ici.type = VKD3D_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        ici.pfn_signal_event = [](HANDLE) -> HRESULT { return S_OK; };
+        ici.wchar_size = sizeof(WCHAR);
+        if (FAILED(vkd3d_create_instance(&ici, &instance))) return;
+        VkInstance vki = vkd3d_instance_get_vk_instance(instance);
+        uint32_t n = 0;
+        vkEnumeratePhysicalDevices(vki, &n, nullptr);
+        cards.resize(n);
+        vkEnumeratePhysicalDevices(vki, &n, cards.data());
+    }
+    ~VulkanCards() {
+        if (instance) vkd3d_instance_decref(instance);
+    }
+    bool Runs(VkPhysicalDevice pd) const {
+        static const bool none = std::getenv("CV_NO_D3D12") != nullptr;
+        if (none || !instance) return false;
+        vkd3d_device_create_info dci{};
+        dci.type = VKD3D_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        dci.minimum_feature_level = D3D_FEATURE_LEVEL_11_0;
+        dci.instance = instance;
+        dci.vk_physical_device = pd;
+        ID3D12Device* dev = nullptr;
+        if (FAILED(vkd3d_create_device(&dci, __uuidof(ID3D12Device), reinterpret_cast<void**>(&dev)))) return false;
+        dev->Release();
+        return true;
+    }
+    static Gpu Describe(VkPhysicalDevice pd, bool runs) {
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(pd, &p);
+        return {p.deviceName, runs, p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU};
+    }
+    static int Rank(VkPhysicalDevice pd) {
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(pd, &p);
+        return p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? 3
+               : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2
+               : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU            ? 0
+                                                                        : 1;
+    }
+};
+
+// the graphics cards to choose from, the fastest first, without a renderer on the processor
+std::vector<Gpu> Gpus() {
+    VulkanCards v;
+    std::vector<VkPhysicalDevice> cards = v.cards;
+    std::stable_sort(cards.begin(), cards.end(), [](VkPhysicalDevice a, VkPhysicalDevice b) {
+        return VulkanCards::Rank(a) > VulkanCards::Rank(b);
+    });
+    std::vector<Gpu> list;
+    for (VkPhysicalDevice pd : cards) {
+        Gpu g = VulkanCards::Describe(pd, v.Runs(pd));
+        if (!g.software) list.push_back(g);
+    }
+    return list;
+}
+
+// what the game takes with no card named: the fastest, the processor's renderer last
+Gpu Automatic() {
+    VulkanCards v;
+    VkPhysicalDevice best = VK_NULL_HANDLE;
+    for (VkPhysicalDevice pd : v.cards)
+        if (!best || VulkanCards::Rank(pd) > VulkanCards::Rank(best)) best = pd;
+    if (!best) return {};
+    return VulkanCards::Describe(best, v.Runs(best));
+}
+
+#endif
 
 // The game's check: an xbe one of the executables was made from, or that with the certificate's title, media and
 // region patched; which release it is (kReleases), and so which executable plays it
@@ -253,7 +381,7 @@ Copy Check(const std::vector<uint8_t>& xbe) {
     return {Release::Other};
 }
 
-fs::path ReleaseExe(int which) { return ExeDir() / (std::string(kReleases[which].exe) + ".exe"); }
+fs::path ReleaseExe(int which) { return ExeDir() / app::ExeFile(kReleases[which].exe); }
 
 // what the game will find
 // the textures folder the game looks for, found the same way as assets
@@ -344,11 +472,39 @@ struct Import {
     std::string result;
     std::thread worker;
 
+#ifdef _WIN32
     static DWORD CALLBACK Progress(LARGE_INTEGER total, LARGE_INTEGER done, LARGE_INTEGER, LARGE_INTEGER, DWORD, DWORD,
                                   HANDLE, HANDLE, LPVOID self) {
         static_cast<Import*>(self)->progress = total.QuadPart ? float(double(done.QuadPart) / double(total.QuadPart)) : 0;
         return PROGRESS_CONTINUE;
     }
+#else
+    // Linux: a copy in 4 MB pieces, its progress as it goes; false with the error
+    bool Copy(const fs::path& from, const fs::path& to, std::string& error) {
+        std::error_code ec;
+        if (fs::exists(to, ec)) {
+            error = "exists";
+            return false;
+        }
+        uint64_t total = fs::file_size(from, ec), done = 0;
+        std::ifstream in(from, std::ios::binary);
+        std::ofstream out(to, std::ios::binary);
+        std::vector<char> buf(4 << 20);
+        while (in && out) {
+            in.read(buf.data(), std::streamsize(buf.size()));
+            out.write(buf.data(), in.gcount());
+            done += uint64_t(in.gcount());
+            progress = total ? float(double(done) / double(total)) : 0;
+        }
+        if (!out || done != total) {
+            error = std::strerror(errno);
+            out.close();
+            fs::remove(to, ec);
+            return false;
+        }
+        return true;
+    }
+#endif
 
     void Start(fs::path from, fs::path to) {
         if (running) return;
@@ -359,6 +515,7 @@ struct Import {
         worker = std::thread([this, from, to] {
             std::error_code ec;
             fs::create_directories(to.parent_path(), ec);
+#ifdef _WIN32
             if (CreateHardLinkW(to.c_str(), from.c_str(), nullptr)) {
                 result = F("Linked {} into assets.", {Utf8(to.filename().wstring())});
             } else if (CopyFileExW(from.c_str(), to.c_str(), Progress, this, nullptr, COPY_FILE_FAIL_IF_EXISTS)) {
@@ -366,6 +523,16 @@ struct Import {
             } else {
                 result = F("Could not copy the disc image (error {}).", {std::to_string(GetLastError())});
             }
+#else
+            std::string error;
+            if (fs::create_hard_link(from, to, ec), !ec) {
+                result = F("Linked {} into assets.", {to.filename().string()});
+            } else if (Copy(from, to, error)) {
+                result = F("Copied {} into assets.", {to.filename().string()});
+            } else {
+                result = F("Could not copy the disc image (error {}).", {error});
+            }
+#endif
             running = false;
         });
     }
@@ -502,6 +669,33 @@ struct Res {
     uint32_t w, h;
 };
 
+#ifndef _WIN32
+// Linux: the primary display's, from SDL
+std::vector<Res> Resolutions() {
+    std::vector<Res> list{{0, 0}};
+    int n = 0;
+    if (SDL_DisplayMode** modes = SDL_GetFullscreenDisplayModes(SDL_GetPrimaryDisplay(), &n)) {
+        for (int i = 0; i < n; i++) {
+            uint32_t w = uint32_t(modes[i]->w), h = uint32_t(modes[i]->h);
+            if (w < 640 || h < 480) continue;
+            bool seen = false;
+            for (const Res& r : list) seen |= r.w == w && r.h == h;
+            if (!seen) list.push_back({w, h});
+        }
+        SDL_free(modes);
+    }
+    std::sort(list.begin() + 1, list.end(), [](Res a, Res b) { return a.w != b.w ? a.w > b.w : a.h > b.h; });
+    return list;
+}
+
+std::string ResName(Res r) {
+    if (!r.w) {
+        const SDL_DisplayMode* d = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+        return F("Desktop ({})", {d ? std::to_string(d->w) + "x" + std::to_string(d->h) : std::string("?")});
+    }
+    return std::to_string(r.w) + "x" + std::to_string(r.h);
+}
+#else
 std::vector<Res> Resolutions() {
     std::vector<Res> list{{0, 0}};
     DEVMODEW dm{};
@@ -525,6 +719,7 @@ std::string ResName(Res r) {
     }
     return std::to_string(r.w) + "x" + std::to_string(r.h);
 }
+#endif
 
 std::string KeyName(uint32_t vk) {
     wchar_t name[64] = {};
@@ -569,11 +764,19 @@ ImVec4 V(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 ImVec2 operator+(ImVec2 a, ImVec2 b) { return {a.x + b.x, a.y + b.y}; }
 ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
 
+#ifdef _WIN32
 // Segoe Fluent / MDL2 icons, for status lines and the language
 enum : uint32_t {
     kIconCheck = 0xE73E, kIconGlobe = 0xE774, kIconWarn = 0xE7BA, kIconDisc = 0xE958,
 };
 const ImWchar kIconRanges[] = {0xE73E, 0xE73E, 0xE774, 0xE774, 0xE7BA, 0xE7BA, 0xE958, 0xE958, 0};
+#else
+// Linux: the same icons from Material Icons (a release's fonts folder): check, language, warning, album
+enum : uint32_t {
+    kIconCheck = 0xE5CA, kIconGlobe = 0xE894, kIconWarn = 0xE002, kIconDisc = 0xE019,
+};
+const ImWchar kIconRanges[] = {0xE002, 0xE002, 0xE019, 0xE019, 0xE5CA, 0xE5CA, 0xE894, 0xE894, 0};
+#endif
 // the letters of the launcher's languages: Latin with the accents of Portuguese, Spanish and Italian, Cyrillic, and
 // dashes, quotes and the ellipsis
 const ImWchar kTextRanges[] = {0x0020, 0x00FF, 0x0400, 0x045F, 0x2013, 0x2026, 0};
@@ -1083,6 +1286,7 @@ void Style() {
 void Fonts() {
     ImGuiIO& io = ImGui::GetIO();
     std::error_code ec;
+#ifdef _WIN32
     auto path = [&](std::initializer_list<const char*> names) -> std::string {
         for (const char* n : names) {
             std::string p = std::string("C:\\Windows\\Fonts\\") + n;
@@ -1095,6 +1299,26 @@ void Fonts() {
     std::string bold = path({"palab.ttf", "georgiab.ttf", "seguisb.ttf"});
     std::string italic = path({"palabi.ttf", "georgiaz.ttf", "seguisb.ttf"});
     std::string icons = path({"SegoeIcons.ttf", "segmdl2.ttf"});
+#else
+    // Linux: the fonts folder beside the launcher (a release's: TeX Gyre Pagella, a Palatino, and Material Icons), else a
+    // Palatino the system has (URW's P052, TeX Gyre Pagella), else its serif
+    auto path = [&](std::initializer_list<const char*> names) -> std::string {
+        for (const char* n : names) {
+            for (fs::path dir : {ExeDir() / "fonts", fs::path("/usr/share/fonts/opentype/tex-gyre"),
+                                 fs::path("/usr/share/fonts/opentype/urw-base35"), fs::path("/usr/share/fonts/urw-base35"),
+                                 fs::path("/usr/share/fonts/truetype/dejavu"), fs::path("/usr/share/fonts/TTF"),
+                                 fs::path("/usr/share/fonts/dejavu-serif-fonts"), fs::path("/usr/share/fonts/truetype/noto")})
+                if (fs::exists(dir / n, ec)) return (dir / n).string();
+        }
+        return {};
+    };
+    std::string regular = path({"texgyrepagella-regular.otf", "P052-Roman.otf", "P052-Roman.t1", "DejaVuSerif.ttf",
+                                "NotoSerif-Regular.ttf"});
+    std::string bold = path({"texgyrepagella-bold.otf", "P052-Bold.otf", "DejaVuSerif-Bold.ttf", "NotoSerif-Bold.ttf"});
+    std::string italic = path({"texgyrepagella-bolditalic.otf", "P052-BoldItalic.otf", "DejaVuSerif-BoldItalic.ttf",
+                               "NotoSerif-BoldItalic.ttf"});
+    std::string icons = path({"MaterialIcons-Regular.ttf"});
+#endif
     // the title's fonts write only its own words, in Latin letters: the rest every language's
     auto load = [&](const std::string& file, float size, bool with_icons, const ImWchar* ranges = kTextRanges) -> ImFont* {
         if (file.empty()) return io.Fonts->AddFontDefault();
@@ -1119,10 +1343,21 @@ void Fonts() {
 
 // a picture the launcher shows: a texture of its own
 struct Picture {
+#ifdef _WIN32
     ID3D11ShaderResourceView* view = nullptr;
+#else
+    void* view = nullptr;  // Linux: an OpenGL texture's name, as ImGui takes it
+#endif
     float w = 0, h = 0;
     void Release() {
+#ifdef _WIN32
         if (view) view->Release();
+#else
+        if (view) {
+            GLuint tex = GLuint(reinterpret_cast<uintptr_t>(view));
+            glDeleteTextures(1, &tex);
+        }
+#endif
         *this = {};
     }
 };
@@ -1130,6 +1365,21 @@ struct Picture {
 // px: BGRA with straight alpha, as ImGui blends, the top row first
 Picture Upload(const std::vector<uint8_t>& px, uint32_t w, uint32_t h) {
     Picture p;
+#ifndef _WIN32
+    std::vector<uint8_t> rgba = px;
+    for (size_t i = 0; i + 3 < rgba.size(); i += 4) std::swap(rgba[i], rgba[i + 2]);
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GLsizei(w), GLsizei(h), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    p.view = reinterpret_cast<void*>(uintptr_t(tex));
+    p.w = float(w);
+    p.h = float(h);
+    return p;
+#else
     D3D11_TEXTURE2D_DESC d{};
     d.Width = w;
     d.Height = h;
@@ -1148,11 +1398,37 @@ Picture Upload(const std::vector<uint8_t>& px, uint32_t w, uint32_t h) {
     }
     tex->Release();
     return p;
+#endif
 }
+
+#ifndef _WIN32
+// Linux: premultiplied BGRA w x h to tw x th, each pixel the mean of the source area it covers (WIC's Fant scaler)
+std::vector<uint8_t> Shrink(const uint8_t* px, uint32_t pitch, uint32_t w, uint32_t h, uint32_t tw, uint32_t th) {
+    std::vector<uint8_t> out(size_t(tw) * th * 4);
+    for (uint32_t y = 0; y < th; y++) {
+        uint32_t y0 = uint32_t(uint64_t(y) * h / th), y1 = std::max(y0 + 1, uint32_t(uint64_t(y + 1) * h / th));
+        for (uint32_t x = 0; x < tw; x++) {
+            uint32_t x0 = uint32_t(uint64_t(x) * w / tw), x1 = std::max(x0 + 1, uint32_t(uint64_t(x + 1) * w / tw));
+            uint64_t sum[4] = {};
+            for (uint32_t sy = y0; sy < y1; sy++)
+                for (uint32_t sx = x0; sx < x1; sx++)
+                    for (int k = 0; k < 4; k++) sum[k] += px[size_t(sy) * pitch + sx * 4 + k];
+            uint64_t n = uint64_t(y1 - y0) * (x1 - x0);
+            for (int k = 0; k < 4; k++) out[(size_t(y) * tw + x) * 4 + k] = uint8_t((sum[k] + n / 2) / n);
+        }
+    }
+    return out;
+}
+#endif
 
 // the HD texture pack's title logo: cut to its letters (its alpha the PS2's, 128 opaque) and shrunk to at most max_w
 // wide, premultiplied while it is scaled so that its edges keep their colour
 Picture LoadLogo(const fs::path& file, uint32_t max_w) {
+#ifndef _WIN32
+    std::vector<uint8_t> px;
+    uint32_t w = 0, h = 0;
+    if (!linuximage::ReadFile(file, px, w, h)) return {};
+#else
     using Microsoft::WRL::ComPtr;
     ComPtr<IWICImagingFactory> wic;
     ComPtr<IWICBitmapDecoder> dec;
@@ -1168,6 +1444,7 @@ Picture LoadLogo(const fs::path& file, uint32_t max_w) {
         return {};
     std::vector<uint8_t> px(size_t(w) * h * 4);
     if (FAILED(conv->CopyPixels(nullptr, w * 4, UINT(px.size()), px.data()))) return {};
+#endif
     UINT x0 = w, y0 = h, x1 = 0, y1 = 0;
     for (UINT y = 0; y < h; y++)
         for (UINT x = 0; x < w; x++) {
@@ -1185,6 +1462,9 @@ Picture LoadLogo(const fs::path& file, uint32_t max_w) {
     if (x1 <= x0 || y1 <= y0) return {};
     UINT cw = x1 - x0 + 1, ch = y1 - y0 + 1, tw = std::min(cw, max_w), th = UINT(uint64_t(ch) * tw / cw);
     size_t at = (size_t(y0) * w + x0) * 4;
+#ifndef _WIN32
+    std::vector<uint8_t> out = Shrink(&px[at], w * 4, cw, ch, tw, th);
+#else
     ComPtr<IWICBitmap> cut;
     ComPtr<IWICBitmapScaler> sc;
     std::vector<uint8_t> out(size_t(tw) * th * 4);
@@ -1192,6 +1472,7 @@ Picture LoadLogo(const fs::path& file, uint32_t max_w) {
         FAILED(wic->CreateBitmapScaler(&sc)) || FAILED(sc->Initialize(cut.Get(), tw, th, WICBitmapInterpolationModeFant)) ||
         FAILED(sc->CopyPixels(nullptr, tw * 4, UINT(out.size()), out.data())))
         return {};
+#endif
     for (size_t i = 0; i < out.size(); i += 4)
         if (out[i + 3])
             for (int k = 0; k < 3; k++) out[i + k] = uint8_t(std::min(255u, out[i + k] * 255u / out[i + 3]));
@@ -1200,6 +1481,9 @@ Picture LoadLogo(const fs::path& file, uint32_t max_w) {
 
 // the crest the build put in the launcher's icon (resource 1), at its largest; none in a release
 Picture LoadCrest() {
+#ifndef _WIN32
+    return {};  // Linux: an executable has no icon resource
+#else
     HICON icon = HICON(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 256, 256, 0));
     if (!icon) return {};
     Picture p;
@@ -1221,6 +1505,7 @@ Picture LoadCrest() {
     }
     DestroyIcon(icon);
     return p;
+#endif
 }
 
 // the launcher's state and its one screen
@@ -1242,6 +1527,9 @@ public:
 
     // false: the launcher closes
     bool Frame() {
+#ifndef _WIN32
+        Picked();  // a disc image the file dialog chose since the frame before
+#endif
         ShowLanguage();
         if (g_activated) {
             g_activated = false;
@@ -1311,7 +1599,11 @@ private:
         if (settings_.language == shown_language_) return;
         shown_language_ = settings_.language;
         words::Set(shown_language_);
+#ifdef _WIN32
         SetWindowTextW(g_hwnd, Wide(T("Castlevania: Curse of Darkness - Launcher")).c_str());
+#else
+        SDL_SetWindowTitle(g_window, T("Castlevania: Curse of Darkness - Launcher"));
+#endif
     }
 
     void Note(const std::string& s) {
@@ -1438,9 +1730,9 @@ private:
         // beside the buttons, mid way down them (a line of its own: SameLine would put it at their top)
         ImVec2 end = ImGui::GetItemRectMax();
         ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
-        if (!UsedGpu().d3d12) Status(kIconWarn, kRed, T("No Direct3D 12"));
+        if (!UsedGpu().d3d12) Status(kIconWarn, kRed, T(CV_WIN_LINUX("No Direct3D 12", "No Vulkan")));
         else if (ready) Status(kIconCheck, kGreen, T("Ready to play"));
-        else if (!files_.exe) Status(kIconWarn, kRed, T("Castlevania.exe is missing"));
+        else if (!files_.exe) Status(kIconWarn, kRed, T(CV_WIN_LINUX("Castlevania.exe is missing", "Castlevania is missing")));
         else Status(kIconWarn, kAmber, T("Game files needed"));
         ImGui::SetCursorScreenPos(a + ImVec2(0, h + S(20)));
         if (!UsedGpu().d3d12) {
@@ -1522,20 +1814,32 @@ private:
     void GpuStatus() {
         const Gpu& gpu = UsedGpu();
         if (!settings_.gpu.empty() && &gpu == &auto_gpu_)
-            Status(kIconWarn, kAmber, F("{}  -  not here with Direct3D 12, the game takes the fastest", {settings_.gpu}));
+            Status(kIconWarn, kAmber, F(CV_WIN_LINUX("{}  -  not here with Direct3D 12, the game takes the fastest",
+                                                     "{}  -  not here with Vulkan, the game takes the fastest"),
+                                        {settings_.gpu}));
         std::string name = gpu.name.empty() ? T("This PC's graphics") : gpu.name;
         if (gpu.d3d12 && gpu.software) {
-            Status(kIconWarn, kAmber, F("{}  -  Direct3D 12 on the processor only", {name}));
-            Wrapped(g_small, kMuted, T("No graphics driver is installed, so Windows draws on the processor, far too slowly "
-                                       "for the game. Install the driver from NVIDIA, AMD or Intel."));
+            Status(kIconWarn, kAmber, F(CV_WIN_LINUX("{}  -  Direct3D 12 on the processor only",
+                                                     "{}  -  Vulkan on the processor only"), {name}));
+            Wrapped(g_small, kMuted,
+                    T(CV_WIN_LINUX("No graphics driver is installed, so Windows draws on the processor, far too slowly "
+                                   "for the game. Install the driver from NVIDIA, AMD or Intel.",
+                                   "No Vulkan driver for the graphics is installed, so the processor draws, far too "
+                                   "slowly for the game. Install your distribution's Mesa Vulkan drivers, or NVIDIA's "
+                                   "driver.")));
         } else if (gpu.d3d12) {
-            Status(kIconCheck, kGreen, F("{}  -  Direct3D 12, ready", {name}));
+            Status(kIconCheck, kGreen, F(CV_WIN_LINUX("{}  -  Direct3D 12, ready", "{}  -  Vulkan, ready"), {name}));
         } else {
-            Status(kIconWarn, kRed, F("{}  -  no Direct3D 12", {name}));
-            Wrapped(g_small, kMuted, T("The game draws with Direct3D 12, which every Windows 10 and 11 has, but only "
-                                       "graphics with a driver for it can run. Install the newest driver from NVIDIA, AMD "
-                                       "or Intel. Graphics older than NVIDIA's GeForce 600 series, AMD's Radeon HD 7700 or "
-                                       "Intel's HD 4200 (2012 and 2013) have none, and the game cannot start on them."));
+            Status(kIconWarn, kRed, F(CV_WIN_LINUX("{}  -  no Direct3D 12", "{}  -  no Vulkan"), {name}));
+            Wrapped(g_small, kMuted,
+                    T(CV_WIN_LINUX("The game draws with Direct3D 12, which every Windows 10 and 11 has, but only "
+                                   "graphics with a driver for it can run. Install the newest driver from NVIDIA, AMD "
+                                   "or Intel. Graphics older than NVIDIA's GeForce 600 series, AMD's Radeon HD 7700 or "
+                                   "Intel's HD 4200 (2012 and 2013) have none, and the game cannot start on them.",
+                                   "The game draws with Direct3D 12 on Vulkan (vkd3d), so the graphics need a Vulkan "
+                                   "driver: your distribution's Mesa drivers for AMD and Intel, or NVIDIA's own. "
+                                   "Graphics older than NVIDIA's GeForce 600 series, AMD's Radeon HD 7700 or Intel's "
+                                   "HD 4200 (2012 and 2013) have none, and the game cannot start on them.")));
         }
     }
 
@@ -1783,7 +2087,9 @@ private:
                 else CopyStatus(kIconDisc, name, iso.copy);
             }
         }
-        if (!files_.exe) Status(kIconWarn, kRed, T("Castlevania.exe is not beside the launcher"));
+        if (!files_.exe)
+            Status(kIconWarn, kRed, T(CV_WIN_LINUX("Castlevania.exe is not beside the launcher",
+                                                   "Castlevania is not beside the launcher")));
         if (!files_.assets.empty() && files_.xbe.release == Release::Missing && files_.isos.empty())
             Wrapped(g_small, kMuted, T("Add your disc image (.iso), or extract the disc into the assets folder: default.xbe "
                                        "with its data, movie and sound folders."));
@@ -1807,7 +2113,8 @@ private:
         EndCard();
         BeginCard("folders");
         Text(g_semi, kText, T("Saves and logs"));
-        Wrapped(g_small, kMuted, T("Saves are kept beside the game in hdd\\E\\UDATA\\4b4e002d."));
+        Wrapped(g_small, kMuted, T(CV_WIN_LINUX("Saves are kept beside the game in hdd\\E\\UDATA\\4b4e002d.",
+                                                "Saves are kept beside the game in hdd/E/UDATA/4b4e002d.")));
         ImGui::Dummy({0, S(4)});
         if (Button(T("Open saves"), {0, 0}, Kind::Secondary)) {
             fs::path s = ExeDir() / kSaves;
@@ -1841,6 +2148,21 @@ private:
             return true;
         }
         fs::path exe = files_.Player();
+#ifndef _WIN32
+        std::string path = exe.string(), dir = ExeDir().string();
+        char* argv[] = {path.data(), nullptr};
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_addchdir_np(&actions, dir.c_str());
+        pid_t pid = 0;
+        int e = posix_spawn(&pid, path.c_str(), &actions, nullptr, argv, environ);
+        posix_spawn_file_actions_destroy(&actions);
+        if (e) {
+            Note(F("Could not start the game (error {})", {std::to_string(e)}));
+            return true;
+        }
+        std::thread([pid] { waitpid(pid, nullptr, 0); }).detach();  // reaped when it ends
+#else
         std::wstring cmd = L"\"" + exe.wstring() + L"\"";
         STARTUPINFOW si{sizeof(si)};
         PROCESS_INFORMATION pi{};
@@ -1852,10 +2174,40 @@ private:
         AllowSetForegroundWindow(pi.dwProcessId);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
+#endif
         Note(T("Game started"));
         return settings_.keep_open;
     }
 
+#ifndef _WIN32
+    // Linux: SDL's file dialog (the desktop's portal, else zenity) answers later, from another thread perhaps;
+    // the frame after takes the file (Picked)
+    void AddImage() {
+        static std::string iso, all;  // the dialog keeps the filters' names while it is up
+        iso = T("Xbox disc image (*.iso)");
+        all = T("All files");
+        static SDL_DialogFileFilter filters[2];
+        filters[0] = {iso.c_str(), "iso"};
+        filters[1] = {all.c_str(), "*"};
+        SDL_ShowOpenFileDialog(
+            [](void* self, const char* const* files, int) {
+                auto* l = static_cast<Launcher*>(self);
+                std::lock_guard lock(l->picked_lock_);
+                if (files && files[0]) l->picked_ = files[0];
+            },
+            this, g_window, filters, 2, nullptr, false);
+    }
+
+    void Picked() {
+        fs::path from;
+        {
+            std::lock_guard lock(picked_lock_);
+            if (picked_.empty()) return;
+            from = std::exchange(picked_, {});
+        }
+        ImportFrom(from);
+    }
+#else
     void AddImage() {
         wchar_t file[MAX_PATH] = {};
         // pairs of a name and its pattern, each ended by a NUL, the list by another (c_str's)
@@ -1870,7 +2222,11 @@ private:
         ofn.lpstrTitle = title.c_str();
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
         if (!GetOpenFileNameW(&ofn)) return;
-        fs::path from = file;
+        ImportFrom(file);
+    }
+#endif
+
+    void ImportFrom(const fs::path& from) {
         fs::path assets = files_.assets.empty() ? ExeDir() / "assets" : files_.assets;
         fs::path to = assets / from.filename();
         std::error_code ec;
@@ -1899,6 +2255,10 @@ private:
     Picture logo_, crest_;
     fs::path logo_file_;
     Import import_;
+#ifndef _WIN32
+    std::mutex picked_lock_;
+    fs::path picked_;  // the dialog's file, for the next frame (Picked)
+#endif
     std::vector<Res> modes_;
     std::string status_, saved_, shown_language_;
     double status_time_ = -100;
@@ -1908,6 +2268,7 @@ private:
 
 }  // namespace
 
+#ifdef _WIN32
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC, for the pack's logo
@@ -1999,3 +2360,98 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     DestroyWindow(g_hwnd);
     return 0;
 }
+#else
+// Linux: SDL's window at the display's scale, drawn with OpenGL 3; ImGui's input from the SDK's SDL layer
+int main(int argc, char** argv) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+        std::fprintf(stderr, "SDL failed to start: %s\n", SDL_GetError());
+        return 1;
+    }
+    {
+        Settings settings;  // the language, for the window's title and an error before the launcher is up
+        settings.Load();
+        words::Set(settings.language);
+    }
+    float scale = std::max(1.0f, SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()));
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    g_window = SDL_CreateWindow(T("Castlevania: Curse of Darkness - Launcher"), int(1060 * scale), int(690 * scale),
+                                SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+    SDL_GLContext gl = g_window ? SDL_GL_CreateContext(g_window) : nullptr;
+    if (!gl) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Castlevania Launcher", T("OpenGL is not available."), nullptr);
+        return 1;
+    }
+    SDL_GL_MakeCurrent(g_window, gl);
+    SDL_GL_SetSwapInterval(1);
+    SDL_ShowWindow(g_window);
+    linuxapp::g_window = g_window;
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    // the layout's sizes in the window's pixels: the display's scale, and its pixel density on a HiDPI screen
+    g_scale = scale * SDL_GetWindowPixelDensity(g_window);
+    Style();
+    Fonts();
+    ImGui_ImplOpenGL3_Init("#version 130");
+    linuxapp::ImGuiInit(g_window);
+    // ImGui's controller navigation: the first controller plugged in
+    static SDL_Gamepad* pad = nullptr;
+    linuxapp::g_nav_pad = [] { return pad; };
+
+    Launcher launcher;
+    // --page home|display|graphics|game|controls|files opens on that page
+    static const char* kPageNames[] = {"home", "display", "graphics", "game", "controls", "files"};
+    for (int a = 1; a + 1 < argc; a++)
+        for (int i = 0; i < 6; i++)
+            if (!std::strcmp(argv[a], "--page") && !std::strcmp(argv[a + 1], kPageNames[i])) launcher.ShowPage(i);
+    bool running = true;
+    while (running) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            linuxapp::ImGuiEvent(e);
+            if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) running = false;
+            if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED) g_activated = true;
+            if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad) pad = SDL_OpenGamepad(e.gdevice.which);
+            if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && SDL_GetGamepadID(pad) == e.gdevice.which) {
+                SDL_CloseGamepad(pad);
+                pad = nullptr;
+            }
+        }
+        if (!running) break;
+        if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_MINIMIZED) {
+            SDL_Delay(50);
+            continue;
+        }
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(g_window, &w, &h);
+        linuxapp::g_pixel_w = uint32_t(w);
+        linuxapp::g_pixel_h = uint32_t(h);
+        ImGui_ImplOpenGL3_NewFrame();
+        linuxapp::ImGuiNewFrame();
+        ImGui::NewFrame();
+        if (!launcher.Frame()) running = false;
+        ImGui::Render();
+        ImVec4 bg = V(kBg);
+        glViewport(0, 0, w, h);
+        glClearColor(bg.x, bg.y, bg.z, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        SDL_GL_SwapWindow(g_window);
+        linuxapp::ApplyCursor();
+        // text typed into an ImGui field
+        bool text = io.WantTextInput;
+        if (text != SDL_TextInputActive(g_window)) text ? SDL_StartTextInput(g_window) : SDL_StopTextInput(g_window);
+    }
+
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui::DestroyContext();
+    SDL_GL_DestroyContext(gl);
+    SDL_DestroyWindow(g_window);
+    SDL_Quit();
+    return 0;
+}
+#endif

@@ -22,8 +22,14 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#ifdef _WIN32
 #include <wincodec.h>
 #include <wrl/client.h>
+#else
+#include <fstream>
+
+#include "linux/image.h"  // Linux: PNG and DDS as WIC reads and writes them
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -56,7 +62,9 @@ uint32_t g_button_layout = 0;         // button_layout: 0 Xbox, 1 PS2 (its icons
 namespace {
 
 namespace fs = std::filesystem;
+#ifdef _WIN32
 using Microsoft::WRL::ComPtr;
+#endif
 
 // where a texel of a 16x16 8 bit block is in the block's bytes, and of a 32x16 4 bit block in its nibbles: four
 // columns of four rows, each column's two halves of rows swapped on odd columns
@@ -293,6 +301,10 @@ private:
     static void SavePng(const fs::path& file, const std::vector<uint8_t>& bgra, uint32_t w, uint32_t h) {
         std::error_code ec;
         fs::create_directories(file.parent_path(), ec);
+#ifndef _WIN32
+        if (!linuximage::WritePng(file, bgra.data(), w, h, w * 4)) LOGW("texpack: %s not written", file.string().c_str());
+    }
+#else
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         ComPtr<IWICImagingFactory> wic;
         ComPtr<IWICStream> stream;
@@ -316,6 +328,7 @@ private:
         wic.Reset();
         CoUninitialize();
     }
+#endif
 
     enum class Stage { Idle, Queued, Ready, Failed };
     struct Entry {
@@ -347,9 +360,11 @@ private:
     }
 
     void Work() {
+#ifdef _WIN32
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         ComPtr<IWICImagingFactory> wic;
         CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
+#endif
         for (;;) {
             uint32_t i;
             {
@@ -358,7 +373,11 @@ private:
                 i = queue_.front();
                 queue_.pop_front();
             }
+#ifdef _WIN32
             std::shared_ptr<gpu::Replacement> r = wic ? Load(wic.Get(), files_[i]) : nullptr;
+#else
+            std::shared_ptr<gpu::Replacement> r = Load(files_[i]);
+#endif
             if (!r) LOGW("texpack: %s does not load", files_[i].filename().string().c_str());
             std::lock_guard lock(m_);
             state_[i].pixels = std::move(r);
@@ -394,6 +413,22 @@ private:
     }
 
     // BGRA, PS2 alpha (128 opaque) to the Xbox's, halved to the size set, then every level below
+#ifndef _WIN32
+    static std::shared_ptr<gpu::Replacement> Load(const fs::path& file) {
+        std::vector<uint8_t> px;
+        uint32_t w = 0, h = 0;
+        std::string ext = file.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (ext == ".dds") {
+            std::ifstream f(file, std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), {});
+            if (!linuximage::ReadDds(bytes, px, w, h)) return nullptr;
+        } else if (!linuximage::ReadFile(file, px, w, h)) {
+            return nullptr;
+        }
+        return Finish(std::move(px), w, h);
+    }
+#else
     static std::shared_ptr<gpu::Replacement> Load(IWICImagingFactory* wic, const fs::path& file) {
         ComPtr<IWICBitmapDecoder> dec;
         ComPtr<IWICBitmapFrameDecode> frame;
@@ -408,8 +443,13 @@ private:
         if (!w || !h) return nullptr;
         std::vector<uint8_t> px(size_t(w) * h * 4);
         if (FAILED(conv->CopyPixels(nullptr, w * 4, UINT(px.size()), px.data()))) return nullptr;
+        return Finish(std::move(px), w, h);
+    }
+#endif
+
+    static std::shared_ptr<gpu::Replacement> Finish(std::vector<uint8_t> px, uint32_t w, uint32_t h) {
         for (size_t i = 3; i < px.size(); i += 4) px[i] = uint8_t(std::min(255u, (px[i] * 255u + 64) / 128));
-        UINT cap = g_texture_pack_size ? g_texture_pack_size : 16384;
+        uint32_t cap = g_texture_pack_size ? g_texture_pack_size : 16384;
         while (std::max(w, h) > cap && w > 1 && h > 1) {
             px = Half(px, w, h);
             w /= 2;

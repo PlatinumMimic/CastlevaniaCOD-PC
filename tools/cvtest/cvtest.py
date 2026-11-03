@@ -79,8 +79,15 @@ import subprocess
 import sys
 import time
 import zlib
-from ctypes import wintypes
 from pathlib import Path
+
+# Linux runs the Linux build (from WSL too): on a virtual X display of its own (Xvfb), its windows found with xdotool
+# and read with ImageMagick's import, so nothing shows on the desktop
+LINUX = sys.platform.startswith("linux")
+EXE = "" if LINUX else ".exe"     # an executable's file name ending
+CODE = ".so" if LINUX else ".dll"  # the game code library's
+if not LINUX:
+    from ctypes import wintypes
 
 REPO = Path(__file__).resolve().parents[2]
 SAVES = REPO / "out" / "test" / "saves"
@@ -91,117 +98,206 @@ FIGHT_NEAR = 800  # an enemy this close: a fight, whose path and presses a route
 EXIT_BUTTONS = ("a", "b", "x", "y")  # pressed just before a room change: B opens doors
 DEFAULT_SETTINGS = {"display_mode": "windowed", "width": 960, "height": 540, "texture_pack": True,
                     "pause_on_focus_loss": False}
-FRAME_MS = 17  # a frame at 60 fps, for how long a frame-timed command may take
+# a frame at 60 fps, for how long a frame-timed command may take; CV_FRAME_MS for a slower renderer (WSL's llvmpipe)
+FRAME_MS = int(os.environ.get("CV_FRAME_MS", "17"))
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
-user32.SetProcessDPIAware()
-
-
-# --- the game window -------------------------------------------------------------------------------------------
-
-class PROCESSENTRY32W(ctypes.Structure):
-    _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
-                ("szExeFile", ctypes.c_wchar * 260)]
+if not LINUX:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    user32.SetProcessDPIAware()
 
 
-def family(pid):
-    """the process and those it started, and theirs: Castlevania.exe hands another release's game to its executable"""
-    kernel32 = ctypes.WinDLL("kernel32")
-    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
-    parents = {}
-    e = PROCESSENTRY32W()
-    e.dwSize = ctypes.sizeof(e)
-    ok = kernel32.Process32FirstW(snap, ctypes.byref(e))
-    while ok:
-        parents[e.th32ProcessID] = e.th32ParentProcessID
-        ok = kernel32.Process32NextW(snap, ctypes.byref(e))
-    kernel32.CloseHandle(snap)
-    out, grew = {pid}, True
-    while grew:
-        grew = False
-        for child, parent in parents.items():
-            if parent in out and child not in out:
-                out.add(child)
-                grew = True
-    return out
+# --- the game window ---------------------------------------------------------------------------------------------
+
+if not LINUX:
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
 
 
-def windows(pid):
-    """the visible top level windows of the process and of those it started"""
-    found = []
-    pids = family(pid)
-
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def each(hwnd, _):
-        owner = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value in pids and user32.IsWindowVisible(hwnd):
-            found.append(hwnd)
-        return True
-
-    user32.EnumWindows(each, 0)
-    return found
-
-
-def find_window(pid):
-    found = windows(pid)
-    return found[0] if found else None
-
-
-def window_class(hwnd):
-    buf = ctypes.create_unicode_buffer(256)
-    user32.GetClassNameW(hwnd, buf, 256)
-    return buf.value
+    def family(pid):
+        """the process and those it started, and theirs: Castlevania.exe hands another release's game to its executable"""
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+        parents = {}
+        e = PROCESSENTRY32W()
+        e.dwSize = ctypes.sizeof(e)
+        ok = kernel32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            parents[e.th32ProcessID] = e.th32ParentProcessID
+            ok = kernel32.Process32NextW(snap, ctypes.byref(e))
+        kernel32.CloseHandle(snap)
+        out, grew = {pid}, True
+        while grew:
+            grew = False
+            for child, parent in parents.items():
+                if parent in out and child not in out:
+                    out.add(child)
+                    grew = True
+        return out
 
 
-def dialog_text(hwnd):
-    """a message box's text, from its static controls"""
-    texts = []
+    def windows(pid):
+        """the visible top level windows of the process and of those it started"""
+        found = []
+        pids = family(pid)
 
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def each(child, _):
-        if window_class(child) == "Static":
-            buf = ctypes.create_unicode_buffer(2048)
-            user32.GetWindowTextW(child, buf, 2048)
-            if buf.value:
-                texts.append(buf.value)
-        return True
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(hwnd, _):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value in pids and user32.IsWindowVisible(hwnd):
+                found.append(hwnd)
+            return True
 
-    user32.EnumChildWindows(hwnd, each, 0)
-    return " ".join(" ".join(texts).split())
-
-
-class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
-                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
-                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
-                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+        user32.EnumWindows(each, 0)
+        return found
 
 
-def capture(hwnd):
-    """the client area, drawn by the window itself (works behind other windows): width, height, BGRA rows"""
-    r = wintypes.RECT()
-    user32.GetClientRect(hwnd, ctypes.byref(r))
-    w, h = r.right - r.left, r.bottom - r.top
-    if w <= 0 or h <= 0:
+    def find_window(pid):
+        found = windows(pid)
+        return found[0] if found else None
+
+
+    def window_class(hwnd):
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+
+
+    def dialog_text(hwnd):
+        """a message box's text, from its static controls"""
+        texts = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(child, _):
+            if window_class(child) == "Static":
+                buf = ctypes.create_unicode_buffer(2048)
+                user32.GetWindowTextW(child, buf, 2048)
+                if buf.value:
+                    texts.append(buf.value)
+            return True
+
+        user32.EnumChildWindows(hwnd, each, 0)
+        return " ".join(" ".join(texts).split())
+
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                    ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                    ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                    ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+
+    def capture(hwnd):
+        """the client area, drawn by the window itself (works behind other windows): width, height, BGRA rows"""
+        r = wintypes.RECT()
+        user32.GetClientRect(hwnd, ctypes.byref(r))
+        w, h = r.right - r.left, r.bottom - r.top
+        if w <= 0 or h <= 0:
+            return None
+        wdc = user32.GetDC(hwnd)
+        dc = gdi32.CreateCompatibleDC(wdc)
+        bmp = gdi32.CreateCompatibleBitmap(wdc, w, h)
+        old = gdi32.SelectObject(dc, bmp)
+        user32.PrintWindow(hwnd, dc, 3)  # PW_CLIENTONLY | PW_RENDERFULLCONTENT: what D3D presented
+        info = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)  # top-down
+        buf = ctypes.create_string_buffer(w * h * 4)
+        gdi32.GetDIBits(dc, bmp, 0, h, buf, ctypes.byref(info), 0)
+        gdi32.SelectObject(dc, old)
+        gdi32.DeleteObject(bmp)
+        gdi32.DeleteDC(dc)
+        user32.ReleaseDC(hwnd, wdc)
+        return w, h, buf.raw
+
+    def press_enter(hwnd):
+        user32.PostMessageW(hwnd, 0x0100, 0x0D, 0)  # WM_KEYDOWN VK_RETURN
+
+    def close_window(proc, hwnd):
+        if hwnd:
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+
+
+else:
+    # Linux: a virtual display for the run, its windows by xdotool, their pictures by ImageMagick's import
+    XVFB = None
+
+    def display():
+        """the run's own X display, started once"""
+        global XVFB
+        if XVFB is None:
+            n = 90 + os.getpid() % 9
+            XVFB = subprocess.Popen(["Xvfb", f":{n}", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.environ["DISPLAY"] = f":{n}"
+            for _ in range(50):
+                if subprocess.run(["xdotool", "getdisplaygeometry"], capture_output=True).returncode == 0:
+                    break
+                time.sleep(0.1)
+        return os.environ["DISPLAY"]
+
+    def family(pid):
+        """the process and those it started, and theirs: Castlevania hands another release's game to its executable"""
+        parents = {}
+        for d in Path("/proc").iterdir():
+            if d.name.isdigit():
+                try:
+                    parents[int(d.name)] = int((d / "stat").read_text().rsplit(")", 1)[1].split()[1])
+                except (OSError, ValueError, IndexError):
+                    pass
+        out, grew = {pid}, True
+        while grew:
+            grew = False
+            for child, parent in parents.items():
+                if parent in out and child not in out:
+                    out.add(child)
+                    grew = True
+        return out
+
+    def windows(pid):
+        """the mapped top level windows of the process and of those it started"""
+        found = []
+        for p in sorted(family(pid)):
+            r = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(p)], capture_output=True, text=True)
+            found += [int(w) for w in r.stdout.split()]
+        return found
+
+    def find_window(pid):
+        found = windows(pid)
+        return found[0] if found else None
+
+    def geometry(win):
+        r = subprocess.run(["xdotool", "getwindowgeometry", "--shell", str(win)], capture_output=True, text=True)
+        g = dict(l.split("=", 1) for l in r.stdout.split() if "=" in l)
+        return int(g.get("WIDTH", 0)), int(g.get("HEIGHT", 0))
+
+    def window_class(win):
+        """the first start's build window is a small one (runtime/linux/game_code.cpp), as Windows's GameCode class"""
+        w, h = geometry(win)
+        return "GameCode" if 0 < h < 300 else "game"
+
+    def dialog_text(win):
         return None
-    wdc = user32.GetDC(hwnd)
-    dc = gdi32.CreateCompatibleDC(wdc)
-    bmp = gdi32.CreateCompatibleBitmap(wdc, w, h)
-    old = gdi32.SelectObject(dc, bmp)
-    user32.PrintWindow(hwnd, dc, 3)  # PW_CLIENTONLY | PW_RENDERFULLCONTENT: what D3D presented
-    info = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)  # top-down
-    buf = ctypes.create_string_buffer(w * h * 4)
-    gdi32.GetDIBits(dc, bmp, 0, h, buf, ctypes.byref(info), 0)
-    gdi32.SelectObject(dc, old)
-    gdi32.DeleteObject(bmp)
-    gdi32.DeleteDC(dc)
-    user32.ReleaseDC(hwnd, wdc)
-    return w, h, buf.raw
+
+    def capture(win):
+        """the window as drawn: width, height, BGRA rows"""
+        w, h = geometry(win)
+        if w <= 0 or h <= 0:
+            return None
+        r = subprocess.run(["import", "-window", str(win), "-depth", "8", "bgra:-"], capture_output=True)
+        if r.returncode or len(r.stdout) != w * h * 4:
+            return None
+        return w, h, r.stdout
+
+    def press_enter(win):
+        subprocess.run(["xdotool", "windowfocus", "--sync", str(win), "key", "Return"], capture_output=True)
+
+    def close_window(proc, win):
+        proc.terminate()  # SIGTERM: SDL's quit, the game ends as it does closed (runtime/linux/main.cpp)
 
 
 def write_png(path, w, h, bgra):
@@ -312,7 +408,7 @@ class Game:
         self.exe = exe_name(scenario)
         if not installed:
             folder.mkdir(parents=True)
-            for f in (self.exe + ".exe", self.exe + ".dll"):
+            for f in (self.exe + EXE, self.exe + CODE):
                 shutil.copy2(build / f, folder / f)  # dates kept: the exe takes a DLL that is not older than it
         settings = dict(DEFAULT_SETTINGS, **scenario.get("settings", {}))
         lines = [f"{k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}" for k, v in settings.items()]
@@ -326,6 +422,8 @@ class Game:
         self.log = folder / "logs" / "castlevania.log"
         self.log_pos = 0
         env = dict(os.environ if env is None else env, CV_PAD_LIVE=str(self.live))
+        if LINUX:
+            env["DISPLAY"] = display()
         env.pop("CV_PAD_SCRIPT", None)
         if scenario.get("perf"):
             env["XBE_PERF"] = "1"
@@ -335,7 +433,7 @@ class Game:
             env.update(CV_TELEMETRY=str(folder / "telemetry.jsonl"), CV_TELEMETRY_EVERY=str(scenario["telemetry"]))
         started = time.time()
         # an install is started as a player starts it, by Castlevania.exe, whatever the release
-        self.proc = subprocess.Popen([str(folder / ("Castlevania.exe" if installed else self.exe + ".exe"))], cwd=folder,
+        self.proc = subprocess.Popen([str(folder / (("Castlevania" if installed else self.exe) + EXE))], cwd=folder,
                                      env=env)
         self.n = 0
         self.hwnd = None
@@ -347,7 +445,7 @@ class Game:
                 kind = window_class(h)
                 if kind.endswith("GameCode"):  # building: Enter is Start once it is ready, nothing before
                     self.first_start = time.time() - started
-                    user32.PostMessageW(h, 0x0100, 0x0D, 0)  # WM_KEYDOWN VK_RETURN
+                    press_enter(h)
                 elif kind == "#32770":
                     self.dialog = dialog_text(h) or "a message box"
                 else:
@@ -387,8 +485,7 @@ class Game:
 
     def close(self):
         if self.alive():
-            if self.hwnd:
-                user32.PostMessageW(self.hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            close_window(self.proc, self.hwnd)
             try:
                 self.proc.wait(8)
             except subprocess.TimeoutExpired:
@@ -802,7 +899,7 @@ def record(name, build, save):
     out = REPO / "out" / "test" / f"record-{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     folder = out / "game"
     folder.mkdir(parents=True)
-    for f in ("Castlevania.exe", "Castlevania.dll"):
+    for f in ("Castlevania" + EXE, "Castlevania" + CODE):
         shutil.copy2(build / f, folder / f)
     if (build / "castlevania.toml").exists():
         shutil.copy2(build / "castlevania.toml", folder / "castlevania.toml")
@@ -813,7 +910,7 @@ def record(name, build, save):
     for k in ("CV_PAD_LIVE", "CV_PAD_SCRIPT"):
         env.pop(k, None)
     print(f"recording {name}: play, then close the game ({out})")
-    subprocess.run([str(folder / "Castlevania.exe")], cwd=folder, env=env)
+    subprocess.run([str(folder / ("Castlevania" + EXE))], cwd=folder, env=env)
     if (folder / "hdd").exists():
         shutil.rmtree(SAVES / name, ignore_errors=True)
         shutil.copytree(folder / "hdd", SAVES / name)
@@ -1005,7 +1102,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
             results.append({"step": "end", "ok": False, "errors": ["crash dumps: " + ", ".join(dumps)]})
         report(out, name, results, failed)
         if not keep and not install:
-            for f in (game.exe + ".exe", game.exe + ".dll"):
+            for f in (game.exe + EXE, game.exe + CODE):
                 (game.folder / f).unlink(missing_ok=True)
     print(f"{name}: {'FAILED' if failed else 'passed'} ({sum(r['ok'] for r in results)}/{len(results)} steps)")
     return not failed
@@ -1052,7 +1149,9 @@ def main():
     if not args or (args[0].startswith("-") and args[0] not in ("--record", "--make-route")):
         print(__doc__)
         return 2
-    build = REPO / "out" / "build" / "release"
+    # Linux: CV_BUILD, else the build folder beside the repository (README.md, Building on Linux)
+    build = (Path(os.environ.get("CV_BUILD", REPO.parent / "build")) if LINUX
+             else REPO / "out" / "build" / "release")
     if "--build" in args:
         build = Path(args[args.index("--build") + 1]).resolve()
     if args[0] == "--record":

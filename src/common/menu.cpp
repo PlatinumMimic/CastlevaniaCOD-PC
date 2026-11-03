@@ -51,6 +51,14 @@ struct Res {
 // the window's monitor's modes, largest first, with 0x0 for the desktop's own
 std::vector<Res> Resolutions() {
     std::vector<Res> list{{0, 0}};
+#ifndef _WIN32
+    for (app::Mode mode : app::DisplayModes()) {
+        if (mode.width < 640 || mode.height < 480) continue;
+        bool seen = false;
+        for (const Res& r : list) seen |= r.w == mode.width && r.h == mode.height;
+        if (!seen) list.push_back({mode.width, mode.height});
+    }
+#else
     MONITORINFOEXW mi{};
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(MonitorFromWindow(static_cast<HWND>(app::Window()), MONITOR_DEFAULTTOPRIMARY), &mi);
@@ -62,6 +70,7 @@ std::vector<Res> Resolutions() {
         for (const Res& r : list) seen |= r.w == dm.dmPelsWidth && r.h == dm.dmPelsHeight;
         if (!seen) list.push_back({dm.dmPelsWidth, dm.dmPelsHeight});
     }
+#endif
     std::sort(list.begin() + 1, list.end(), [](Res a, Res b) { return a.w != b.w ? a.w > b.w : a.h > b.h; });
     return list;
 }
