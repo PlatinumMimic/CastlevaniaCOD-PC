@@ -2,6 +2,9 @@
 material: DeepBump's normals from each picture (green turned to the Remaster's direction, strengthened to its maps'
 measure, without DeepBump's tilt of whole regions), occlusion from the height those normals give, roughness about the Remaster's 0.8, no metal; a manifest in
 the pcsx2-material-replacements-v1 format beside them, each at the Remaster's mixed_environment_props parameters.
+Each picture is worked on with a margin around it, its other side where it repeats (a wall's texture), else its own
+edge mirrored, and the margin cut away after: DeepBump and the blurs see no edge there, which would give the maps a
+bevel all round (a lit or dark line at every seam where the texture repeats).
 
   make_materials.py <census.jsonl> <pack replacements> <hand-made manifest.json> <out folder> [workers] [limit]
 
@@ -55,6 +58,24 @@ def blur(a, r):
     return a
 
 
+def wraps(a, axis):
+    """whether the picture repeats along the axis: its last row (column) runs into its first as smoothly as within it"""
+    if axis == 1:
+        seam, inner = np.abs(a[:, 0] - a[:, -1]).mean(), np.abs(a[:, 1:] - a[:, :-1]).mean()
+    else:
+        seam, inner = np.abs(a[0] - a[-1]).mean(), np.abs(a[1:] - a[:-1]).mean()
+    return seam <= 1.5 * inner + 0.01
+
+
+def margin(a, pad, modes):
+    """a with pad texels around it, each axis wrapped or mirrored (modes)"""
+    for axis, mode in enumerate(modes):
+        widths = [(0, 0)] * a.ndim
+        widths[axis] = (pad, pad)
+        a = np.pad(a, widths, mode=mode)
+    return a
+
+
 def make(job):
     name, src, out = job
     stem = os.path.splitext(name)[0]
@@ -69,6 +90,10 @@ def make(job):
         px = np.asarray(im, np.float32) / 255
         rgb, alpha = px[..., :3], px[..., 3]
         gray = rgb.mean(-1)
+        # the margin: its other side where it repeats, else its own edge mirrored; cut away below
+        P = min(64, gray.shape[0] - 1, gray.shape[1] - 1)
+        modes = ['wrap' if wraps(gray, axis) else 'reflect' for axis in (0, 1)]
+        gray = margin(gray, P, modes)
         db = deepbump(gray)  # 3,H,W
         import module_normals_to_height as nh
         height = nh.apply(db, False, None)[0]
@@ -81,16 +106,18 @@ def make(job):
         xy *= min(XY_SPREAD / spread, 2.5)
         n = np.concatenate([xy, np.sqrt(np.clip(1 - (xy ** 2).sum(-1, keepdims=True), 0.0025, 1))], -1)
         n /= np.linalg.norm(n, axis=-1, keepdims=True) + 1e-8
+        inside = (slice(P, -P), slice(P, -P))
+        n = n[inside]
         flat = alpha < 0.05              # nothing drawn there: flat
         n[flat] = (0, 0, 1)
         normal = np.clip((n * 0.5 + 0.5) * 255 + 0.5, 0, 255).astype(np.uint8)
         # occlusion: below its surroundings in the height, darker, about the Remaster's 0.93 on average
         cav = blur(height, 6) - height
         cav = cav / (cav.std() + 1e-6)
-        ao = np.clip(1 - 0.07 * np.maximum(cav, 0) ** 1.2, 0.45, 1)
+        ao = np.clip(1 - 0.07 * np.maximum(cav, 0) ** 1.2, 0.45, 1)[inside]
         # roughness: about the Remaster's 0.8, bright parts a little smoother
         lum = gray - blur(gray, 16)
-        rough = np.clip(0.8 - 0.25 * lum, 0.6, 0.95)
+        rough = np.clip(0.8 - 0.25 * lum, 0.6, 0.95)[inside]
         ao[flat], rough[flat] = 1, 0.8
         orm = np.stack([ao, rough, np.zeros_like(ao)], -1)
         orm = np.clip(orm * 255 + 0.5, 0, 255).astype(np.uint8)
