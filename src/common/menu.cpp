@@ -20,6 +20,7 @@
 #include <imgui.h>
 
 #include "app/app.h"
+#include "gpu/backend.h"
 
 // game settings beside the runtime's, in the settings file (game_info.cpp lists them)
 bool g_fps_counter = false;
@@ -34,8 +35,13 @@ uint32_t g_fov = 100;            // percent of the game's field of view in play 
 uint32_t g_draw_distance = 100;  // percent of the game's far plane (game/view.cpp)
 uint32_t g_fog_distance = 100;   // percent of the game's fog distance, 0 for none (game/view.cpp)
 bool g_hud_edges = true;         // widescreen: the HUD at the screen's corners rather than the 4:3 middle (widescreen.cpp)
+// surfaces with an HD texture pack's material maps seen into: 0 off, 1 low, 2 high (the SDK's gpu::g_surface_depth)
+uint32_t g_surface_depth = 2;
+extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern uint32_t g_button_layout;    // texpack.cpp
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
+extern std::atomic<bool> g_sky_backdrops;   // widescreen.cpp: the rampart's sky with its room's own fog
+extern std::atomic<bool> g_wide_trace_frame;  // widescreen.cpp: log the next frame's draws
 
 namespace {
 
@@ -229,6 +235,14 @@ void GraphicsTab(bool& save) {
     Row("HUD at the screen edges", "Widescreen: the health and magic bars and the rest of the HUD in the screen's "
                                    "corners, as on a 4:3 screen, rather than at the corners of the 4:3 middle.");
     save |= ImGui::Checkbox("##hud", &g_hud_edges);
+    Row("Pause menu across the screen", "Widescreen: the pause menu's left column (Hector's stats, lists) toward the "
+                                        "screen's left side and its right column (status, equipment) toward the right, "
+                                        "the page buttons staying in the middle, rather than all of it in the 4:3 middle.");
+    save |= ImGui::Checkbox("##menuspread", &g_menu_spread);
+    Row("Surface depth", "HD texture pack: walls, floors and rock seen into, their mortar, cracks and crevices sunk "
+                         "below the surface and moving with the camera (parallax). Low is shallower; Off shades them "
+                         "only, flat.");
+    save |= Choice<uint32_t>("##depth", g_surface_depth, {0, 1, 2}, {"Off", "Low", "High"});
     Row("Field of view", "How much of the world the camera takes in: 100% is the game's own, which each room's camera "
                          "sets; more is wider. Story scenes keep the game's.");
     {
@@ -316,6 +330,42 @@ void ControlsTab(bool& save) {
     }
 }
 
+// for looking into how a screen is drawn: a capture of the frame behind the menu, and the rampart sky's special case
+// switched for comparing (not saved)
+void ToolsTab() {
+    if (!BeginRows("tools")) return;
+    Row("Frame capture", "Saves the game's next frame, the one behind this menu: how each part of it was drawn and "
+                         "the pictures it used, in the captures folder in the game's folder. Open the menu over the "
+                         "screen to look into, then press this.");
+    {
+        static bool asked = false;
+        static uint32_t asked_at = 0;  // captures saved when it was asked for
+        uint32_t saved = gpu::g_captures_saved.load();
+        if (ImGui::Button("Capture this frame")) {
+            asked = true;
+            asked_at = saved;
+            gpu::g_capture_asked = true;
+            gpu::g_capture = true;
+            g_wide_trace_frame = true;
+        }
+        if (asked) {
+            ImGui::SameLine();
+            if (saved > asked_at)
+                ImGui::TextDisabled("saved (%u this run) to the captures folder", saved);
+            else
+                ImGui::TextDisabled("saving...");
+        }
+    }
+    Row("Rampart sky fog", "On: the sky of the Abandoned Castle's rampart keeps its room's own fog, and its parts "
+                           "past the room's far plane are not drawn. Off (as it starts): it is drawn as the rest of "
+                           "the room is, with the fog and draw distance as set. For comparing; not saved.");
+    {
+        bool on = g_sky_backdrops;
+        if (ImGui::Checkbox("##skyfog", &on)) g_sky_backdrops = on;
+    }
+    ImGui::EndTable();
+}
+
 void Defaults() {
     app::Settings d;
     app::Settings& s = app::Get();
@@ -330,6 +380,8 @@ void Defaults() {
     g_fov = 100;
     g_draw_distance = g_fog_distance = 100;
     g_hud_edges = true;
+    g_menu_spread = true;
+    g_surface_depth = 2;
     app::ApplyDisplay();
 }
 
@@ -435,6 +487,7 @@ void SettingsWatch();  // keyboard.cpp
 
 void MenuUi(double fps) {
     SettingsWatch();
+    gpu::g_surface_depth.store(std::min<uint32_t>(g_surface_depth, 2), std::memory_order_relaxed);
     if (!g_scaled) return;
     PollKeys();
     ImGuiIO& io = ImGui::GetIO();
@@ -482,6 +535,10 @@ void MenuUi(double fps) {
                 }
                 if (ImGui::BeginTabItem("Controls")) {
                     ControlsTab(save);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Tools")) {
+                    ToolsTab();
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();

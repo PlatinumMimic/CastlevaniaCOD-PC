@@ -20,7 +20,9 @@
 // game with material replacements reads it) names a normal map and an ORM map (occlusion, roughness, metalness) for a
 // picture by the same hashes, "<texture>:<palette>:<region>:<TEX0 bits>", with how strongly each shades it. They load
 // with the picture, at its size cap, and the renderer shades the picture's colour with them (the SDK's
-// gpu/shaders.cpp, material). texture_pack_materials = false leaves them out.
+// gpu/shaders.cpp, material). texture_pack_materials = false leaves them out. surface_depth (menu.cpp) sees into them
+// too (parallax): their occlusion map, dark in their crevices and along a wall's mortar, read as how deep each point
+// lies, by the material's family (or the manifest's parallax_strength).
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -411,12 +413,16 @@ private:
             float light[3] = {-0.35f, -0.45f, 0.82f};
             if (const Json* l = q.Get("light_direction"); l && l->kind == Json::kArray && l->items.size() == 3)
                 for (int i = 0; i < 3; i++) light[i] = float(l->items[size_t(i)].number);
+            // how deep it reads under parallax (surface_depth, the occlusion map as the depth): masonry, rock and
+            // plaster fully; wood and iron less; leaves and grass, whose maps are veins and blades, not at all
+            std::string family = m.Str("material_family");
+            float parallax = family == "vegetation" ? 0.0f : family == "iron" ? 0.5f : family == "wood" ? 0.6f : 1.0f;
             float params[3][4] = {
                 {1.0f, float(q.Num("normal_strength", 1.0)), float(q.Num("response_strength", 0.75)),
                  float(q.Num("specular_strength", 0.35))},
                 {light[0], light[1], light[2], 0.0f},
                 {float(q.Num("ao_strength", 0.35)), float(q.Num("roughness_bias", 0.0)),
-                 float(q.Num("metalness_scale", 1.0)), 0.0f},
+                 float(q.Num("metalness_scale", 1.0)), float(q.Num("parallax_strength", parallax))},
             };
             std::memcpy(e.params, params, sizeof(params));
             auto it = Find(Key{t, p});

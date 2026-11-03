@@ -25,6 +25,20 @@
 // HUD in the frame are the world's 2D effects (glows, sparks), drawn at the points they light, which stay; nothing
 // moves while the pause menu or a message box is up, or in a story scene.
 //
+// The pause menu across the screen (menu_spread): its pages are a left column (Hector's stats, a list), a middle one
+// (the page buttons and their cursor) and a right one (status, equipment), all in the 4:3 middle, under a title bar
+// across the page. Taken from the frame before, its draws are gathered into groups (MenuGroups): draws of the same
+// texture that touch (a word's letters, a list's rows) or share a row close by (a row of figures, of icons and their
+// counts), and a draw onto the one drawn before it that it covers most (the cursor on its button, a title on its bar,
+// not the figures the cursor also lies over). A group whose middle lies in the left 45% of the frame goes left, one in
+// the right 45% goes right, the rest stays; each side by one amount, the most its groups all have room for, up to 70%
+// of the screen's extra width, so a column keeps its own alignment. A group half the frame wide or more is a strip, the
+// title bar: its vertices move as far as their side's column, those in the middle tenth by as far as they lie across,
+// so its tiles stay joined as it stretches. The backdrop stays: its edge pieces reach the screen's sides as before, and
+// its large pieces that join them stay put. Only the stat pages (Hector's, each Innocent Devil's) spread: a sub-menu
+// (Item, Equip, Skill, Tips, Options, Summon) is built on panels across the page, a description's at the bottom, a
+// list's frame, with text on them that a stretch would pull apart, and stays as the game draws it.
+//
 // Skies past the fog: the game builds its skies from painted strips, a moon and clouds placed far out in the world,
 // past a room's far plane where its fog has hidden everything (the rampart of 5.7: a ring of sky strips up to 62000
 // out, the moon at 45000, with fog from 14000 to 39000 and the far plane at 39000). With the fog and the far plane
@@ -39,6 +53,7 @@
 // rows at the top and bottom, which read past the copy and smear its first and last rows into streaks. The pass is
 // drawn that much taller instead, so the copy fills the frame row for row, as square pixels as the scene was drawn.
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
@@ -59,6 +74,16 @@ std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);       
 bool TexturePackCensus();                                                                // texpack.cpp
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive);            // texpack.cpp
 void TexturePackCensusFlush();                                                           // texpack.cpp
+
+// the skies of kSky with their room's own fog (Backdrop): off unless CV_BACKDROPS=1. It was made for the rampart's
+// strips showing as hard-edged cards, which were their scrolled texture clamped rather than wrapped (the SDK's
+// TexcoordsAsGiven); drawn wrapped they show as the PS2 shows them with the fog pushed out. The F10 menu's Tools page
+// switches it for comparing (menu.cpp)
+std::atomic<bool> g_sky_backdrops{std::getenv("CV_BACKDROPS") && std::atoi(std::getenv("CV_BACKDROPS")) != 0};
+bool g_menu_spread = true;  // the pause menu's columns toward the screen's sides (menu.cpp, the settings file)
+
+// the next frame's draws logged as CV_WIDE_TRACE logs them: the F10 menu's frame capture asks for it (menu.cpp)
+std::atomic<bool> g_wide_trace_frame{false};
 
 namespace {
 
@@ -113,12 +138,21 @@ public:
     // ext.w: the HUD's move to the screen's edge, a part of its width
     // ext.z 2: a whole picture to the sides (kSides), its first texture coordinates stretched about ext.w, the middle
     // of their span, by as much as the quad, so the 4:3 middle shows as it was
+    // ext.z 3: a strip across the pause menu (its title bar): each vertex moves by ext.y left of the frame's middle
+    // tenth (kStripRamp) and by ext.w right of it, in between by as far as it lies across, so its tiles stay joined
+    // as it stretches; its height as drawn
     std::string Position() const override {
-        return "    bool sides = ext.z > 1.5;\n"
+        // a vertex at the console frame's edge (within a few pixels: the PS2's grid puts a backdrop's left edge a pixel
+        // in) goes exactly to the screen's, or the screen's first columns stay as they were under it (a bright line at
+        // the left edge of the pause menu)
+        return "    bool sides = ext.z > 1.5 && ext.z < 2.5;\n"
+               "    bool strip = ext.z > 2.5;\n"
                "    if (sides) oT0.x = ext.w + (oT0.x - ext.w) / ext.x;\n"
-               "    o.pos.x *= ext.z != 0 && abs(abs(o.pos.x / o.pos.w) - 1) < 0.006 ? 1 : ext.x;\n"
-               "    o.pos.x += sides ? 0 : ext.w * o.pos.w;\n"
-               "    o.pos.y *= ext.y;\n";
+               "    bool at_edge = ext.z > 0.5 && ext.z < 2.5 && abs(abs(o.pos.x / o.pos.w) - 1) < 0.008;\n"
+               "    float across = saturate((o.pos.x / o.pos.w + 0.1) * 5);\n"
+               "    o.pos.x = at_edge ? sign(o.pos.x) * o.pos.w : o.pos.x * ext.x;\n"
+               "    o.pos.x += (sides ? 0 : strip ? lerp(ext.y, ext.w, across) : ext.w) * o.pos.w;\n"
+               "    o.pos.y *= strip ? 1 : ext.y;\n";
     }
 };
 
@@ -185,6 +219,7 @@ public:
         const Span& y = d_.y;
         float gw = float(s.viewport.w ? s.viewport.w : 640), gh = float(s.viewport.h ? s.viewport.h : 480);
         d_.gw = gw;
+        d_.gh = gh;
         d_.whole = !x.Empty() && x.lo <= 1 && x.hi >= gw - 1;
         bool inside = !x.Empty() && !y.Empty() && x.lo >= -2 && x.hi <= gw + 2 && y.lo >= -2 && y.hi <= gh + 2;
         // a backdrop's piece at the frame's left or right edge (on the PS2's grid, a pixel to the right), no speck
@@ -192,6 +227,11 @@ public:
                   (std::fabs(x.lo - 0.5f) <= 1.5f || std::fabs(x.hi - gw - 0.5f) <= 1.5f);
         // a quad on the frame: across it, how far its texture coordinates go
         if (inside && a.vertex_count == 4) d_.u = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[0]; });
+        // any quad's, for TexelBox
+        if (a.vertex_count == 4) {
+            d_.box_u = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[0]; });
+            d_.box_v = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[1]; });
+        }
         // the frame pass: screen positions, its copy's rows read over a taller span than it covers
         if (prog && !p.screen && d_.whole && a.vertex_count == 4) {
             Span t = Read(a, kFrameTexCoord, [](const float* v, uint32_t) { return v[1]; });
@@ -218,6 +258,10 @@ public:
             ui_ = false;
             menu_ = PauseMenuUp();
             card_free_ = g_hud_edges && !menu_ && !ModalUp();
+            trace_now_ = g_wide_trace_frame.exchange(false) || (kTrace && frame_ % kTrace == 0);
+            if (trace_now_) LOGR("wide %llu: the frame's draws (menu %d, modal %d, scene %08x)", (unsigned long long)frame_,
+                                 int(menu_), int(ModalUp()), SceneWord());
+            MenuGroups();
             // the frame before's world draws, to find the view's move from (View)
             std::swap(seen_prev_, seen_now_);
             seen_now_.clear();
@@ -252,6 +296,21 @@ public:
         return TexturePackReplace(d, guest, palette);
     }
     std::shared_ptr<const gpu::Replacement> Replaced(uint64_t id) override { return TexturePackReplaced(id); }
+
+    // a 2D quad reads its texture only inside its coordinates (the SDK's TexelBox): sprites, words and figures cut
+    // from a sheet, whose edges upscaled blend in the sheet's next picture (a faint line under each of the pause
+    // menu's figures, beside "Weapon"). Not a whole frame quad (a fill, the frame pass, a picture widened to the
+    // sides past its coordinates), nor one reading a target, nor the world
+    bool TexelBox(float* box) override {
+        if (!d_.squeeze || d_.world || d_.whole || d_.target || !d_.textured || d_.count != 4 || d_.box_u.Empty() ||
+            d_.box_v.Empty())
+            return false;
+        box[0] = d_.box_u.lo;
+        box[1] = d_.box_v.lo;
+        box[2] = d_.box_u.hi;
+        box[3] = d_.box_v.hi;
+        return true;
+    }
 
     // HDR output (the SDK's gpu/d3d12.cpp): the frame's UI starts at its first 2D draw into the back buffer after its
     // last 3D draw that does not add to what is there (a glow or a spark adds, and stays a highlight). What it and the
@@ -317,26 +376,37 @@ public:
                 LOGR("wide: a composed picture (an area's name card) at x %.0f..%.0f y %.0f..%.0f, %s", d_.x.lo,
                      d_.x.hi, d_.y.lo, d_.y.hi, shift > 0 ? "to the right edge" : shift < 0 ? "to the left edge" : "kept");
         }
+        // the pause menu's columns toward the sides; its backdrop's edge pieces, which the backdrop's other large
+        // pieces join, stay
+        MenuMove menu;
+        if (squeeze && menu_ && g_menu_spread && !d_.world && !d_.whole && !d_.target && shift == 0) {
+            bool inside = !d_.x.Empty() && !d_.y.Empty() && d_.x.lo >= -48 && d_.x.hi <= d_.gw + 48;
+            Rect r{d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, false, 0};
+            if (edges && inside) menu_back_.push_back(r);
+            else if (!edges && inside) menu = MenuPlace(r, d_.name);
+        }
+        if (!menu.strip && menu.shift != 0) shift = menu.shift;
         if (TexturePackCensus())
             for (int i = 0; i < d_.ntex; i++) TexturePackUsed(d_.texs[i], d_.world, d_.skinned, d_.additive);
         bool sides = squeeze && d_.whole && d_.textured && !d_.target && d_.sampled && !d_.u.Empty() &&
                      std::find(std::begin(kSides), std::end(kSides), d_.name) != std::end(kSides);
         ext[0] = squeeze ? Squeeze() : 1.0f;
-        ext[1] = back_buffer_ && d_.target ? d_.stretch : 1.0f;
-        ext[2] = sides ? 2.0f : edges ? 1.0f : 0.0f;
-        ext[3] = sides ? (d_.u.lo + d_.u.hi) * 0.5f : shift;
+        ext[1] = menu.strip ? menu.left : back_buffer_ && d_.target ? d_.stretch : 1.0f;
+        ext[2] = sides ? 2.0f : edges ? 1.0f : menu.strip ? 3.0f : 0.0f;
+        ext[3] = sides ? (d_.u.lo + d_.u.hi) * 0.5f : menu.strip ? menu.right : shift;
         if (Backdrop(vsc)) ext[0] = ext[1] = 0;  // not drawn: every vertex at the centre
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
         // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
-        if (kTrace && frame_ % kTrace == 0 && d_.world)
+        if (trace_now_ && d_.world)
             LOGR("wide %llu: into %08x%s 3D, n %u", (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "",
                  d_.count);
-        else if (kTrace && frame_ % kTrace == 0 && d_.squeeze)
+        else if (trace_now_ && d_.squeeze)
             LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g%s blend %u: %s%s",
                  (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
                  d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, (unsigned long long)d_.name, d_.u.lo, d_.u.hi,
                  d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
-                 sides ? "to the sides" : edges ? "edges out" : shift < 0 ? "hud left" : shift > 0 ? "hud right"
+                 sides ? "to the sides" : edges ? "edges out" : menu.strip ? "menu strip" : menu.backdrop ? "menu backdrop"
+                 : shift < 0 ? (menu_ ? "menu left" : "hud left") : shift > 0 ? (menu_ ? "menu right" : "hud right")
                  : squeeze ? "squeezed" : "kept");
     }
 
@@ -597,6 +667,179 @@ private:
         return r.shift;
     }
 
+    // the pause menu (menu_spread). Its sides: -1 left, 0 stays (the page buttons), 1 right, 2 a strip across it,
+    // stretched (its title bar: the page's name, a bar and a line under them, drawn as tiles that meet)
+    static constexpr int kMenuStrip = 2;
+    static constexpr float kMenuBackdrop = 100;  // console pixels: a draw this wide and tall can be the backdrop's
+    static constexpr size_t kMenuMost = 512;      // menu draws kept a frame
+    static constexpr float kMenuTitleBand = 0.23f;  // the title bar's bottom, a part of the frame's height, and more
+    struct MenuRect {
+        Rect r;
+        uint64_t name;
+        int side;
+    };
+    struct MenuMove {
+        bool strip = false, backdrop = false;
+        float shift = 0;            // clip space
+        float left = 0, right = 0;  // a strip's moves left and right of the frame's middle, clip space
+    };
+    static float Area(const Rect& a) { return std::max(a.x1 - a.x0, 0.0f) * std::max(a.y1 - a.y0, 0.0f); }
+    static float Overlap(const Rect& a, const Rect& b) {
+        return std::max(std::min(a.x1, b.x1) - std::max(a.x0, b.x0), 0.0f) *
+               std::max(std::min(a.y1, b.y1) - std::max(a.y0, b.y0), 0.0f);
+    }
+    // side by side, or one above the other, edge on edge
+    static bool Abut(const Rect& a, const Rect& b) {
+        constexpr float kGap = 1.5f;
+        bool rows = std::min(a.y1, b.y1) > std::max(a.y0, b.y0), cols = std::min(a.x1, b.x1) > std::max(a.x0, b.x0);
+        return (rows && (std::fabs(a.x1 - b.x0) <= kGap || std::fabs(a.x0 - b.x1) <= kGap)) ||
+               (cols && (std::fabs(a.y1 - b.y0) <= kGap || std::fabs(a.y0 - b.y1) <= kGap));
+    }
+    static bool Same(const Rect& a, const Rect& b) {
+        return std::fabs(a.x0 - b.x0) <= 0.5f && std::fabs(a.x1 - b.x1) <= 0.5f && std::fabs(a.y0 - b.y0) <= 0.5f &&
+               std::fabs(a.y1 - b.y1) <= 0.5f;
+    }
+    // a group by its span alone: half the frame wide, a strip; else by its middle, the frame's middle tenth stays
+    static int MenuSide(float x0, float x1, float gw) {
+        if (x1 - x0 >= 0.5f * gw) return kMenuStrip;
+        float mid = (x0 + x1) * 0.5f;
+        return mid < 0.45f * gw ? -1 : mid > 0.55f * gw ? 1 : 0;
+    }
+
+    // at a frame's start: the frame before's menu draws gathered into groups, each group's side, and each side's
+    // move, the most every group on it has room for (a strip has both sides). A group: draws of one texture that
+    // touch (a word's letters, a list's rows) or share a row close by (a row of figures, icons and their counts);
+    // and a draw onto the one before it it covers most (the cursor on its button, a title on its bar). A strip is
+    // not joined by its texture, only by what is drawn onto it
+    void MenuGroups() {
+        menu_before_.swap(menu_rects_);
+        menu_rects_.clear();
+        menu_back_.clear();
+        menu_move_[0] = menu_move_[1] = 0;
+        menu_plain_before_ = menu_plain_;
+        menu_plain_ = false;
+        if (menu_plain_before_) {
+            if (trace_now_) LOGR("wide %llu: menu plain: a sub-menu, its panels across it", (unsigned long long)frame_);
+            return;
+        }
+        size_t n = menu_before_.size();
+        if (!n) return;
+        float gw = menu_gw_;
+        std::vector<size_t> up(n);
+        for (size_t i = 0; i < n; i++) up[i] = i;
+        auto root = [&](size_t i) {
+            while (up[i] != i) i = up[i] = up[up[i]];
+            return i;
+        };
+        for (size_t i = 0; i < n; i++)
+            for (size_t j = i + 1; j < n; j++) {
+                const MenuRect& a = menu_before_[i];
+                const MenuRect& b = menu_before_[j];
+                bool same = a.name && a.name == b.name && a.r.x1 - a.r.x0 < 0.5f * gw && b.r.x1 - b.r.x0 < 0.5f * gw;
+                bool row = std::fabs(a.r.y0 - b.r.y0) <= 1.5f && std::fabs(a.r.y1 - b.r.y1) <= 1.5f &&
+                           std::max(a.r.x0, b.r.x0) - std::min(a.r.x1, b.r.x1) <= 0.1f * gw;
+                if (same && (Touch(a.r, b.r) || row)) up[root(i)] = root(j);
+            }
+        // a draw onto those before it joins the one it covers most, only: the cursor on the Options button also lies
+        // over the figures of EXP and Next, which would join the stats column to the buttons
+        for (size_t j = 1; j < n; j++) {
+            const Rect& b = menu_before_[j].r;
+            size_t most = n;
+            float best = 0.2f * Area(b);
+            for (size_t i = 0; i < j; i++)
+                if (float o = Overlap(menu_before_[i].r, b); o > 0 && o >= best) {
+                    best = o;
+                    most = i;
+                }
+            if (most < n) up[root(most)] = root(j);
+        }
+        std::vector<float> lo(n, 1e30f), hi(n, -1e30f);
+        for (size_t i = 0; i < n; i++) {
+            size_t r = root(i);
+            lo[r] = std::min(lo[r], menu_before_[i].r.x0);
+            hi[r] = std::max(hi[r], menu_before_[i].r.x1);
+        }
+        // the screen's extra width at each side, in console pixels, and the room each side's groups leave: of what
+        // lies on the frame (a list's rows that run off its right edge run off the screen's)
+        float k = Squeeze();
+        float margin = (1 - k) * gw / (2 * k);
+        float most = 0.7f * margin, pad = 0.12f * margin;
+        float room[2] = {most, most};
+        for (size_t i = 0; i < n; i++) {
+            size_t r = root(i);
+            int side = MenuSide(lo[r], hi[r], gw);
+            menu_before_[i].side = side;
+            if (r != i) continue;
+            if (side < 0 || side == kMenuStrip) room[0] = std::min(room[0], std::max(lo[r], 0.0f) + margin - pad);
+            if (side == 1 || side == kMenuStrip) room[1] = std::min(room[1], gw + margin - pad - std::min(hi[r], gw));
+            if (trace_now_)
+                LOGR("wide %llu: menu group x %.0f..%.0f: %s", (unsigned long long)frame_, lo[r], hi[r],
+                     side == kMenuStrip ? "strip" : side < 0 ? "left" : side > 0 ? "right" : "stays");
+        }
+        menu_move_[0] = std::max(room[0], 0.0f);
+        menu_move_[1] = std::max(room[1], 0.0f);
+        if (trace_now_)
+            LOGR("wide %llu: menu moves %.1f left, %.1f right (console pixels)", (unsigned long long)frame_,
+                 menu_move_[0], menu_move_[1]);
+    }
+
+    // a menu draw's move: the backdrop's large pieces stay; else as its group of the frame before (the same texture
+    // in the same place), or as the draw of this frame it lies on, or as a draw of its texture it touches the frame
+    // before (a figure that changed, the cursor moved on), else by its own span
+    MenuMove MenuPlace(const Rect& r, uint64_t name) {
+        float gw = menu_gw_ = d_.gw;
+        MenuMove m;
+        // a sub-menu (Item, Equip, Skill, Tips, Options, Summon): a panel across it below the title bar (its
+        // description's, a list's frame), drawn before what is on it. Its page stays as the game draws it, this frame
+        // on and the next
+        if (r.x1 - r.x0 >= 0.5f * gw && r.y1 > kMenuTitleBand * d_.gh) menu_plain_ = true;
+        if (menu_plain_ || menu_plain_before_) {
+            if (menu_rects_.size() < kMenuMost) menu_rects_.push_back({r, name, 0});
+            return m;
+        }
+        if (r.x1 - r.x0 >= kMenuBackdrop && r.y1 - r.y0 >= kMenuBackdrop)
+            for (const Rect& b : menu_back_)
+                if (Abut(r, b)) {
+                    if (menu_back_.size() < kMenuMost) menu_back_.push_back(r);
+                    m.backdrop = true;
+                    return m;
+                }
+        int side = 0;
+        bool found = false;
+        for (const MenuRect& p : menu_before_)
+            if (p.name == name && Same(p.r, r)) {
+                side = p.side;
+                found = true;
+                break;
+            }
+        if (!found) {
+            float best = 0.2f * Area(r);
+            for (const MenuRect& p : menu_rects_)
+                if (float o = Overlap(p.r, r); o > 0 && o >= best) {
+                    best = o;
+                    side = p.side;
+                    found = true;
+                }
+        }
+        for (const MenuRect& p : menu_before_)
+            if (!found && name && p.name == name && Touch(p.r, r)) {
+                side = p.side;
+                found = true;
+            }
+        if (!found) side = MenuSide(r.x0, r.x1, gw);
+        if (menu_rects_.size() < kMenuMost) menu_rects_.push_back({r, name, side});
+        // console pixels to clip space as the squeeze draws them: 2 / gw a pixel, times the squeeze
+        float px = 2 * Squeeze() / gw;
+        if (side == kMenuStrip) {
+            m.strip = true;
+            m.left = -menu_move_[0] * px;
+            m.right = menu_move_[1] * px;
+        } else {
+            m.shift = (side < 0 ? -menu_move_[0] : side > 0 ? menu_move_[1] : 0.0f) * px;
+        }
+        return m;
+    }
+
     // a texture by its first bytes (its indices), size and format: the same picture wherever the game loads it
     static uint64_t Name(const gpu::TextureDesc& d, const uint8_t* guest) {
         uint32_t n = std::min<uint32_t>(gpu::LevelSize(d, 0), 16384);
@@ -607,7 +850,7 @@ private:
     // a 3D draw's depth through the camera, while the view is pushed out (Backdrop)
     void Distance(const gpu::State& s, const gpu::Assembled& a, const Program& p) {
         uint32_t room = 0;
-        backdrop_ = kBackdrops && ViewBackdrop(fog_game_, fog_drawn_, far_z_, room);
+        backdrop_ = g_sky_backdrops && ViewBackdrop(fog_game_, fog_drawn_, far_z_, room);
         if (!backdrop_) return;
         if (room != room_) {
             SkyCandidates();
@@ -704,6 +947,7 @@ private:
         return span;
     }
 
+    bool trace_now_ = false;  // this frame's draws logged
     static inline const uint64_t kTrace =
         std::getenv("CV_WIDE_TRACE") ? std::max(1, std::atoi(std::getenv("CV_WIDE_TRACE"))) : 0;
 
@@ -722,8 +966,10 @@ private:
         float past = 0;     // the part of its vertices ahead past the room's own far plane
         float stretch = 1;
         float gw = 640;     // the console frame's width
+        float gh = 480;     // and height
         uint32_t count = 0;
         Span x, y, u;  // on the console frame; the first texture coordinate, for one quad on it
+        Span box_u, box_v;  // a quad's texture coordinates, on the frame or not (TexelBox)
         gpu::TextureDesc tex;
     };
     Draw d_;
@@ -741,6 +987,11 @@ private:
     bool hud_free_ = false;  // the HUD may go to the edges this frame
     bool card_free_ = false;  // an area's name card may
     bool menu_ = false;       // the pause menu is up this frame
+    std::vector<MenuRect> menu_rects_, menu_before_;  // the pause menu's draws, this frame's and the frame before's
+    std::vector<Rect> menu_back_;  // this frame's backdrop: its edge pieces, the large pieces against them
+    float menu_move_[2] = {};      // from the frame before: the moves left and right, in console pixels
+    bool menu_plain_ = false, menu_plain_before_ = false;  // a sub-menu's page, kept as drawn: this frame's, the one before's
+    float menu_gw_ = 640;
     bool ui_ = false;        // the frame's UI has begun, for HDR (UiStart)
     std::vector<Rect> rects_, pieces_;  // this frame's HUD draws; the pieces of the frame before's
     // an area's name card, its crest, title and line drawn apart: all of it this frame, and the frame before's, which
@@ -763,7 +1014,6 @@ private:
         float min_past = 1, max_w = 0;
     };
     std::unordered_map<uint64_t, Seen> seen_;  // CV_SKY_TRACE: each texture's draws in the room
-    static inline const bool kBackdrops = !std::getenv("CV_BACKDROPS") || std::atoi(std::getenv("CV_BACKDROPS")) != 0;
     static inline const bool kSkyTrace = std::getenv("CV_SKY_TRACE") != nullptr;
     static inline const bool kSkyHide = std::getenv("CV_SKY_HIDE") != nullptr;
     Hooks hooks_;
