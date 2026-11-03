@@ -48,6 +48,8 @@ uint32_t g_sharpening = 30;
 // the 3D darkened where surfaces meet: 0 off, 1 low, 2 high (gpu::g_ambient_occlusion)
 uint32_t g_ambient_occlusion = 1;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
+extern bool g_hd_movies;         // movies.cpp: a movie pack's HD movies drawn
+extern uint32_t g_movie_view;    // movies.cpp: 0 the game's 4:3, 1 the picture whole as large as it goes, 2 filled
 extern uint32_t g_button_layout;    // texpack.cpp
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
 extern std::atomic<bool> g_wide_trace_frame;  // widescreen.cpp: log the next frame's draws
@@ -333,8 +335,8 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled("on (paused in this menu)");
     }
     Row("Widescreen", "More of the world at the sides, nothing stretched: 16:9 for a 16:9 screen, 16:10 for a 16:10 "
-                      "one (1920x1200). The HUD, menus and movies stay 4:3 in the middle. Off shows the game 4:3, "
-                      "as on a 4:3 TV.");
+                      "one (1920x1200). The HUD and menus stay 4:3 in the middle. Off shows the game 4:3, as on a "
+                      "4:3 TV.");
     {
         uint32_t wide = s.widescreen ? s.widescreen_aspect : 0;
         if (Choice<uint32_t>("##wide", wide, {0, 169, 1610}, {"Off (4:3)", "16:9", "16:10"})) {
@@ -350,6 +352,13 @@ void GraphicsTab(bool& save) {
                                         "screen's left side and its right column (status, equipment) toward the right, "
                                         "the page buttons staying in the middle, rather than all of it in the 4:3 middle.");
     save |= Check("##menuspread", &g_menu_spread);
+    Row("HD movies", "The story's movies from an HD movie pack (a movies folder beside the game), where it has them. "
+                     "Off plays the game's own.");
+    save |= Check("##hdmovies", &g_hd_movies);
+    Row("Movie size", "Fit: the movie's picture as large as the screen shows it whole, without the black bars above "
+                      "and below it. Fill: the whole screen, a little of the picture's top and bottom cut off on a "
+                      "16:9 screen. Original: the game's 4:3 frame with its bars.");
+    save |= Choice<uint32_t>("##movieview", g_movie_view, {1, 2, 0}, {"Fit", "Fill", "Original"});
     Row("Surface depth", "HD texture pack: walls, floors and rock seen into, their mortar, cracks and crevices sunk "
                          "below the surface and moving with the camera (parallax). Low is shallower; Off shades them "
                          "only, flat.");
@@ -487,6 +496,8 @@ void Defaults() {
     g_draw_distance = g_fog_distance = 100;
     g_hud_edges = true;
     g_menu_spread = true;
+    g_hd_movies = true;
+    g_movie_view = 1;
     g_surface_depth = 2;
     g_antialias = 1;
     g_upscale = 0;

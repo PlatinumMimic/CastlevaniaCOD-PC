@@ -70,6 +70,7 @@ void AskForGame() {
 
 void WidescreenInit();    // widescreen.cpp
 void TexturePackInit();   // texpack.cpp
+void MoviesInit();        // movies.cpp
 
 // GameInfo::init: settings loaded, nothing of the game touched yet
 void MenuToRenderer();  // menu.cpp
@@ -78,5 +79,6 @@ void GameInit() {
     MenuToRenderer();  // DLSS is loaded with the device, by the setting as the game starts
     AskForGame();
     TexturePackInit();
+    MoviesInit();
     WidescreenInit();
 }

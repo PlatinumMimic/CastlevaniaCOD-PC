@@ -42,6 +42,9 @@ On top of Pazzi7054's port:
   found (with Panda_Venom and Stan21's pack, 96.8% of what the game draws gets an HD picture); cut-out pictures keep
   clean edges at every distance; a tool makes HD pictures for the textures a pack lacks; and the launcher shows
   whether you have a pack, with a switch for it.
+- **HD movies** - an HD movie pack replaces the story's movies with sharper versions, kept in step with the game's own
+  frame by frame, so the voices, skipping and fades work as ever. They fill the screen at their own shape (the game
+  squashes them to 94% of their height). See [HD Movies](#hd-movies).
 - **No stutter the first time an effect is drawn** - compiled shaders are kept on disk between sessions.
 - **Anisotropic filtering without a pack** - it sharpens the game's own textures too.
 - **PS2 button layout** - the PS2's button icons (from a PS2 HD pack) and shoulder buttons, as an option.
@@ -149,6 +152,29 @@ To add one:
 also have (`-rWxH` in their names) are not, nor pictures of the PS2's own screen buffers. More on how pictures are
 matched, and on the textures the PS2 packs lack, under [HD Texture Packs](#hd-texture-packs).
 
+## HD Movies
+
+Optional. Without a pack the game plays its own 640x480 movies. A movie pack is a `movies` folder beside
+`Castlevania.exe` with HD versions of the game's 27 movies (`movie\*.xmv` on the disc), a `movies.toml` that lists
+them, and a `.sig` file for each: the original's frames as small thumbnails, which the game's frames are matched to.
+A movie the pack lacks plays as the game has it.
+
+To add one, extract it so that `movies\movies.toml` is beside `Castlevania.exe`. The launcher's View page says whether
+it found one, and has the switch (**HD movies**) and the size (**Movie size**): **Fit**, the picture as large as the
+screen shows it whole, without the black bars (on 16:9 a thin band at each side); **Fill**, the whole screen, a little
+of the picture's top and bottom cut off; **Original**, the game's own 4:3 frame. The in-game menu (F10) has both too.
+
+The videos are H.264 (any Windows plays them) or HEVC (Windows needs Microsoft's HEVC extension), decoded on the
+graphics card. To make a pack from your own HD versions (each the picture without its black bars, the original's
+frames one for one, 29.97 fps, named after the movie: `st01_00.mp4`):
+
+```
+python tools\movies\make_movie_pack.py <ffmpeg.exe> <the game's movie folder> <your videos folder> movies --encode
+```
+
+`--encode` makes H.264 copies with NVIDIA's encoder (`--cq` sets the quality, 22 by default); `--in-place` leaves
+the videos where they are and names them from `movies.toml` instead.
+
 ## Features
 
 ### Launcher
@@ -188,7 +214,7 @@ key or L3 + R3 closes it.
 - **Any Resolution** - Renders at your display's resolution instead of 640x480.
 - **Display Modes** - Fullscreen, borderless or windowed, with vsync.
 - **Widescreen** - On a 16:9 or wider display the game is shown 16:9 with more of the world at the sides (Hor+),
-  without stretching. The HUD, text and movies stay 4:3 in the middle; the backdrops of the menus, the map and the
+  without stretching. The HUD and text stay 4:3 in the middle, movies as **Movie size** says; the backdrops of the menus, the map and the
   save screens reach the sides, as does the dimmed panel behind a message. Every page of the pause menu does, not only the first one shoulder buttons
   page away from. The Konami logo and the title's misty castle show more of their own picture at the sides, without
   stretching. Turn it off in the menu (Graphics) for the original 4:3 picture. For a 16:10 screen choose 16:10
@@ -200,6 +226,9 @@ key or L3 + R3 closes it.
   at the right as Hector enters a new area, goes to the screen's right edge with them, all of it as one: the crest,
   the name, the line, and the red flame that burns the card away. Menus, the map and story
   scenes stay as they are.
+- **Movies Without Bars** - The story's movies drawn as large as the screen shows their picture whole, at its own
+  shape, rather than squashed into the 4:3 frame between black bars (`movie_view`: 1 Fit, 2 Fill, 0 Original), from an
+  [HD movie pack](#hd-movies) when there is one (`hd_movies`).
 - **No Overscan Streaks** - The rows a TV's overscan used to hide at the top and bottom of the picture no longer
   smear; the frame fills the screen.
 - **HDR** - On a display with HDR on in Windows (Settings > System > Display > Use HDR), the game sends an HDR picture
@@ -426,7 +455,8 @@ Changes this game needed beyond the generated config:
   texture had them, which no texture of this game does); multisampled draws (2X, 4X) on the hardware's smaller
   grid, which puts Hector's 4X stencil
   shadow volume back in place (found by Neguchads). The SDK's mixer plays every channel of a voice by itself now
-  (cutscene audio is a 5.1 stream with the voices in the centre channel).
+  (cutscene audio is a 5.1 stream with the voices in the centre channel). `kernel::g_file_opened`, a game's hook on
+  each file the title opens; a replacement uploaded into the texture of the one before it when it has its size.
 - Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll`, which the exe builds on the
   player's PC on its first start (the SDK's `runtime\app\game_code.cpp`, behind a progress window) from their own
   `default.xbe`. A DLL whose stamp does not match the exe and xbe is built again.
@@ -458,6 +488,16 @@ Changes this game needed beyond the generated config:
   view screen matrices and the clip data objects are culled against; with widescreen on, the clip data's x scale
   (`0x012FC500`, `0x012FC5C0`, `0x012FC640`, `0x012FC660`) is made 3/4, so objects in the wider view are drawn
   instead of popping in at the edges. The matrices the scene is drawn with are untouched.
+- `src\common\movies.cpp`: HD movies. The game decodes its XMV movies itself, each frame into a 640x480 linear
+  A8R8G8B8 texture it draws over the frame as one quad, reading its rows -17 to 497 over the 480 (a PS2 TV's
+  overscan), so the picture is squashed to 94% of its height. The SDK patch's `kernel::g_file_opened` names the movie
+  as the title opens `movie\stXX_YY.xmv`. Each frame uploaded is matched to the original's frames by a 16x12 grey
+  thumbnail (40x40 blocks' means, made zero mean and unit length, correlated from a frame back to a second and a half
+  on, else across the movie), and its replacement (`Extension::Replace`) is that frame of the HD video, decoded by
+  Media Foundation on the graphics card a few frames ahead and placed in the middle of a frame of the game's shape;
+  the SDK patch uploads each into the texture of the one before it. `widescreen.cpp` scales the quad about the
+  screen's middle so the picture fills the screen at its own shape. The log ends each movie with how many of its
+  frames came from the HD video.
 - `src\common\widescreen.cpp`, a renderer extension:
   - Widescreen. The game projects with a PS2 style view screen matrix (`c68`, or `c85` with the world matrix) and
     maps PS2 screen space to console pixels with `c94`/`c95`. Each draw into the back buffer is squeezed to 3/4 of its

@@ -366,6 +366,7 @@ struct Files {
     fs::path textures;
     size_t pictures = 0;      // .png and .dds in textures and the folders inside it
     bool ps2_buttons = false;  // the PS2's button icons among them (texpack.cpp, the PS2 button layout)
+    bool movies = false;       // a movie pack beside the game: movies\movies.toml (movies.cpp)
     fs::path logo;             // the title logo among them, for the home page
 
     void Scan() {
@@ -387,6 +388,10 @@ struct Files {
                                      name.rfind(L"fe15d42446e1b4e5-5623c99b0b0ecf41-", 0) == 0))
                     logo = it->path();
             }
+        }
+        {
+            std::error_code ec;
+            movies = fs::is_regular_file(ExeDir() / "movies" / "movies.toml", ec);
         }
         assets = FindAssets();
         xbe = Release::Missing;
@@ -652,6 +657,8 @@ struct Settings {
     uint32_t fog_distance = 100;        // percent of the game's fog distance, 0 none (game/view.cpp)
     bool hud_edges = true;              // widescreen: the HUD at the screen's corners (widescreen.cpp)
     bool menu_spread = true;            // widescreen: the pause menu's columns toward the sides (widescreen.cpp)
+    bool hd_movies = true;              // a movie pack's HD movies (movies.cpp)
+    uint32_t movie_view = 1;            // 0 the game's 4:3 frame, 1 fit, 2 fill (movies.cpp)
     uint32_t antialiasing = 1;          // 0 off, 1 AMD FSR, 2 NVIDIA DLSS (menu.cpp, the SDK's renderer)
     uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
     uint32_t sharpening = 30;           // percent, AMD FSR's
@@ -698,6 +705,8 @@ struct Settings {
         fog_distance = rest["fog_distance"].value_or(fog_distance);
         hud_edges = rest["hud_edges"].value_or(hud_edges);
         menu_spread = rest["menu_spread"].value_or(menu_spread);
+        hd_movies = rest["hd_movies"].value_or(hd_movies);
+        movie_view = std::min(rest["movie_view"].value_or(movie_view), 2u);
         antialiasing = std::min(rest["antialiasing"].value_or(antialiasing), 2u);
         upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
         sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
@@ -737,6 +746,8 @@ struct Settings {
         rest.insert_or_assign("fog_distance", int64_t(fog_distance));
         rest.insert_or_assign("hud_edges", hud_edges);
         rest.insert_or_assign("menu_spread", menu_spread);
+        rest.insert_or_assign("hd_movies", hd_movies);
+        rest.insert_or_assign("movie_view", int64_t(movie_view));
         rest.insert_or_assign("antialiasing", int64_t(antialiasing));
         rest.insert_or_assign("upscaling", int64_t(upscaling));
         rest.insert_or_assign("sharpening", int64_t(sharpening));
@@ -1679,7 +1690,7 @@ private:
                std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
                std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
                std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + "|" +
-               std::to_string(s.sharpening);
+               std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view);
     }
 
     void AutoSave() {
@@ -2208,6 +2219,22 @@ private:
         ToggleRight("menuspread", settings_.menu_spread);
         EndOff();
         if (narrow) ControlNote(kAmber, T("Needs widescreen on."));
+        EndSetting();
+        EndCard();
+
+        Section(T("MOVIES"));
+        BeginCard("movies");
+        BeginSetting(T("HD movies"), T("The story's movies from an HD movie pack in the movies folder. Off plays the "
+                                       "game's own."),
+                     true);
+        ToggleRight("hdmovies", settings_.hd_movies);
+        ControlNote(files_.movies ? kMuted : kAmber,
+                    files_.movies ? T("Movie pack found in the movies folder.") : T("No movie pack in the movies folder."));
+        EndSetting();
+        BeginSetting(T("Movie size"), T("Fit: the picture as large as the screen shows it whole, without the black bars. "
+                                        "Fill: the whole screen, a little of the picture's top and bottom cut off. "
+                                        "Original: the game's own 4:3 frame."));
+        Segmented<uint32_t>("movieview", settings_.movie_view, {1, 2, 0}, {T("Fit"), T("Fill"), T("Original")});
         EndSetting();
         EndCard();
 

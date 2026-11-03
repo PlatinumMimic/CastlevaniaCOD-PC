@@ -4,7 +4,8 @@
 // 3/4 of its width around the centre, so nothing is stretched (16:10, widescreen_aspect: shown 16:10, squeezed to 5/6). The game projects with a PS2 style view screen matrix
 // (c68..c71, or c85..c88 with the world matrix in it) into PS2 screen space, which c94 and c95 then scale to console
 // pixels. Squeezing a projected draw is the same as narrowing the camera's focal length, so the 3D view shows more
-// at the sides (Hor+). 2D draws (HUD, menus, text, backdrops, movies) keep their 4:3 shape in the middle. Draws over
+// at the sides (Hor+). 2D draws (HUD, menus, text, backdrops, movies) keep their 4:3 shape in the middle, a movie's
+// frame drawn larger about it as movie_view says (movies.cpp). Draws over
 // the whole width that are no picture of their own stay whole: fades and tints, panels whose texture does not change
 // across them (a message's dimmed panel), and passes that draw the frame itself back (which already holds the
 // squeezed scene).
@@ -74,6 +75,12 @@ std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);       
 bool TexturePackCensus();                                                                // texpack.cpp
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive);            // texpack.cpp
 void TexturePackCensusFlush();                                                           // texpack.cpp
+// the game's movies (movies.cpp): their frames from a movie pack's HD versions, and drawn larger
+void MoviesFrame(uint64_t presents);
+uint64_t MoviesReplace(const gpu::TextureDesc& d, const uint8_t* guest);
+bool MoviesOwn(uint64_t id);
+std::shared_ptr<const gpu::Replacement> MoviesReplaced(uint64_t id);
+bool MoviesScale(const gpu::TextureDesc& d, float squeeze, float qx, float qy, float& sx, float& sy);
 
 // the skies of kSky with their room's own fog (Backdrop): off unless CV_BACKDROPS=1. It was made for the rampart's
 // strips showing as hard-edged cards, which were their scrolled texture clamped rather than wrapped (the SDK's
@@ -272,6 +279,7 @@ public:
             hud_free_ = card_free_ && !(SceneWord() & 0x20000);
             HudPieces();
             if (TexturePackCensus() && frame_ % 300 == 0) TexturePackCensusFlush();
+            MoviesFrame(frame_);
         }
         return false;
     }
@@ -290,12 +298,15 @@ public:
         d_.sampled = true;
     }
 
-    // HD texture packs (texpack.cpp)
+    // a movie's frames (movies.cpp), else HD texture packs (texpack.cpp)
     uint64_t Replace(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette) override {
         if (guest) names_[d.data] = Name(d, guest);
+        if (uint64_t id = MoviesReplace(d, guest)) return id;
         return TexturePackReplace(d, guest, palette);
     }
-    std::shared_ptr<const gpu::Replacement> Replaced(uint64_t id) override { return TexturePackReplaced(id); }
+    std::shared_ptr<const gpu::Replacement> Replaced(uint64_t id) override {
+        return MoviesOwn(id) ? MoviesReplaced(id) : TexturePackReplaced(id);
+    }
 
     // the 3D world drawn into the frame takes anti-aliasing's sub-pixel offset (the SDK's Jitter); its 2D, the HUD,
     // menus and the frame pass, never
@@ -406,6 +417,19 @@ public:
         ext[1] = menu.strip ? menu.left : back_buffer_ && d_.target ? d_.stretch : 1.0f;
         ext[2] = sides ? 2.0f : edges ? 1.0f : menu.strip ? 3.0f : 0.0f;
         ext[3] = sides ? (d_.u.lo + d_.u.hi) * 0.5f : menu.strip ? menu.right : shift;
+        // a movie's frame (movies.cpp), its picture larger about the screen's middle at its own shape, its bars off
+        // the screen. The quad's pixels a texel across and down: the game reads its frame's rows -17 to 497 over the
+        // frame's 480, squashing it
+        float mx, my;
+        auto per = [](const Span& px, const Span& tex) {
+            float k = !px.Empty() && !tex.Empty() && tex.hi > tex.lo ? (px.hi - px.lo) / (tex.hi - tex.lo) : 1.0f;
+            return k > 0.8f && k < 1.25f ? k : 1.0f;
+        };
+        if (back_buffer_ && d_.whole && d_.textured && d_.sampled && !d_.target && !sides && !edges && !menu.strip &&
+            MoviesScale(d_.tex, squeeze ? Squeeze() : 1.0f, per(d_.x, d_.box_u), per(d_.y, d_.box_v), mx, my)) {
+            ext[0] *= mx;
+            ext[1] *= my;
+        }
         if (Backdrop(vsc)) ext[0] = ext[1] = 0;  // not drawn: every vertex at the centre
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
         // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)

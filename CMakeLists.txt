@@ -46,6 +46,8 @@ add_xbe_image(Castlevania default.xbe game.toml ${GAME_PARTITIONS} game)
 set_property(TARGET Castlevania_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:Castlevania>)
 
 target_include_directories(Castlevania SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
+# movies.cpp: Windows' video decoding, for a movie pack's HD movies
+target_link_libraries(Castlevania PRIVATE mfplat mfreadwrite mfuuid d3d11)
 # the exe names its debug symbols by file name only, not the folder it was built in
 target_link_options(Castlevania PRIVATE -Wl,/pdbaltpath:%_PDB%)
 

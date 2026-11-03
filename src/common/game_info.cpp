@@ -23,6 +23,8 @@ extern uint32_t g_draw_distance;              // menu.cpp, read by game/view.cpp
 extern uint32_t g_fog_distance;               // menu.cpp, read by game/view.cpp
 extern bool g_hud_edges;                      // menu.cpp, read by widescreen.cpp
 extern bool g_menu_spread;                    // widescreen.cpp
+extern bool g_hd_movies;                      // movies.cpp
+extern uint32_t g_movie_view;                 // movies.cpp
 extern uint32_t g_surface_depth;              // menu.cpp, read by the SDK's renderer (gpu::g_surface_depth)
 extern uint32_t g_antialias;                  // menu.cpp, read by the SDK's renderer (gpu::g_antialias)
 extern uint32_t g_upscale;                    // menu.cpp, read by the SDK's renderer (gpu::g_upscale)
@@ -57,6 +59,8 @@ const app::GameInfo app::kGame = {
                 {"fog_distance", nullptr, &g_fog_distance},
                 {"hud_edges", &g_hud_edges, nullptr},
                 {"menu_spread", &g_menu_spread, nullptr},
+                {"hd_movies", &g_hd_movies, nullptr},
+                {"movie_view", nullptr, &g_movie_view},
                 {"surface_depth", nullptr, &g_surface_depth},
                 {"antialiasing", nullptr, &g_antialias},
                 {"upscaling", nullptr, &g_upscale},
