@@ -1,5 +1,5 @@
 diff --git a/cmake/XbeRecomp.cmake b/cmake/XbeRecomp.cmake
-index 22e033f..a7fbb94 100644
+index 22e033f..b6e10a8 100644
 --- a/cmake/XbeRecomp.cmake
 +++ b/cmake/XbeRecomp.cmake
 @@ -22,6 +22,11 @@ set(SDL_GPU OFF CACHE BOOL "" FORCE)
@@ -116,7 +116,7 @@ index 22e033f..a7fbb94 100644
          COMMAND ${CMAKE_COMMAND} -E touch ${GEN}/codegen.stamp
          DEPENDS xbe_recomp ${configs} ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe}
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-@@ -107,34 +159,113 @@ function(add_xbe_image target xbe config partitions game_dir)
+@@ -107,34 +159,116 @@ function(add_xbe_image target xbe config partitions game_dir)
      set(xbe_file ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe})
      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${xbe_file})
      file(SHA1 ${xbe_file} xbe_sha1)
@@ -207,11 +207,14 @@ index 22e033f..a7fbb94 100644
 +        target_compile_options(${target}_code PRIVATE -O2 -march=x86-64-v2 -fno-strict-aliasing -nostdinc -nostdinc++ -w)
 +        # the names the executable overrides, from its exports once linked: global in the library's version script,
 +        # so they bind to the executable's, and every other name is local (cmake/xbe_hooks.cmake)
-+        add_dependencies(${target}_code ${target})
-+        add_custom_command(TARGET ${target} POST_BUILD
++        # (<target>_hooks: a release builds it for the list it ships)
++        add_custom_command(OUTPUT ${GEN}/code.map BYPRODUCTS ${XBE_COMPILER_DIR}/${target}.hooks
 +            COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DEXE=$<TARGET_FILE:${target}>
 +                    -DHOOKS=${XBE_COMPILER_DIR}/${target}.hooks -DMAP=${GEN}/code.map -P ${XBE_SDK_DIR}/cmake/xbe_hooks.cmake
++            DEPENDS ${target} ${XBE_SDK_DIR}/cmake/xbe_hooks.cmake
 +            VERBATIM)
++        add_custom_target(${target}_hooks DEPENDS ${GEN}/code.map)
++        add_dependencies(${target}_code ${target}_hooks)
 +        set_target_properties(${target}_code PROPERTIES LINK_DEPENDS ${GEN}/code.map)
 +        target_link_options(${target}_code PRIVATE -fuse-ld=lld -nostdlib -Wl,--version-script=${GEN}/code.map
 +            -Wl,--undefined-version)  # the executable overrides names this image may not have
@@ -248,10 +251,10 @@ index 22e033f..a7fbb94 100644
 +endfunction()
 diff --git a/cmake/xbe_hooks.cmake b/cmake/xbe_hooks.cmake
 new file mode 100644
-index 0000000..6872bbb
+index 0000000..a683533
 --- /dev/null
 +++ b/cmake/xbe_hooks.cmake
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,24 @@
 +# Linux: the functions an executable overrides, from its exported names, and the game code library's version script
 +# with them. Global in the library, a name binds to the executable's as the library is loaded; every other one is
 +# local, so the library calls its own bodies directly. A release ships the list beside its compiler (HOOKS), which the
@@ -275,9 +278,7 @@ index 0000000..6872bbb
 +set(map "{\n  global:\n    X86FuncMappings; X86Continuations; X86CodeBase; X86CodeEnd; X86ImageBase; X86ImageEnd;\n")
 +string(APPEND map "    X86EntryPoint; X86KernelThunk; __imp__sub_*;\n    ${globals}\n  local: *;\n};\n")
 +string(REPLACE "    \n" "" map "${map}")
-+file(WRITE ${MAP}.tmp "${map}")
-+file(COPY_FILE ${MAP}.tmp ${MAP} ONLY_IF_DIFFERENT)
-+file(REMOVE ${MAP}.tmp)
++file(WRITE ${MAP} "${map}")  # written each time: the build's step for it is done once it is newer than the executable
 diff --git a/harness/build.sh b/harness/build.sh
 index 15f8ab1..5379649 100644
 --- a/harness/build.sh
@@ -413,14 +414,15 @@ index 0582ed9..08f503e 100644
  }  // namespace app
 +#endif
 diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
-index 4570d3b..37ad7ce 100644
+index 4570d3b..5945172 100644
 --- a/runtime/app/game_files.cpp
 +++ b/runtime/app/game_files.cpp
-@@ -7,8 +7,15 @@
+@@ -7,8 +7,16 @@
  #define NOMINMAX
  #endif
  #include <windows.h>
 +#ifndef _WIN32
++#include <signal.h>
 +#include <spawn.h>
 +#include <sys/wait.h>
 +extern char** environ;
@@ -432,7 +434,7 @@ index 4570d3b..37ad7ce 100644
  #include <cwctype>
  #include <fstream>
  
-@@ -19,6 +26,8 @@
+@@ -19,6 +27,8 @@
  #include "kernel/disc.h"
  
  extern const char kImageSha1[];  // the xbe recompiled into this executable, written by CMake
@@ -441,7 +443,7 @@ index 4570d3b..37ad7ce 100644
  
  namespace app {
  
-@@ -26,6 +35,79 @@ namespace {
+@@ -26,6 +36,85 @@ namespace {
  
  namespace fs = std::filesystem;
  
@@ -491,6 +493,12 @@ index 4570d3b..37ad7ce 100644
 +    }
 +    LOGR("Game: another release's, handed to %s", release.exe);
 +    logx::Flush();
++    // asked to end (a desktop or Steam closing the game it started): that release is asked to, as it plays the game
++    static pid_t child = 0;
++    child = pid;
++    struct sigaction pass{};
++    pass.sa_handler = [](int sig) { kill(child, sig); };
++    for (int sig : {SIGTERM, SIGINT, SIGHUP}) sigaction(sig, &pass, nullptr);
 +    int status = 0;
 +    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
 +    }
@@ -521,7 +529,7 @@ index 4570d3b..37ad7ce 100644
  // assets beside the exe or in any folder above it (the build output)
  fs::path FindAssets() {
      auto dir = ExeDir();
-@@ -73,19 +155,28 @@ bool FindGame(GameFiles& game) {
+@@ -73,19 +162,28 @@ bool FindGame(GameFiles& game) {
          }
      std::sort(isos.begin(), isos.end());
  
@@ -553,7 +561,7 @@ index 4570d3b..37ad7ce 100644
          if (other_name.empty()) {
              other = {assets, std::move(xbe)};
              other_disc = std::move(disc);
-@@ -110,6 +201,7 @@ bool FindGame(GameFiles& game) {
+@@ -110,6 +208,7 @@ bool FindGame(GameFiles& game) {
          if (consider(iso, std::move(xbe), std::move(disc))) return true;
      }
  
@@ -2374,10 +2382,10 @@ index 0000000..dcfa32b
 +#include <vkd3d_dxgiformat.h>
 diff --git a/runtime/linux/game_code.cpp b/runtime/linux/game_code.cpp
 new file mode 100644
-index 0000000..8c7f65f
+index 0000000..ff5aebd
 --- /dev/null
 +++ b/runtime/linux/game_code.cpp
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,718 @@
 +// Linux: the recompiled game code built on the player's PC (app/game_code.cpp's, on Windows). xbe_recomp translates
 +// each xbe of GameInfo::images to C++, clang compiles that and ld.lld links it into <exe>.so beside the executables,
 +// all from the compiler folder: the library has no C runtime of its own, and the names the executable overrides
@@ -3033,7 +3041,8 @@ index 0000000..8c7f65f
 +                    const SDL_MessageBoxButtonData buttons[] = {
 +                        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes"},
 +                        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No"}};
-+                    SDL_MessageBoxData data{SDL_MESSAGEBOX_INFORMATION, window, linuxapp::Utf8(kGame.title).c_str(),
++                    std::string title = linuxapp::Utf8(kGame.title);
++                    SDL_MessageBoxData data{SDL_MESSAGEBOX_INFORMATION, window, title.c_str(),
 +                                            "Stop preparing the game? What is done so far is kept, and the next start "
 +                                            "carries on.",
 +                                            2, buttons, nullptr};
@@ -5211,6 +5220,16 @@ index b322778..105d14f 100644
  BUFFER(SetFilter, 2) { return 0; }
  BUFFER(SetHeadroom, 2) {
      v.headroom = Db(-int32_t(a[1]));
+diff --git a/runtime/xdk/dsp_image.h b/runtime/xdk/dsp_image.h
+index 5c4ef5c..2445356 100644
+--- a/runtime/xdk/dsp_image.h
++++ b/runtime/xdk/dsp_image.h
+@@ -1,4 +1,5 @@
+ #pragma once
++#include <cstddef>
+ #include <cstdint>
+ #include <vector>
+ 
 diff --git a/tools/recomp/codegen_emit.cpp b/tools/recomp/codegen_emit.cpp
 index dadfc8e..8ff7df0 100644
 --- a/tools/recomp/codegen_emit.cpp

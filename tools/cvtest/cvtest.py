@@ -227,14 +227,18 @@ else:
     XVFB = None
 
     def display():
-        """the run's own X display, started once"""
+        """the run's own X display, started once on the first number from 90 no X server has, stopped with this
+        process"""
         global XVFB
         if XVFB is None:
-            n = 90 + os.getpid() % 9
+            import atexit
+            n = next(i for i in range(90, 200) if not Path(f"/tmp/.X11-unix/X{i}").exists()
+                     and not Path(f"/tmp/.X{i}-lock").exists())
             XVFB = subprocess.Popen(["Xvfb", f":{n}", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            atexit.register(XVFB.terminate)
             os.environ["DISPLAY"] = f":{n}"
-            for _ in range(50):
+            for _ in range(100):
                 if subprocess.run(["xdotool", "getdisplaygeometry"], capture_output=True).returncode == 0:
                     break
                 time.sleep(0.1)
@@ -297,7 +301,14 @@ else:
         subprocess.run(["xdotool", "windowfocus", "--sync", str(win), "key", "Return"], capture_output=True)
 
     def close_window(proc, win):
-        proc.terminate()  # SIGTERM: SDL's quit, the game ends as it does closed (runtime/linux/main.cpp)
+        # SIGTERM: SDL's quit, the game ends as it does closed (runtime/linux/main.cpp); to another release's
+        # executable it handed the game to as well
+        import signal
+        for pid in sorted(family(proc.pid), reverse=True):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
 
 
 def write_png(path, w, h, bgra):
@@ -423,7 +434,10 @@ class Game:
         self.log_pos = 0
         env = dict(os.environ if env is None else env, CV_PAD_LIVE=str(self.live))
         if LINUX:
+            # on the run's own X display, never the desktop's (WSLg's Wayland, a session's)
             env["DISPLAY"] = display()
+            env["SDL_VIDEO_DRIVER"] = "x11"
+            env.pop("WAYLAND_DISPLAY", None)
         env.pop("CV_PAD_SCRIPT", None)
         if scenario.get("perf"):
             env["XBE_PERF"] = "1"

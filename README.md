@@ -1,7 +1,8 @@
 ﻿# Castlevania: Curse of Darkness - XBE Recomp
 
 An unofficial native PC port of the original Xbox version of Castlevania: Curse of Darkness, statically recompiled
-into a 64 bit Windows executable. Rendering runs on Direct3D 12 and sound on XAudio2.
+into 64 bit executables for Windows and Linux. Rendering runs on Direct3D 12 (on Linux, through vkd3d on Vulkan) and
+sound on XAudio2 (on Linux, through SDL).
 
 **Thanks to Calm-Consideration41** (PlatinumMimic, who also made the
 [Castlevania PS2 4K texture packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs)) for the
@@ -37,6 +38,10 @@ Every project used is listed under [Credits](#credits).
 
 On top of Pazzi7054's port:
 
+- **Linux** - a native Linux build of the game and the launcher, with everything below, as a download of its own
+  beside the Windows one. The same Direct3D 12 renderer draws through [vkd3d](https://gitlab.winehq.org/wine/vkd3d)
+  on Vulkan, in an SDL window (X11 or Wayland), and the first start builds the game code from your copy as on Windows.
+  See [Linux](#linux).
 - **Plays from any copy of the USA disc** - an `.iso` (an xiso, or a whole disc dump of either disc layout) or the
   extracted files. Copies whose xbe header was patched for a hard disk loader or another region play too, and the
   launcher tells which of your copies will.
@@ -117,6 +122,21 @@ On a freshly installed Windows there is nothing to download besides the release 
 - `CastlevaniaLauncher.exe` has every setting and checks your game files; `Castlevania.exe` skips it.
 - The game can run from the extracted files in `assets`, or from an ISO of the disc placed in `assets`.
 - Recomp settings can be adjusted in `castlevania.toml` beside the exe. Saves go to `hdd\E\UDATA\4b4e002d`.
+
+### Linux
+1. Download the `-linux.tar.xz` of the latest release from
+   [Releases](https://github.com/jmafort/CastlevaniaCOD-PC/releases) and extract it anywhere you can write to, your
+   home folder for one (`tar xf CastlevaniaCOD-PC-<version>-linux.tar.xz`).
+2. Run `./Castlevania` in the `CastlevaniaCOD-PC` folder (or double-click it). The `assets` folder opens.
+3. Put your game in it, as on Windows: an `.iso` of your own disc, or the extracted disc.
+4. Run `./Castlevania` again. The first start builds the game code into `Castlevania.so` with the recompiler, Clang
+   and LLD in the `compiler` folder (LLVM's own Linux build), which takes a few minutes or less and shows its
+   progress; press **Start** when it is done.
+
+`./CastlevaniaLauncher` has every setting, in the same pages and seven languages as on Windows. `lib` holds vkd3d,
+which draws the game's Direct3D 12 with Vulkan; `fonts` the launcher's fonts (TeX Gyre Pagella for its Palatino, and
+Material Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs installing besides a Vulkan driver
+(see [To Play on Linux](#to-play-on-linux)), and no root.
 
 ### Windows or Antivirus Warnings
 
@@ -324,6 +344,16 @@ Everything else comes in the zip or with Windows. The zip has the Visual C++ run
 with; Direct3D 12, the shader compiler (`d3dcompiler_47.dll`), XAudio2 and the C runtime (UCRT) are part of
 Windows 10 and 11. Playing needs no internet connection, the first start neither.
 
+### To Play on Linux
+- **Linux**, 64-bit, with glibc 2.35 or later (Ubuntu 22.04 or later, Debian 12, Fedora, Arch, SteamOS and the like),
+  on X11 or Wayland.
+- **GPU** with a Vulkan driver: your distribution's Mesa drivers for AMD and Intel, or NVIDIA's own. The same graphics
+  as on Windows run it (NVIDIA GeForce 600 series, AMD Radeon HD 7700, Intel HD 4200 and newer).
+- **CPU** with SSE4.2 and POPCNT (x86-64-v2), as on Windows.
+- **Disk**: about 0.5 GB for the release (its compiler folder is most of it, and the ready page can delete it), and
+  0.2 GB more once the first start has built the game code, besides your game.
+- The C++ runtime (`libstdc++.so.6` of GCC 12 or later) and `libz.so.1`, which every desktop Linux has.
+
 ### To Build
 On a fresh Windows, install:
 
@@ -350,6 +380,8 @@ Only for the tests in `tools\cvtest` (see [Testing](#testing)):
   `--judge=jev-latest`: a TypeSafe API key.
 
 ## Building
+
+On Linux, see [Building on Linux](#building-on-linux).
 
 ### 1. Install the Tools
 See [To Build](#to-build).
@@ -386,6 +418,35 @@ launcher, built in `out\build\package` (the `package` preset: no icon, and no DL
 folder the exe's first start builds the game code with on the player's PC (without its `work` folder; both releases'
 configs and import libraries), and the Visual C++ runtime. It checks that nothing of the game went into the package. `tools\cvtest\install.py` then tests the zip as
 a player would install it (see Testing).
+
+### Building on Linux
+With Clang, LLD, CMake 3.25 or later, Ninja and the headers SDL needs for X11, Wayland and sound (on Ubuntu:
+`clang lld cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev
+libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libpipewire-0.3-dev
+libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libvulkan-dev spirv-headers libjson-perl bison flex`):
+
+1. Build [vkd3d](https://dl.winehq.org/vkd3d/source/) 2.1 into a folder of its own:
+   `./configure --prefix=$HOME/vkd3d --disable-tests --disable-demos && make && make install`.
+2. Clone this repository and the SDK beside it and apply the SDK patch, as above.
+3. Put the game in `assets` (extracted; `default.xbe` must be there), as above.
+4. `cmake -S CastlevaniaCOD-PC -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang
+   -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2
+   -DXBE_VKD3D_DIR=$HOME/vkd3d`, then `ninja -C build Castlevania Castlevania_code CastlevaniaLauncher`. The generated
+   code goes to `build/generated`, so a Windows build of the same checkout keeps its own. `Castlevania.so` is linked
+   beside `Castlevania` with the game code; the game finds `assets` in a folder above it, or link one into `build`.
+
+`tools/linux/release.sh 1.0.0` makes `out/release/CastlevaniaCOD-PC-1.0.0-linux.tar.xz` in a
+[Podman](https://podman.io) container of Ubuntu 22.04 (`tools/linux/Containerfile`), so the release runs on glibc 2.35
+and later: both executables and the launcher without the game code, vkd3d's libraries in `lib`, the `compiler` folder
+with LLVM's own Linux Clang and LLD, and the fonts. It checks that nothing of the game went into the package, as
+`release.bat` does. `tools/cvtest/install.py` tests the archive as a player would install it, from Linux or WSL.
+
+The Linux build is the Windows one's code: `runtime/linux` in the SDK has the Win32, D3D12 and DXGI names the shared
+sources use (over vkd3d's headers), a swap chain of Vulkan images the renderer draws into and a blit presents, the
+window and main loop on SDL, SDL's sound, PNG and BC pictures (stb), and the first start's build. The game code is a
+library linked without a C runtime, as on Windows: the recompiler writes `x86_host_stubs.cpp`, through which the
+executable reaches the library's bodies, and the link's version script keeps global only the names the executable
+overrides (`cmake/xbe_hooks.cmake`, the list in `compiler/<exe>.hooks`).
 
 ## Port Notes
 
@@ -560,6 +621,9 @@ Changes this game needed beyond the generated config:
 
 ## Known Issues
 - Only the first areas have been tested so far, in both releases.
+- Linux has been tested in WSL (Ubuntu 26.04) only, where Vulkan draws on the processor (llvmpipe): there the game
+  plays the new game test from the title to the first courtyard in both releases, at 6 to 8 frames per second. It has
+  not been tried on a real graphics card yet.
 - With the fog pushed out or off, or Far View on, some rooms' skies show the edges of the painted cards they are
   made of. The Abandoned Castle's rampart keeps its sky as the game shows it; a fix for the other rooms is being
   worked on.
@@ -607,6 +671,9 @@ The source in this repository is released under the [GNU General Public License 
   and PlatinumMimic, Calm-Consideration41
   ([4K Texture Packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs)).
 - [LLVM](https://llvm.org) for Clang and LLD, which releases bundle to build the game code on the player's PC.
+- [vkd3d](https://gitlab.winehq.org/wine/vkd3d) (LGPL 2.1), which draws the game's Direct3D 12 with Vulkan on Linux;
+  [stb](https://github.com/nothings/stb) for PNG files there; [Material Icons](https://github.com/google/material-design-icons)
+  and [TeX Gyre Pagella](https://www.gust.org.pl/projects/e-foundry/tex-gyre/pagella) for the Linux launcher.
 - [xxHash](https://github.com/Cyan4973/xxHash) for hashing textures, and [PCSX2](https://pcsx2.net) for the texture
   pack naming its replacement pictures follow.
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), the model `tools\texpack\upscale.py` makes HD pictures with

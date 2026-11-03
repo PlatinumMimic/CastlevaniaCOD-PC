@@ -2,6 +2,9 @@
 nothing but Windows.
 
 usage: python -I tools/cvtest/install.py <release.zip> <game> [<scenario.json>] [--keep]
+On Linux (from WSL too) the release is the .tar.xz of tools/linux/release.sh, installed into /tmp; each ELF file's
+libraries are checked to be in lib beside it or a part of any desktop Linux, and none to want a glibc newer than the
+release's build machine has (2.35); the copy is linked into assets with a symbolic link.
 
 <game> is the player's copy: a disc image (.iso), or a folder with the extracted disc. The zip (release.bat's) is
 extracted into a new folder outside this repository, in TEMP: the game looks for assets and textures in the folders
@@ -19,6 +22,7 @@ import os
 import shutil
 import struct
 import sys
+import tarfile
 import tempfile
 import time
 import zipfile
@@ -124,6 +128,119 @@ def put_game(game, assets):
         place(game, assets / game.name)
 
 
+
+
+# --- Linux ------------------------------------------------------------------------------------------------------
+
+GLIBC_MAX = (2, 35)  # the release's build machine's (tools/linux/Containerfile)
+GLIBCXX_MAX = (3, 4, 30)  # GCC 12's C++ runtime, Ubuntu 22.04's, which LLVM's own clang wants too
+# what every desktop Linux has
+LINUX_BASE = ("libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "ld-linux-x86-64.so.2",
+              "libvulkan.so.1", "libz.so.1", "libstdc++.so.6", "libgcc_s.so.1")
+
+
+def elf_needs(path):
+    """an ELF file's needed libraries and the glibc versions it asks for; None when it is no ELF file"""
+    data = path.read_bytes()
+    if data[:4] != b"\x7fELF" or data[4] != 2:
+        return None
+    shoff, = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + i * shentsize) for i in range(shnum)]
+    def cstr(off):
+        return data[off:data.index(b"\0", off)].decode("ascii", "replace")
+    needed, glibc, glibcxx = [], [], []
+    for s in sections:
+        kind, link, offset, size = s[1], s[6], s[4], s[5]
+        strtab = sections[link][4] if link < len(sections) else 0
+        if kind == 6:  # SHT_DYNAMIC
+            for i in range(0, size, 16):
+                tag, val = struct.unpack_from("<qQ", data, offset + i)
+                if tag == 1:
+                    needed.append(cstr(strtab + val))
+        if kind == 0x6FFFFFFE:  # SHT_GNU_verneed
+            at = offset
+            while True:
+                _, cnt, _, aux, nxt = struct.unpack_from("<HHIII", data, at)
+                a = at + aux
+                for _ in range(cnt):
+                    _, _, _, name, anext = struct.unpack_from("<IHHII", data, a)
+                    v = cstr(strtab + name)
+                    if v.startswith("GLIBC_") and v[6:].replace(".", "").isdigit():
+                        glibc.append(tuple(int(x) for x in v[6:].split(".")))
+                    if v.startswith("GLIBCXX_") and v[8:].replace(".", "").isdigit():
+                        glibcxx.append(tuple(int(x) for x in v[8:].split(".")))
+                    a += anext
+                if not nxt:
+                    break
+                at += nxt
+    return needed, max(glibc) if glibc else None, max(glibcxx) if glibcxx else None
+
+
+def check_package_linux(pkg):
+    """each library an ELF file of the package needs: in lib beside the executables, or one every Linux has"""
+    errors, seen = [], 0
+    bundled = {f.name for f in (pkg / "lib").glob("*")}
+    for f in sorted(x for x in pkg.rglob("*") if x.is_file() and not x.is_symlink()):
+        found = elf_needs(f)
+        if found is None:
+            continue
+        seen += 1
+        needed, glibc, glibcxx = found
+        for lib in needed:
+            if lib in bundled or lib in LINUX_BASE:
+                continue
+            errors.append(f"{f.relative_to(pkg)} needs {lib}, which is neither in lib nor on every Linux")
+        if glibc and glibc > GLIBC_MAX:
+            errors.append(f"{f.relative_to(pkg)} wants glibc {'.'.join(map(str, glibc))}, newer than "
+                          f"{'.'.join(map(str, GLIBC_MAX))}")
+        if glibcxx and glibcxx > GLIBCXX_MAX:
+            errors.append(f"{f.relative_to(pkg)} wants libstdc++ {'.'.join(map(str, glibcxx))}, newer than "
+                          f"{'.'.join(map(str, GLIBCXX_MAX))}")
+    return {"step": "package", "label": f"package: {seen} programs and libraries load, glibc 2.35 and GCC 12's "
+                                        f"libstdc++ at most",
+            "ok": not errors, "errors": errors, "warnings": []}
+
+
+def check_contents_linux(pkg):
+    errors = [f"game file in the package: {p.relative_to(pkg)}" for p in pkg.rglob("*")
+              if p.suffix.lower() in (".xbe", ".iso", ".cpp", ".o") or p.name in ("Castlevania.so", "CastlevaniaEU.so")
+              or p.name.startswith("x86_recomp")]
+    for need in ("Castlevania", "CastlevaniaEU", "CastlevaniaLauncher", "compiler/xbe_recomp", "compiler/clang",
+                 "compiler/ld.lld", "compiler/config/game.toml", "compiler/config/game_eu.toml",
+                 "compiler/Castlevania.hooks", "compiler/CastlevaniaEU.hooks", "lib/libvkd3d.so.1",
+                 "lib/libvkd3d-shader.so.1", "lib/libvkd3d-utils.so.1", "fonts/MaterialIcons-Regular.ttf", "assets",
+                 "textures"):
+        if not (pkg / need).exists():
+            errors.append(f"missing from the package: {need}")
+    return {"step": "package", "label": "package: no game files, the first start's tools there", "ok": not errors,
+            "errors": errors, "warnings": []}
+
+
+def main_linux(release, game, scenario):
+    root = Path("/tmp") / f"cvtest-install-{time.strftime('%Y%m%d-%H%M%S')}"
+    with tarfile.open(release) as tf:
+        tf.extractall(root, filter="tar")
+    exes = list(root.rglob("Castlevania"))
+    exes = [e for e in exes if e.is_file()]
+    if len(exes) != 1:
+        print(f"{release} has {len(exes)} Castlevania")
+        return None, None
+    pkg = exes[0].parent
+    print(f"installed into {pkg}")
+    checks = [check_contents_linux(pkg), check_package_linux(pkg)]
+    if game.is_dir():
+        for e in game.iterdir():
+            (pkg / "assets" / e.name).symlink_to(e)
+    else:
+        (pkg / "assets" / game.name).symlink_to(game)
+    # a desktop session's own variables: no build tools' or this PC's XBE_ and CV_ settings
+    env = {k: os.environ[k] for k in ("HOME", "USER", "LANG", "XDG_RUNTIME_DIR", "PULSE_SERVER") if k in os.environ}
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    ok = cvtest.run(str(scenario), None, False, install=pkg, env=env, checks=checks)
+    return ok, root
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) < 2:
@@ -131,6 +248,15 @@ def main():
         return 2
     release, game = Path(args[0]).resolve(), Path(args[1]).resolve()
     scenario = Path(args[2]).resolve() if len(args) > 2 else Path(__file__).resolve().parent / "scenarios" / "newgame.json"
+    if cvtest.LINUX:
+        ok, root = main_linux(release, game, scenario)
+        if ok is None:
+            return 1
+        if ok and "--keep" not in sys.argv:
+            shutil.rmtree(root, ignore_errors=True)  # the symbolic link goes, the player's file stays
+        else:
+            print(f"kept: {root}")
+        return 0 if ok else 1
     root = Path(tempfile.gettempdir()).resolve() / f"cvtest-install-{time.strftime('%Y%m%d-%H%M%S')}"
     # the game's search for assets and textures goes up to six folders: none of this PC's on the way
     for up in list(root.parents)[:6]:

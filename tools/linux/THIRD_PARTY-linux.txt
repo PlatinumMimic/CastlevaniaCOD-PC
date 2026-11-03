@@ -1,0 +1,38 @@
+
+
+Third party software in the Linux release, besides the SDK's above
+
+
+vkd3d 2.1 (https://gitlab.winehq.org/wine/vkd3d), in lib/
+
+Direct3D 12 on Vulkan, unmodified, linked dynamically: libvkd3d.so.1, libvkd3d-shader.so.1 and libvkd3d-utils.so.1
+may be replaced by any compatible build of them. Its source: https://dl.winehq.org/vkd3d/source/vkd3d-2.1.tar.xz
+
+Copyright 2016-2026 the vkd3d project authors (see its AUTHORS file)
+
+This library is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General
+Public License as published by the Free Software Foundation; either version 2.1 of the License, or (at your option)
+any later version. This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+License (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html) for more details.
+
+
+stb_image and stb_image_write (https://github.com/nothings/stb)
+
+Public domain (or the MIT License, at your choice). Copyright (c) 2017 Sean Barrett.
+
+
+Material Icons (https://github.com/google/material-design-icons), fonts/MaterialIcons-Regular.ttf
+
+Licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright Google LLC.
+
+
+Clang and LLD (https://llvm.org), compiler/clang and compiler/ld.lld: the LLVM project's own Linux build, unmodified;
+Apache License 2.0 with LLVM Exceptions, see compiler/LLVM-LICENSE.txt.
+
+
+TeX Gyre Pagella (https://www.gust.org.pl/projects/e-foundry/tex-gyre/pagella), fonts/texgyrepagella-*.otf
+
+Copyright 2006-2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). Licensed under the GUST Font
+License, which follows.
+

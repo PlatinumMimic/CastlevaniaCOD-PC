@@ -1,0 +1,22 @@
+# The Linux release's build machine (tools/linux/release.sh): Ubuntu 22.04, so what it builds runs on glibc 2.35 and
+# later (Ubuntu 22.04 on, Debian 12, Fedora, Arch, SteamOS). Clang and LLD 21 from apt.llvm.org build it; the
+# Vulkan and SPIR-V headers are newer than 22.04's, for vkd3d; the X11, Wayland and sound headers are SDL's.
+FROM docker.io/library/ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg lsb-release software-properties-common wget git make pkg-config file patchelf \
+        python3 python3-pip perl libjson-perl bison flex xz-utils zstd \
+        libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
+        libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libgles-dev libdrm-dev \
+        libgbm-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libibus-1.0-dev \
+        libvulkan-dev libstdc++-12-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh && bash /tmp/llvm.sh 21 \
+    && apt-get install -y --no-install-recommends clang-21 lld-21 llvm-21 && rm -rf /var/lib/apt/lists/* /tmp/llvm.sh
+RUN python3 -m pip install --no-cache-dir cmake==3.31.6 ninja==1.11.1.4
+ENV CC=clang-21 CXX=clang++-21
+RUN git clone --depth 1 -b v1.4.335 https://github.com/KhronosGroup/Vulkan-Headers /tmp/vh \
+    && cmake -S /tmp/vh -B /tmp/vh/b -DCMAKE_INSTALL_PREFIX=/usr/local && cmake --install /tmp/vh/b \
+    && git clone --depth 1 -b vulkan-sdk-1.4.335.0 https://github.com/KhronosGroup/SPIRV-Headers /tmp/sh \
+    && cmake -S /tmp/sh -B /tmp/sh/b -DCMAKE_INSTALL_PREFIX=/usr/local && cmake --install /tmp/sh/b \
+    && rm -rf /tmp/vh /tmp/sh
