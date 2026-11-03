@@ -511,7 +511,18 @@ void KeyboardPad(int port, input::Pad& p) {
     bool both = (p.buttons & 0xC0) == 0xC0;
     if (both && !sticks) MenuToggle();
     sticks = both;
-    if (MenuOpen()) {
+    // the menu just closed from the controller (B, Start, L3 + R3): those buttons are not the game's, so it gets
+    // nothing until they are let go
+    static bool menu_was = false, hold = false;
+    bool menu = MenuOpen();
+    if (menu_was && !menu) hold = true;
+    menu_was = menu;
+    if (hold) {
+        bool any = (p.buttons & 0xFF) != 0;
+        for (uint8_t a : p.analog) any |= a > 0x40;
+        hold = any;
+    }
+    if (menu || hold) {
         // the menu has the keyboard and controller
         p = input::Pad{};
         p.connected = true;
