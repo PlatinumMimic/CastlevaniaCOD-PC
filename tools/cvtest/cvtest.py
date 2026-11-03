@@ -6,6 +6,7 @@ usage: python -I tools/cvtest/cvtest.py <scenario.json> [--build out/build/relea
                                         [--release eu]   the European release's executable (CastlevaniaEU)
        python -I tools/cvtest/cvtest.py --record <route> [--save <name>]    play, and keep it as routes/<route>.json
        python -I tools/cvtest/cvtest.py --make-route <telemetry.jsonl> <route>
+       python -I tools/cvtest/cvtest.py --session <session.json> [--results <file>] [--keep]
 
 A scenario is JSON:
   {"name": "...",
@@ -81,6 +82,11 @@ field the game did not report is None.
 Each step also fails when the game exits, a command does not finish in time, or the log has a new error or guest
 trap. On Linux CV_WAYLAND=1 plays on a headless Weston of the run's own instead of its X display (SDL's Wayland
 video): the steps go by the game state and log, as there are no screenshots there. The report (report.md, results.json, a screenshot per step) goes to out/test/<scenario>-<time>/.
+
+--session plays scenarios that come after the same one (a new game) in one game, that one once and each of the
+others after it in turn, each from the courtyard where a new game starts Hector, with its own report (run_session;
+suite.py makes the session files): {"name": "...", "release": "eu" or null, "parts": [{"name": "<test>",
+"scenario": "<scenario.json>", "set": {"<setting>": <value>}}, ...]}.
 
 --record starts the game as for play (the play folder's settings, keyboard and controllers; a fresh new game, or
 the saves of --save) with its state recorded (CV_TELEMETRY, src/common/telemetry.cpp). Once the game is closed the
@@ -1103,6 +1109,29 @@ def load(path):
     return scenario
 
 
+def skipped(scenario, install=None):
+    """why this PC does not play the scenario (another platform's, or no HD texture pack for one that needs it), or
+    None"""
+    here = "linux" if LINUX else "windows"
+    if scenario.get("platforms") and here not in scenario["platforms"]:
+        return f"it runs on {', '.join(scenario['platforms'])}"
+    textures = REPO / "textures"
+    if "textures" in scenario.get("needs", []) and not (install or any(textures.rglob("*.dds"))
+                                                      or any(textures.rglob("*.png"))):
+        return f"no HD texture pack in {textures}"
+    return None
+
+
+def end_game(game, results):
+    """the game closed; its crash dumps, if it left any, a failed row of results (and True)"""
+    game.close()
+    crash = game.folder / "CrashDumps"
+    dumps = [p.name for p in crash.glob("*")] if crash.exists() else []
+    if dumps:
+        results.append({"step": "end", "ok": False, "errors": ["crash dumps: " + ", ".join(dumps)], "warnings": []})
+    return bool(dumps)
+
+
 def run(scenario_path, build, keep, judge_model=None, review=None, overrides=None, install=None, env=None, checks=(),
         release=None):
     """install: a player's install to play in (install.py), env its environment, checks its results to report first;
@@ -1117,20 +1146,16 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
     if review:
         scenario["review"] = False if review == "none" else review
     name = scenario.get("name", Path(scenario_path).stem)
-    here = "linux" if LINUX else "windows"
-    if scenario.get("platforms") and here not in scenario["platforms"]:
-        print(f"{name}: skipped, it runs on {', '.join(scenario['platforms'])}")
-        return True
-    textures = REPO / "textures"
-    if "textures" in scenario.get("needs", []) and not (install or any(textures.rglob("*.dds")) or any(textures.rglob("*.png"))):
-        print(f"{name}: skipped, no HD texture pack in {textures}")
+    why = skipped(scenario, install)
+    if why:
+        print(f"{name}: skipped, {why}")
         return True
     out = REPO / "out" / "test" / f"{'install-' if install else ''}{name}-{time.strftime('%Y%m%d-%H%M%S')}"
     game = Game(build, install or out / "game", scenario, installed=bool(install), env=env)
     shots = out / "shots"
     shots.mkdir(parents=True)
     results = list(checks)
-    prev, failed = None, not all(c["ok"] for c in results)
+    failed = not all(c["ok"] for c in results)
     if install:  # the first start: the game code built, Start pressed, the game window up
         r = {"step": "start", "label": "first start", "ok": bool(game.hwnd), "errors": [], "warnings": []}
         if game.first_start is not None:
@@ -1141,10 +1166,31 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
             r["errors"].append(f"message box: {game.dialog}" if game.dialog else "no game window")
         results.append(r)
         failed |= not r["ok"]
+    print(f"{name}: {out}")
+    try:
+        if not game.hwnd:
+            if install:
+                return False  # the report, from finally, says why
+            raise RuntimeError("no game window" + (f": {game.dialog}" if game.dialog else ""))
+        failed |= not play_steps(game, scenario, settings, shots, {"prev": None, "runlog": []}, results)
+    finally:
+        failed |= end_game(game, results)
+        report(out, name, results, failed)
+        if not keep and not install:
+            for f in (game.exe + EXE, game.exe + CODE):
+                (game.folder / f).unlink(missing_ok=True)
+    print(f"{name}: {'FAILED' if failed else 'passed'} ({sum(r['ok'] for r in results)}/{len(results)} steps)")
+    return not failed
+
+
+def play_steps(game, scenario, settings, shots, run, results):
+    """plays the scenario's steps in the game, a row for each in results and their screenshots in shots; whether none
+    failed. run carries what a step sees of those before it, from one scenario to the next in a session: "prev" the
+    state after the last, "runlog" the game's log lines so far (without their times)"""
     places = {}  # sweep: where each room put Hector and the camera
-    runlog = []  # the game's log lines so far, without their times
     screens = {}  # each shot's screen, for later steps' shots["<shot>"]
-    judge_model, review = scenario.get("judge"), None
+    prev, runlog = run["prev"], run["runlog"]
+    judge_model, judge_key, review = scenario.get("judge"), None, None
     if judge_model or any("ask" in st for st in scenario["steps"]):
         sys.path.insert(0, str(Path(__file__).resolve().parent))  # judge.py beside this (python -I leaves it off)
         import judge
@@ -1153,166 +1199,332 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
         judge_key = judge.key() if judge_model.startswith("jev") else None
         # Jev screens every shot, a Codex model looks again at what it flags
         review = scenario.get("review", judge.LUNA) if judge_model.startswith("jev") else None
-    print(f"{name}: {out}")
-    try:
-        if not game.hwnd:
-            if install:
-                return False  # the report, from finally, says why
-            raise RuntimeError("no game window" + (f": {game.dialog}" if game.dialog else ""))
-        steps = scenario["steps"]
-        for i, step in enumerate(steps, 1):
-            if "sweep" in step:
-                rooms = sweep_steps(game, step["sweep"])
-                steps[i:i] = rooms  # played next
-                n = sum("sweep_room" in s for s in rooms)
-                results.append({"step": i, "label": f"sweep: {n} rooms", "ok": bool(rooms),
-                                "errors": [] if rooms else ["no rooms.json from the game"], "warnings": []})
-                print(f"  {i:3d} sweep of {n} rooms")
-                continue
-            label = step.get("shot") or step.get("note") or step.get("press") or step.get("until") or step.get("route")
-            r = {"step": i, "label": label, "errors": [], "warnings": []}
-            frame0 = prev.get("frame") if prev else None
-            started = time.time()
-            if "until" in step:
-                state, seconds, err = poll_until(game, step["until"], step.get("timeout", 60), step.get("poll"),
-                                                 step.get("poll_by", []), prev)
-            elif "route" in step:
-                route = json.loads((ROUTES / f"{step['route']}.json").read_text())
-                state, seconds, err, notes = play_route(game, route, step, prev,
-                                                        shots / f"{i:03d}_box" if step.get("box_shots") else None)
-                r["warnings"] += notes
-            else:
-                clicks = step.get("click", [])
-                clicks = [clicks] if isinstance(clicks, str) else clicks
-                # the checks a click step is played again for: those on the game state, the settings and the menu
-                state_checks = [e for e in step.get("expect", []) if not re.search(r"\b(screen|shots|window)\b", e)]
-                for attempt in range(3 if clicks else 1):
-                    click_errors = []
-                    for n, control in enumerate(clicks):
-                        if n:  # frames between clicks: a list opened by the click before draws its choices after
-                            game.play("0f:wait:4f")
-                        err = game.click(control)
-                        if err:
-                            click_errors.append(err)
-                    if not clicks:
-                        break
-                    state, seconds, err = game.play(step["press"])
-                    now = {"log": [], "runlog": runlog, "saved": saved_settings(game.folder), "window": None,
-                           "release": scenario.get("release") or "usa", "menu_controls": game.menu_controls()}
-                    if err or all(holds(e, state, prev, {}, {}, settings, screens, now)[0] for e in state_checks):
-                        break
-                    r["warnings"].append(f"clicked again: {', '.join(clicks)}")
-                r["errors"] += click_errors
-                held = step.get("keys")
-                if held:
-                    err = keys(game.hwnd, held, True)
+    failed = False
+    steps = list(scenario["steps"])  # a sweep's rooms go in after it
+    for i, step in enumerate(steps, 1):
+        if "sweep" in step:
+            rooms = sweep_steps(game, step["sweep"])
+            steps[i:i] = rooms  # played next
+            n = sum("sweep_room" in s for s in rooms)
+            results.append({"step": i, "label": f"sweep: {n} rooms", "ok": bool(rooms),
+                            "errors": [] if rooms else ["no rooms.json from the game"], "warnings": []})
+            print(f"  {i:3d} sweep of {n} rooms")
+            continue
+        label = step.get("shot") or step.get("note") or step.get("press") or step.get("until") or step.get("route")
+        r = {"step": i, "label": label, "errors": [], "warnings": []}
+        frame0 = prev.get("frame") if prev else None
+        started = time.time()
+        if "until" in step:
+            state, seconds, err = poll_until(game, step["until"], step.get("timeout", 60), step.get("poll"),
+                                             step.get("poll_by", []), prev)
+        elif "route" in step:
+            route = json.loads((ROUTES / f"{step['route']}.json").read_text())
+            state, seconds, err, notes = play_route(game, route, step, prev,
+                                                    shots / f"{i:03d}_box" if step.get("box_shots") else None)
+            r["warnings"] += notes
+        else:
+            clicks = step.get("click", [])
+            clicks = [clicks] if isinstance(clicks, str) else clicks
+            # the checks a click step is played again for: those on the game state, the settings and the menu
+            state_checks = [e for e in step.get("expect", []) if not re.search(r"\b(screen|shots|window)\b", e)]
+            for attempt in range(3 if clicks else 1):
+                click_errors = []
+                for n, control in enumerate(clicks):
+                    if n:  # frames between clicks: a list opened by the click before draws its choices after
+                        game.play("0f:wait:4f")
+                    err = game.click(control)
                     if err:
-                        r["errors"].append(err)
+                        click_errors.append(err)
                 if not clicks:
-                    state, seconds, err = game.play(step["press"])
-                if held:  # let go, and a few frames for the game to see it before the next step's keys
-                    keys(game.hwnd, held, False)
-                    game.play("0f:wait:3f")
-            if err:
-                r["errors"].append(err)
-            log = game.new_log_lines()
-            for line in log:
-                if "error: " in line or "guest trap" in line:
-                    r["errors"].append("log: " + line.strip())
-            if scenario.get("perf"):
-                r["perf"] = perf_of(log)
-                if step.get("perf_room"):
-                    r["perf_room"] = step["perf_room"]
-            screen, img = {}, None
-            if game.alive():
-                img = capture(game.hwnd)
-                if img:
-                    screen = screen_stats(*img)
-                    if step.get("measure"):
-                        screen["edges"] = {k: edges(*img, box) for k, box in step["measure"].items()}
-                    if step.get("luma"):
-                        screen["luma"] = {k: luma(*img, box) for k, box in step["luma"].items()}
-                    shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
-                    write_png(shot, *img)
-                    if judge_model and step.get("judge", True):
-                        try:
-                            screen["judge"], _ = judge.judged(shot, judge_model, judge_key)
-                        except Exception as e:  # the judge is advice: the step goes on without it
-                            r["warnings"].append(f"judge: {e}")
-                    if step.get("ask"):
-                        try:
-                            screen["ask"], _ = judge.ask(shot, step["ask"]["question"], step["ask"]["choices"])
-                        except Exception as e:  # an expect on the answer fails then, and says why
-                            r["warnings"].append(f"ask: {e}")
-            if state:
-                frames = state.get("frame", 0) - (frame0 if frame0 is not None else state.get("frame", 0))
-                hdd = game.folder / "hdd"
-                info = {"seconds": round(seconds or 0, 2),
-                        "fps": round(frames / seconds, 1) if seconds and frame0 is not None else None,
-                        # the game wrote a save during the step
-                        "saved": any(f.is_file() and f.stat().st_mtime >= started for f in hdd.rglob("*"))
-                        if hdd.exists() else False}
-                seen = judge_warnings(screen.get("judge"), state, screen, JEV_SCREEN if review else None)
-                if seen and review:
-                    try:  # the second opinion is the step's: a warning it does not share goes
-                        second, _ = judge.judged(shot, review)
-                        screen["judge"] = dict(second, first=screen["judge"])
-                        seen = judge_warnings(screen["judge"], state, screen)
-                    except Exception as e:  # Jev's word alone, then
-                        r["warnings"].append(f"review: {e}")
-                        seen = judge_warnings(screen["judge"], state, screen)
-                lines = [line.split("] ", 1)[-1] for line in log]
-                extra = {"log": lines, "runlog": runlog + lines, "saved": saved_settings(game.folder),
-                         "window": {"w": img[0], "h": img[1]} if game.alive() and img else None,
-                         "release": scenario.get("release") or "usa", "menu_controls": game.menu_controls()}
-                for expr in step.get("expect", []):
-                    ok, why = holds(expr, state, prev, screen, info, settings, screens, extra)
-                    if not ok:
-                        r["errors"].append(f"expect {expr!r} failed" + (f" ({why})" if why else ""))
-                r.update(state=state, screen=screen, **info)
-                if step.get("shot"):
-                    screens[step["shot"]] = screen
-                if screen.get("flat"):
-                    r["warnings"].append(f"screen is one colour (mean {screen['mean']})")
-                r["warnings"] += seen
-                # a room ID that lands where another one did: the same room, or an ID the warp falls back from
-                p, c = (state.get("player") or {}).get("pos"), (state.get("camera") or {}).get("pos")
-                if step.get("sweep_room") and p and c:
-                    place = tuple(round(v) for v in p + c)
-                    if place in places:
-                        r["warnings"].append(f"same place and camera as room {places[place]}")
-                    places.setdefault(place, step["sweep_room"])
-            runlog += [line.split("] ", 1)[-1] for line in log]
-            if step.get("save_as") and not r["errors"]:
-                dest = SAVES / step["save_as"]
-                shutil.rmtree(dest, ignore_errors=True)
-                shutil.copytree(game.folder / "hdd", dest)
-                r["saved"] = step["save_as"]
-            r["ok"] = not r["errors"]
-            results.append(r)
-            asked = (r.get("screen") or {}).get("ask")
-            print(f"  {i:3d} {'ok  ' if r['ok'] else 'FAIL'} {label}"
-                  + (f"\n        asked: {asked['answer']} ({asked['why']})" if asked else "")
-                  + "".join(f"\n        {e}" for e in r["errors"] + r["warnings"]))
-            if state:
-                prev = state
-            if not r["ok"]:
-                failed = True
-                if not game.alive() or step.get("stop_on_fail", True):
                     break
-    finally:
-        game.close()
-        crash = game.folder / "CrashDumps"
-        dumps = [p.name for p in crash.glob("*")] if crash.exists() else []
-        if dumps:
+                state, seconds, err = game.play(step["press"])
+                now = {"log": [], "runlog": runlog, "saved": saved_settings(game.folder), "window": None,
+                       "release": scenario.get("release") or "usa", "menu_controls": game.menu_controls()}
+                if err or all(holds(e, state, prev, {}, {}, settings, screens, now)[0] for e in state_checks):
+                    break
+                r["warnings"].append(f"clicked again: {', '.join(clicks)}")
+            r["errors"] += click_errors
+            held = step.get("keys")
+            if held:
+                err = keys(game.hwnd, held, True)
+                if err:
+                    r["errors"].append(err)
+            if not clicks:
+                state, seconds, err = game.play(step["press"])
+            if held:  # let go, and a few frames for the game to see it before the next step's keys
+                keys(game.hwnd, held, False)
+                game.play("0f:wait:3f")
+        if err:
+            r["errors"].append(err)
+        log = game.new_log_lines()
+        for line in log:
+            if "error: " in line or "guest trap" in line:
+                r["errors"].append("log: " + line.strip())
+        if scenario.get("perf"):
+            r["perf"] = perf_of(log)
+            if step.get("perf_room"):
+                r["perf_room"] = step["perf_room"]
+        screen, img = {}, None
+        if game.alive():
+            img = capture(game.hwnd)
+            if img:
+                screen = screen_stats(*img)
+                if step.get("measure"):
+                    screen["edges"] = {k: edges(*img, box) for k, box in step["measure"].items()}
+                if step.get("luma"):
+                    screen["luma"] = {k: luma(*img, box) for k, box in step["luma"].items()}
+                shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
+                write_png(shot, *img)
+                if judge_model and step.get("judge", True):
+                    try:
+                        screen["judge"], _ = judge.judged(shot, judge_model, judge_key)
+                    except Exception as e:  # the judge is advice: the step goes on without it
+                        r["warnings"].append(f"judge: {e}")
+                if step.get("ask"):
+                    try:
+                        screen["ask"], _ = judge.ask(shot, step["ask"]["question"], step["ask"]["choices"])
+                    except Exception as e:  # an expect on the answer fails then, and says why
+                        r["warnings"].append(f"ask: {e}")
+        if state:
+            frames = state.get("frame", 0) - (frame0 if frame0 is not None else state.get("frame", 0))
+            hdd = game.folder / "hdd"
+            info = {"seconds": round(seconds or 0, 2),
+                    "fps": round(frames / seconds, 1) if seconds and frame0 is not None else None,
+                    # the game wrote a save during the step
+                    "saved": any(f.is_file() and f.stat().st_mtime >= started for f in hdd.rglob("*"))
+                    if hdd.exists() else False}
+            seen = judge_warnings(screen.get("judge"), state, screen, JEV_SCREEN if review else None)
+            if seen and review:
+                try:  # the second opinion is the step's: a warning it does not share goes
+                    second, _ = judge.judged(shot, review)
+                    screen["judge"] = dict(second, first=screen["judge"])
+                    seen = judge_warnings(screen["judge"], state, screen)
+                except Exception as e:  # Jev's word alone, then
+                    r["warnings"].append(f"review: {e}")
+                    seen = judge_warnings(screen["judge"], state, screen)
+            lines = [line.split("] ", 1)[-1] for line in log]
+            extra = {"log": lines, "runlog": runlog + lines, "saved": saved_settings(game.folder),
+                     "window": {"w": img[0], "h": img[1]} if game.alive() and img else None,
+                     "release": scenario.get("release") or "usa", "menu_controls": game.menu_controls()}
+            for expr in step.get("expect", []):
+                ok, why = holds(expr, state, prev, screen, info, settings, screens, extra)
+                if not ok:
+                    r["errors"].append(f"expect {expr!r} failed" + (f" ({why})" if why else ""))
+            r.update(state=state, screen=screen, **info)
+            if step.get("shot"):
+                screens[step["shot"]] = screen
+            if screen.get("flat"):
+                r["warnings"].append(f"screen is one colour (mean {screen['mean']})")
+            r["warnings"] += seen
+            # a room ID that lands where another one did: the same room, or an ID the warp falls back from
+            p, c = (state.get("player") or {}).get("pos"), (state.get("camera") or {}).get("pos")
+            if step.get("sweep_room") and p and c:
+                place = tuple(round(v) for v in p + c)
+                if place in places:
+                    r["warnings"].append(f"same place and camera as room {places[place]}")
+                places.setdefault(place, step["sweep_room"])
+        runlog += [line.split("] ", 1)[-1] for line in log]
+        if step.get("save_as") and not r["errors"]:
+            dest = SAVES / step["save_as"]
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(game.folder / "hdd", dest)
+            r["saved"] = step["save_as"]
+        r["ok"] = not r["errors"]
+        results.append(r)
+        asked = (r.get("screen") or {}).get("ask")
+        print(f"  {i:3d} {'ok  ' if r['ok'] else 'FAIL'} {label}"
+              + (f"\n        asked: {asked['answer']} ({asked['why']})" if asked else "")
+              + "".join(f"\n        {e}" for e in r["errors"] + r["warnings"]))
+        if state:
+            prev = state
+        if not r["ok"]:
             failed = True
-            results.append({"step": "end", "ok": False, "errors": ["crash dumps: " + ", ".join(dumps)]})
-        report(out, name, results, failed)
-        if not keep and not install:
-            for f in (game.exe + EXE, game.exe + CODE):
-                (game.folder / f).unlink(missing_ok=True)
-    print(f"{name}: {'FAILED' if failed else 'passed'} ({sum(r['ok'] for r in results)}/{len(results)} steps)")
+            if not game.alive() or step.get("stop_on_fail", True):
+                break
+    run["prev"] = prev
     return not failed
+
+
+# --- sessions -----------------------------------------------------------------------------------------------------
+
+# where a new game starts Hector, in the first courtyard (entry 2 of room 5.1, the warp's): a session's parts start
+# there, walked up as newgame.json walks him, which is where each played alone began
+HOME = "5.1.2"
+HOME_POS = (-5000, -4900)
+# what a session puts back after a part changed it, where cvtest's DEFAULT_SETTINGS leaves it to the game: the game's
+# own values (the SDK's app::Settings, src/common/menu.cpp's Defaults)
+GAME_DEFAULTS = {"render_percent": 100, "anisotropic_filtering": 0, "vsync": True, "fps_cap": 60, "widescreen": True,
+                 "fps_counter": False, "lament_save": False, "ps2_stick": True, "invert_camera_x": False,
+                 "invert_camera_y": False, "fov": 100, "draw_distance": 100, "fog_distance": 100, "hud_edges": True}
+# settings the game reads only at its start (keyboard.cpp's live set= refuses the first three): a session's parts
+# have them the same
+START_ONLY = ("texture_pack", "texture_pack_size", "button_layout", "game_language", "gpu", "launcher_language")
+# scenario keys about the whole run (its saves, its timings, its shader cache): such a scenario is played alone
+WHOLE_RUN = ("save", "perf", "shader_cache", "telemetry", "dump")
+# what closes whatever a part left open: the settings menu, a story scene, a box, the pause menu and its pages
+CLOSE_ALL = [["settings_menu", "0f:l3+r3:5f,10f:wait:20f"], ["cutscene", "0:start,45f:wait"],
+             ["modal", "0:a,30f:wait"], ["menu", "0:b,30f:wait"]]
+
+
+def live(v):
+    """a setting's value as a live set= entry has it"""
+    return "true" if v is True else "false" if v is False else str(v)
+
+
+def reset(game, run, values, part):
+    """before a session's part: what the part before left open closed, the settings it changed put back (values) and
+    this part's own made, Hector healed and, unless the part starts with a warp of its own, sent to the courtyard where
+    the new game starts him and walked up as the new game walks him; a row for the part's report"""
+    r = {"step": "reset", "label": "reset: menus closed, settings put back, healed", "errors": [], "warnings": []}
+    state, _, err = poll_until(game, "player.active and not menu and not modal and not settings_menu and not cutscene"
+                               " and not loading", 30, None, CLOSE_ALL, run["prev"])
+    back = sorted(k for k in run["changed"] if k not in part["set"])
+    r["errors"] += [f"no value to put {k} back to (GAME_DEFAULTS)" for k in back if k not in values]
+    entries = [f"0:set={k}={live(values[k])}" for k in back if k in values]
+    entries += [f"0:set={k}={live(v)}" for k, v in part["set"].items()]
+    if not err:
+        state, _, err = game.play(",".join(entries + ["0:heal", "0f:wait:2f"]))
+    first = part["steps"][0].get("press", "") if part["steps"] else ""
+    if not err and "warp=" not in first:
+        r["label"] += f", warped to {HOME}"
+        state, _, err = game.play(f"0:warp={HOME},10f:wait:20f")
+        if not err:  # there by where he stands too: a warp from the courtyard itself is the same room
+            state, _, err = poll_until(game, "map == 5 and room == 1 and player.active and not loading and not cutscene"
+                                       f" and abs(player.pos[0] - {HOME_POS[0]}) < 60"
+                                       f" and abs(player.pos[2] - {HOME_POS[1]}) < 60", 30, None, SKIP_SCENES, state)
+        if err:
+            pos = ((state or {}).get("player") or {}).get("pos")
+            err = f"warped to {HOME}, Hector is at {pos}, not where a new game starts him ({err})"
+        for press in ("0f:wait:60f", "0f:lsu:60f"):  # newgame.json's stand and walk up
+            if not err:
+                state, _, err = game.play(press)
+    if err:
+        r["errors"].append(err)
+    lines = game.new_log_lines()
+    for line in lines:
+        if "error: " in line or "guest trap" in line or "live: no setting" in line:
+            r["errors"].append("log: " + line.strip())
+    run["runlog"] += [line.split("] ", 1)[-1] for line in lines]
+    run["changed"] = set(part["set"]) | part["steps_set"]  # put back before the next part
+    if state:
+        r["state"] = state
+        run["prev"] = state
+    r["ok"] = not r["errors"]
+    return r
+
+
+def run_session(path, build, keep, results_file=None):
+    """a session (suite.py makes them): scenarios that come after the same one, played in one game, that one once
+    and then each in turn (reset() before each), each with a report of its own as if played alone. A part's "set"
+    settings are made live for it and put back after it; those the game reads only at its start (START_ONLY) must be
+    the same for all the parts, and are the game's from its start, as are the parts' scenario settings and
+    environments, all of them. After a part fails, or the game exits, the next part plays a fresh game. The parts'
+    results, by name, go to results_file as they come: result (passed, failed, skipped), why, report, seconds"""
+    session = json.loads(Path(path).read_text(encoding="utf-8"))
+    sname = session["name"]
+    base_path, parts = None, []
+    for p in session["parts"]:
+        sp = Path(p["scenario"]).resolve()
+        raw = json.loads(sp.read_text(encoding="utf-8"))
+        after = (sp.parent / raw["after"]).resolve() if raw.get("after") else sp
+        base_path = base_path or after
+        whole = [k for k in WHOLE_RUN if k in raw]
+        if after != base_path or whole:
+            raise SystemExit(f"session {sname}: {p['name']} " + (f"has {', '.join(whole)}, for a run of its own" if whole
+                             else f"comes after {after.name}, not {base_path.name}"))
+        sets = set(re.findall(r"set=(\w+)=", " ".join(st.get("press", "") for st in raw["steps"])))
+        parts.append(dict(raw, name=p["name"], set=dict(p.get("set", {})), own=sp != base_path, steps_set=sets,
+                          release=session.get("release")))
+    if any(not p["own"] for p in parts[1:]):
+        raise SystemExit(f"session {sname}: {base_path.name}, which the others come after, goes first")
+    base = load(base_path)
+    base["release"] = session.get("release")
+    start, env = dict(base.get("settings", {})), dict(base.get("env", {}))
+    for p in parts:
+        for k, v in p.get("settings", {}).items():
+            if start.get(k, v) != v:
+                raise SystemExit(f"session {sname}: {p['name']} plays with {k} = {v!r}, another part with {start[k]!r}")
+            start[k] = v
+        env.update(p.get("env", {}))
+    for k in START_ONLY:
+        given = {json.dumps(p["set"].get(k)) for p in parts}
+        if len(given) > 1:
+            raise SystemExit(f"session {sname}: its parts differ on {k}, which the game reads only at its start")
+        if parts and k in parts[0]["set"]:
+            start[k] = parts[0]["set"][k]
+    for p in parts:
+        p["set"] = {k: v for k, v in p["set"].items() if k not in START_ONLY}
+    if parts and not parts[0]["own"] and parts[0]["set"]:
+        raise SystemExit(f"session {sname}: {parts[0]['name']} plays from the game's start: its settings with --set alone")
+    base["settings"], base["env"] = start, env
+    values = {**GAME_DEFAULTS, **DEFAULT_SETTINGS, **start}  # what a part's live changes are put back to
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    folder = REPO / "out" / "test" / f"session-{sname}-{stamp}"
+    print(f"session {sname}: {len(parts)} parts, {folder}")
+    summary, games, game, run, last = {}, [], None, None, None
+
+    def finish(out, name, results, started):
+        failed = not all(r["ok"] for r in results)
+        report(out, name, results, failed)
+        why = next((" / ".join(r["errors"]) for r in results if not r["ok"]), "")
+        summary[name] = {"result": "failed" if failed else "passed", "why": why[:300], "report": str(out / "report.md"),
+                         "seconds": round(time.time() - started)}
+        if results_file:
+            Path(results_file).write_text(json.dumps({"name": sname, "parts": summary}, indent=1), encoding="utf-8")
+        print(f"{name}: {'FAILED' if failed else 'passed'} ({sum(r['ok'] for r in results)}/{len(results)} steps)",
+              flush=True)
+
+    try:
+        for p in parts:
+            name = p["name"]
+            why = skipped(p)
+            if why:
+                summary[name] = {"result": "skipped", "why": why, "seconds": 0}
+                print(f"{name}: skipped, {why}")
+                continue
+            out = REPO / "out" / "test" / f"{name}-{stamp}"
+            shots = out / "shots"
+            shots.mkdir(parents=True)
+            print(f"{name}: {out}", flush=True)
+            started, results, ok = time.time(), [], True
+            if game is None:
+                game = Game(build, folder / f"game-{len(games) + 1}", base)
+                games.append(game)
+                run = {"prev": None, "runlog": [], "changed": set()}
+                if not game.hwnd:
+                    results.append({"step": "start", "label": "the game", "ok": False, "warnings": [],
+                                    "errors": ["no game window" + (f": {game.dialog}" if game.dialog else "")]})
+                    ok = False
+                elif p["own"]:  # the new game the part comes after, its rows one, its shots apart
+                    rows = []
+                    (shots / "new-game").mkdir()
+                    ok = play_steps(game, base, dict(DEFAULT_SETTINGS, **start), shots / "new-game", run, rows)
+                    results.append({"step": "new game", "label": f"{base_path.stem}, a fresh game", "ok": ok,
+                                    "errors": [e for row in rows for e in row["errors"]][:5], "warnings": [],
+                                    "state": run["prev"]})
+                else:
+                    ok = play_steps(game, base, dict(DEFAULT_SETTINGS, **start), shots, run, results)
+            if ok and p["own"]:
+                r = reset(game, run, values, p)
+                results.append(r)
+                print(f"  reset {'ok  ' if r['ok'] else 'FAIL'}" + "".join(f"\n        {e}" for e in r["errors"]))
+                ok = r["ok"] and play_steps(game, p, {**DEFAULT_SETTINGS, **start, **p["set"]}, shots, run, results)
+            if not ok or not game.alive():  # the next part on a fresh game
+                end_game(game, results)
+                game = None
+            finish(out, name, results, started)
+            last = (out, name, results, started)
+    finally:
+        if game is not None and end_game(game, last[2] if last else []) and last:
+            finish(*last)  # its crash dumps, found as the game closed
+        if not keep:
+            for g in games:
+                for f in (g.exe + EXE, g.exe + CODE):
+                    (g.folder / f).unlink(missing_ok=True)
+    counts = {k: sum(v["result"] == k for v in summary.values()) for k in ("passed", "failed", "skipped")}
+    print(f"session {sname}: {counts['passed']} passed, {counts['failed']} failed, {counts['skipped']} skipped, "
+          f"{len(games)} game{'s' if len(games) != 1 else ''}")
+    return not counts["failed"]
 
 
 def report(out, name, results, failed):
@@ -1353,7 +1565,7 @@ def report(out, name, results, failed):
 
 def main():
     args = sys.argv[1:]
-    if not args or (args[0].startswith("-") and args[0] not in ("--record", "--make-route")):
+    if not args or (args[0].startswith("-") and args[0] not in ("--record", "--make-route", "--session")):
         print(__doc__)
         return 2
     # Linux: CV_BUILD, else the build folder beside the repository (README.md, Building on Linux)
@@ -1366,6 +1578,9 @@ def main():
         return 0 if record(args[1], build, save) else 1
     if args[0] == "--make-route":
         return 0 if save_route(args[1], args[2]) else 1
+    if args[0] == "--session":
+        results = args[args.index("--results") + 1] if "--results" in args else None
+        return 0 if run_session(args[1], build, "--keep" in args, results) else 1
     flag = next((a for a in args if a.startswith("--judge")), None)  # --judge=jev-*: the TypeSafe key from the env
     judge_model = (flag.split("=", 1)[1] if "=" in flag else True) if flag else None
     review = next((a.split("=", 1)[1] for a in args if a.startswith("--review=")), None)

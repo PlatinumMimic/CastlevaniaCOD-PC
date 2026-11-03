@@ -2,15 +2,17 @@ r"""The regression suite: every feature of the port, each by the tests that cove
 which), run in full before every release, on Windows and on Linux.
 
 usage: python -I tools/cvtest/suite.py [--quick] [--only <test>[,<test>...]] [--from <test>] [--list]
-                                       [--no-packages] [--linux]
+                                       [--no-packages] [--alone] [--linux]
        python -I tools/cvtest/suite.py --check
 
 Runs here (Windows, or Linux and WSL) every test of the list below, one after another: the gameplay scenarios on
 this platform's dev build (cvtest.py), then the release packages in out/release as a player installs them
-(install.py with each disc, launcher_test.py, discs.py). --quick runs the shorter list marked so, --only some of
-them, --from the list from one on; --no-packages leaves the packages out; --linux, run on Windows, then runs the
-Linux half in WSL. A test that needs what this PC lacks (a disc, the HD texture pack, a package, the other
-platform) is skipped and said so, never passed.
+(install.py with each disc, launcher_test.py, discs.py). The scenarios of a session (SESSIONS) play in one game, the
+new game they come after once (cvtest.py --session), each still a test with its own result and report; --alone
+plays each in a game of its own instead. --quick runs the shorter list marked so, --only some of them, --from the
+list from one on; --no-packages leaves the packages out; --linux, run on Windows, then runs the Linux half in WSL.
+A test that needs what this PC lacks (a disc, the HD texture pack, a package, the other platform) is skipped and
+said so, never passed.
 
 The summary is out/test/suite-<time>/summary.md, with each test's own report. A full run (no --quick, --only or
 --from) that passed with nothing skipped also writes out/test/suite-<platform>.json: the commits it ran on (this
@@ -95,9 +97,37 @@ def gpus():
 
 
 def scenario(name, *args, test=None, quick=False, needs=(), before=None, env=None, platforms=("windows", "linux")):
-    """a cvtest run of scenarios/<name>.json"""
-    return {"name": test or name, "cmd": [str(HERE / "cvtest.py"), str(HERE / "scenarios" / f"{name}.json"), *args],
-            "quick": quick, "needs": list(needs), "before": before, "env": env or {}, "platforms": platforms}
+    """a cvtest run of scenarios/<name>.json; its --set settings and --release also apart, for a session"""
+    sets, release = {}, None
+    for flag, value in zip(args, args[1:]):
+        if flag == "--set":
+            k, v = value.split("=", 1)
+            try:
+                sets[k] = json.loads(v)
+            except ValueError:
+                sets[k] = v
+        elif flag == "--release":
+            release = value
+    path = str(HERE / "scenarios" / f"{name}.json")
+    return {"name": test or name, "cmd": [str(HERE / "cvtest.py"), path, *args], "scenario": path, "set": sets,
+            "release": release, "quick": quick, "needs": list(needs), "before": before, "env": env or {},
+            "platforms": platforms}
+
+
+# tests played one after another in one game (cvtest.py --session): the new game they come after once, then each from
+# the courtyard where it starts Hector, each with its own report. Each in the order played: those that need the game
+# as a new game leaves it first (the texture census of the first courtyard, the first save point's boxes), the
+# settings menu, whose Reset to defaults leaves every setting the game's own, last. A session's tests share its
+# settings read at the start (the texture pack, the window size of filters and qol); --alone plays every test alone.
+# lockon and widescreen never share a game: the first-save route kills the Executioner lockon locks on to for good,
+# and once lockon has let him out of his wall that route is stuck in his corridor
+SESSIONS = {
+    "usa": ["newgame", "texpack", "fps", "fps-uncapped", "stick", "widescreen", "route", "moai-off", "moai-on", "bot",
+            "buttons-xbox", "shadow", "warp", "rooms", "keyboard", "menu"],
+    "wide": ["filters-pack", "qol", "lockon"],
+    "eu": ["newgame-eu", "widescreen-eu", "rooms-eu"],
+    "pack-off": ["filters-nopack", "texpack-off"],
+}
 
 
 def empty_shader_cache():
@@ -212,6 +242,60 @@ def run_test(test, folder):
             "seconds": seconds, "log": str(log), "report": report}
 
 
+def run_session(name, members, folder):
+    """a session's tests in one cvtest run (one alone runs alone); each's result as run_test gives it"""
+    out, playing = {}, []
+    for t in members:
+        missing = lacks(t)
+        if missing:
+            out[t["name"]] = {"result": "skipped", "why": missing, "seconds": 0}
+        else:
+            playing.append(t)
+    if len(playing) == 1:
+        out[playing[0]["name"]] = run_test(playing[0], folder)
+    elif playing:
+        releases = {t["release"] for t in playing}
+        assert len(releases) == 1, f"session {name}: tests of both releases"
+        spec, got = folder / f"session-{name}.json", folder / f"session-{name}-results.json"
+        spec.write_text(json.dumps({"name": name, "release": releases.pop(), "parts": [
+            {"name": t["name"], "scenario": t["scenario"], "set": t["set"]} for t in playing]}, indent=1), encoding="utf-8")
+        env = {}
+        for t in playing:
+            env.update(t["env"])
+            if t["before"]:
+                t["before"]()
+        log = folder / f"session-{name}.log"
+        with open(log, "w", encoding="utf-8", errors="replace") as f:
+            code = subprocess.run(PY + [str(HERE / "cvtest.py"), "--session", str(spec), "--results", str(got)],
+                                  stdout=f, stderr=subprocess.STDOUT, cwd=REPO, env=dict(os.environ, **env)).returncode
+        try:
+            parts = json.loads(got.read_text(encoding="utf-8"))["parts"]
+        except (OSError, ValueError, KeyError):
+            parts = {}
+        last = " / ".join([l for l in log.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()][-3:])
+        for t in playing:
+            r = parts.get(t["name"])
+            out[t["name"]] = dict(r, log=str(log)) if r else {
+                "result": "failed", "why": f"the session ended before it (code {code}): {last[-300:]}", "seconds": 0,
+                "log": str(log)}
+    return {t["name"]: dict(out[t["name"]], played=f"session {name}" if len(playing) > 1 else "alone")
+            for t in members}
+
+
+def plan(chosen, alone):
+    """the chosen tests as they run: [(session name or None, [tests])], a session where its first chosen test is"""
+    units, placed = [], set()
+    for t in chosen:
+        home = None if alone else next((s for s, names in SESSIONS.items() if t["name"] in names), None)
+        if home is None:
+            units.append((None, [t]))
+        elif home not in placed:
+            placed.add(home)
+            names = SESSIONS[home]
+            units.append((home, sorted((c for c in chosen if c["name"] in names), key=lambda c: names.index(c["name"]))))
+    return units
+
+
 def git(path, *args):
     r = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True)
     return r.stdout.strip()
@@ -286,20 +370,31 @@ def main():
     folder.mkdir(parents=True)
     at = commits()
     results = {}
+    started = time.time()
     print(f"suite on {PLATFORM}: {len(chosen)} tests, {folder}")
-    for i, t in enumerate(chosen, 1):
-        print(f"  [{i}/{len(chosen)}] {t['name']} ...", end="", flush=True)
-        r = run_test(t, folder)
-        results[t["name"]] = r
-        print(f" {r['result']} ({r['seconds']} s){': ' + r['why'] if r['why'] else ''}", flush=True)
+    i = 0
+    for session, members in plan(chosen, "--alone" in args):
+        if session and len(members) > 1:
+            print(f"  session {session}: {', '.join(t['name'] for t in members)} ...", flush=True)
+            got = run_session(session, members, folder)
+        else:
+            print(f"  [{i + 1}/{len(chosen)}] {members[0]['name']} ...", end="", flush=True)
+            got = {members[0]["name"]: dict(run_test(members[0], folder), played="alone")}
+        for name, r in got.items():
+            i += 1
+            results[name] = r
+            line = f" {r['result']} ({r['seconds']} s){': ' + r['why'] if r['why'] else ''}"
+            print(f"  [{i}/{len(chosen)}] {name} ...{line}" if session and len(members) > 1 else line, flush=True)
     passed = all(r["result"] == "passed" for r in results.values())
     lines = [f"# Regression suite on {PLATFORM}: {'passed' if passed else 'not passed'}", "",
              f"Port {at['port'][:7]}{' (with changes)' if at['port_changes'] else ''}, SDK {at['sdk'][:7]}"
-             f"{' (with changes)' if at['sdk_changes'] else ''}, {time.strftime('%Y-%m-%d %H:%M')}.", "",
-             "| test | result | seconds | why | report |", "|---|---|---|---|---|"]
+             f"{' (with changes)' if at['sdk_changes'] else ''}, {time.strftime('%Y-%m-%d %H:%M')}, "
+             f"{round((time.time() - started) / 60)} minutes.", "",
+             "| test | result | seconds | played | why | report |", "|---|---|---|---|---|---|"]
     for name, r in results.items():
         lines.append(f"| {name} | {'**' + r['result'] + '**' if r['result'] == 'failed' else r['result']} | "
-                     f"{r['seconds']} | {r['why'].replace('|', '/')} | {r.get('report', '')} |")
+                     f"{r['seconds']} | {r.get('played', 'alone')} | {r['why'].replace('|', '/')} | "
+                     f"{r.get('report', '')} |")
     (folder / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     counts = {k: sum(r["result"] == k for r in results.values()) for k in ("passed", "failed", "skipped")}
     print(f"suite on {PLATFORM}: {counts['passed']} passed, {counts['failed']} failed, {counts['skipped']} skipped: "

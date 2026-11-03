@@ -4,13 +4,22 @@ Every feature of this port and the tests that cover it. `tools/cvtest/suite.py` 
 on the platform it runs on; a release is made only from a commit both platforms passed in full
 (`suite.py --check`). A feature added gets its test here and in `suite.py` with it.
 
-    python -I tools\cvtest\suite.py --linux       Windows, then Linux in WSL (about two hours each)
+    python -I tools\cvtest\suite.py --linux       Windows, then Linux in WSL (under an hour each)
     python3 -I tools/cvtest/suite.py              Linux alone
     python -I tools\cvtest\suite.py --quick       the shorter list, during work
     python -I tools\cvtest\suite.py --check       both platforms passed on this commit, with these packages
 
 This PC's discs and WSL setup are in `out/test/suite.json` (see `suite.py`). Tests marked *Linux* run only there:
 on Windows they would take the PC's own screen or keyboard.
+
+Scenarios that come after the same new game play in sessions (`SESSIONS` in `suite.py`): one game plays the new
+game once and then each of them in turn, each from the courtyard where a new game starts Hector, with the menus
+closed, his HP full and the settings the one before changed put back (`cvtest.py --session`); a test's own `--set`
+is made live for it. Each is still a test of its own, with its own report. A session's order matters: what needs the
+game as a new game leaves it goes first (the first courtyard's texture census, the first save point's boxes), and
+`menu`, whose Reset to defaults gives every setting the game's own value, last; `lockon` never shares a game with
+`widescreen` (its first-save route kills the Executioner for good, and is stuck in his corridor once he is out of
+his wall). After a test fails the next plays a fresh game. `--alone` plays every scenario in a game of its own, the way to check a session's results.
 
 ## The game
 

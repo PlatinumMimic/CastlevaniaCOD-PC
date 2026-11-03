@@ -554,12 +554,16 @@ Changes this game needed beyond the generated config:
 - `python -I tools\cvtest\suite.py` is the regression suite: every feature of the port by its tests, listed in
   [tools/cvtest/SUITE.md](tools/cvtest/SUITE.md) with what each checks and what only a person can check, run one
   after another on this platform: the scenarios below on the dev build, then the release packages in `out\release`
-  as a player installs them (`install.py` with each disc, `launcher_test.py`, `discs.py`). `--linux` (on Windows)
-  then runs it on Linux in WSL; `--quick` runs a shorter list, `--only` and `--from` some of it. A test that needs
-  what the PC lacks (a disc, the HD pack, a package) is skipped, and a run with one skipped is not a pass. This PC's
-  discs and WSL setup are in `out\test\suite.json` (its format at the top of `suite.py`). A full run that passed on
-  a commit without changes records it (`out\test\suite-<platform>.json`, with the packages' SHA-256), which
-  `--check` reads: a release needs both platforms' for the commit released. A feature added gets a test there.
+  as a player installs them (`install.py` with each disc, `launcher_test.py`, `discs.py`). Scenarios that come after
+  the same new game play in sessions, one game each (`cvtest.py --session`): the new game once, then each scenario
+  from the courtyard where it starts Hector (warped back, healed, menus closed, the settings the one before changed
+  put back), each still a test with its own report; `--alone` plays every scenario in a game of its own. `--linux`
+  (on Windows) then runs it on Linux in WSL; `--quick` runs a shorter list, `--only` and `--from` some of it. A
+  test that needs what the PC lacks (a disc, the HD pack, a package) is skipped, and a run with one skipped is not a
+  pass. This PC's discs and WSL setup are in `out\test\suite.json` (its format at the top of `suite.py`). A full run
+  that passed on a commit without changes records it (`out\test\suite-<platform>.json`, with the packages'
+  SHA-256), which `--check` reads: a release needs both platforms' for the commit released. A feature added gets a
+  test there.
 - `python -I tools\cvtest\cvtest.py tools\cvtest\scenarios\newgame.json` plays a scenario in a test folder of its own
   (`out\test\<scenario>-<time>`, its own settings and saves) through `CV_PAD_LIVE`, checks the game state after
   every step (`src\common\telemetry.cpp`: map and room, Hector's position, HP, the camera, menus), the log and

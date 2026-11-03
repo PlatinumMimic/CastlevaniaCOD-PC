@@ -3,7 +3,8 @@
   "save": "first-save",
   "note": "Continue from keep-save.json's save, made by either release: the title's cursor is on Continue, the hard disk's slot 1, Yes, then Hector in the save room 5.27 as he was",
   "steps": [
-    {"press": "0:wait:11000", "shot": "title"},
+    {"press": "0:wait:11000", "note": "the logos to the title"},
+    {"until": "frame >= 640", "timeout": 60, "shot": "title", "note": "the title drawn: a slow start (a cold shader cache) draws its frames later, and the presses after go by them"},
     {"press": "600:a,4000:wait", "shot": "continue", "note": "Continue: the load screen"},
     {"press": "0:a,3000:wait", "shot": "slot"},
     {"press": "0:a,3000:wait", "shot": "confirm"},

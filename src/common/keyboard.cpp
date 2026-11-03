@@ -15,10 +15,11 @@
 // controller) lsu lsd lsl lsr (left stick) rsu rsd rsl rsr (right stick). "@file"
 // reads the same entries from a file, one per line or comma separated.
 //
-// CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1), presses
-// its entries as CV_PAD_SCRIPT does, times from the command's start ("<ms>:wait" only waits), then writes
-// state-<n>.json (telemetry.cpp) and done-<n>.txt and waits for the next, and rooms.json (every map's rooms) once the
-// game has its room table. The window need not be in front. Live entries can also be
+// CV_PAD_LIVE=<folder> plays turn by turn: the game waits at its pad read for <folder>\cmd-<n>.txt (n from 1, written
+// whole and ended by a newline: the game reads it until it has that), presses its entries as CV_PAD_SCRIPT does,
+// times from the command's start ("<ms>:wait" only waits), then writes state-<n>.json (telemetry.cpp) and
+// done-<n>.txt and waits for the next, and rooms.json (every map's rooms) once the game has its room table. The window
+// need not be in front. Live entries can also be
 //   0:warp=<map>.<room>[.<entry>]     Hector sent to that room at the command's start (game/warp.cpp)
 //   0:heal                            his HP back to full at the command's start
 //   0:capture                         the frame after the command's start into XBE_CAPTURE_DIR, as F3 captures one:
@@ -33,7 +34,7 @@
 //   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
 //   0:set=<setting>=<value>           a setting changed at the command's start, as the in-game menu changes it
 //                                     (display_mode, width, height, render_percent, anisotropic_filtering,
-//                                     widescreen, vsync, or a game option
+//                                     widescreen, vsync, fps_cap, or a game option
 //                                     such as lament_save): the renderer takes it after the frame it presents. One
 //                                     read only at the start (texture_pack) is an error: give it with --set instead
 //   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
@@ -255,6 +256,7 @@ void ApplySetting(const std::string& entry) {
     else if (key == "anisotropic_filtering") st.aniso = n;
     else if (key == "widescreen") st.widescreen = on;
     else if (key == "vsync") st.vsync = on;
+    else if (key == "fps_cap") st.fps_cap = n;
     else {
         auto it = std::find_if(app::kGame.options.begin(), app::kGame.options.end(),
                                [&](const app::Option& o) { return key == o.key; });
@@ -381,10 +383,20 @@ void LiveWait() {
         std::filesystem::path cmd = l.dir / ("cmd-" + std::to_string(l.n + 1) + ".txt");
         std::error_code ec;
         if (std::filesystem::exists(cmd, ec)) {
-            std::ifstream f(cmd);
-            std::stringstream ss;
-            ss << f.rdbuf();
-            l.steps = ParseScript(ss.str());
+            std::string text;
+            if (std::ifstream f(cmd); f) {
+                std::stringstream ss;
+                ss << f.rdbuf();
+                text = ss.str();
+            }
+            // cvtest renames the command in whole, ended by a newline; a read that got less (on Windows the file can
+            // be held a moment after its rename, by a scanner) is tried again rather than taken as a command of
+            // nothing, which would be done at once with none of its entries
+            if (text.empty() || text.back() != '\n') {
+                Sleep(20);
+                continue;
+            }
+            l.steps = ParseScript(text);
             l.end_ms = l.end_frames = 0;
             for (const Step& s : l.steps) {
                 int64_t& end = s.frames ? l.end_frames : l.end_ms;

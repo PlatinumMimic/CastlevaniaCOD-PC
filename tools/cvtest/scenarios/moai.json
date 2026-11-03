@@ -5,8 +5,8 @@
   "steps": [
     {"route": "moai", "shot": "far-end", "expect": ["map == 5 and room == 0"]},
     {"press": "0:walk=-21400/-2900/80:6000", "shot": "moai-ahead", "note": "facing where the Moai floats, some way off",
-     "ask": {"question": "Is there an item floating in the air near Hector, shaped like a stone Moai head (an Easter Island statue)?",
-             "choices": {"moai": "yes, a stone Moai head floats near him", "none": "no such item"}},
+     "ask": {"question": "Anywhere on the screen, the left side too, is there an item floating in the air shaped like a stone head, a Moai (an Easter Island statue's head; small and far off, in this light it can look brown)? The blue and gold pot is another item, the potion: it is not a Moai.",
+             "choices": {"moai": "yes, a stone Moai head floats somewhere on the screen", "none": "no stone head anywhere, only other items such as the blue and gold pot"}},
      "expect": ["screen.ask.answer == ('moai' if settings.lament_save else 'none')"]},
     {"press": "0:walk=-23726/-2396/80:6000", "shot": "picked", "note": "over the spot: the pickup's notice",
      "ask": {"question": "Is there an item pickup notice on the screen (a small framed label at the bottom with an item's name)? Which item?",

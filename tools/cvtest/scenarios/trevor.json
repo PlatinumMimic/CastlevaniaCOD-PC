@@ -2,7 +2,8 @@
   "name": "trevor",
   "note": "A fresh start, the game never beaten: New Game named @TREVOR (typed on the name screen's letters), a new save, the movies skipped, then Trevor in Trevor mode (hearts and sub-weapons) in the first courtyard (hooks.cpp: the name codes).",
   "steps": [
-    {"press": "0:wait:11000", "shot": "title"},
+    {"press": "0:wait:11000", "note": "the logos to the title"},
+    {"until": "frame >= 640", "timeout": 60, "shot": "title", "note": "the title drawn: a slow start (a cold shader cache) draws its frames later, and the presses after go by them"},
     {"press": "1000:a,3800:wait", "shot": "name-screen"},
     {"press": "4000:right,4300:right,4600:right,4900:right,5200:right,5500:right,5800:down,6100:down,6400:down,6700:down,7000:down,7500:a,8100:left,8400:up,8700:up,9000:up,9300:up,9800:a,10400:left,10700:left,11200:a,11800:right,12100:up,12600:a,13200:right,13500:right,13800:right,14100:down,14600:a,15200:left,15500:left,15800:left,16100:left,16400:left,16700:left,17000:left,17500:a,18100:right,18400:right,18700:right,19200:a,20000:wait", "shot": "name-typed", "note": "@TREVOR typed"},
     {"press": "0:start,1000:a,3000:a,7000:left,8000:a,12000:a,15000:a,18000:a,30500:start,35000:start,36000:wait", "shot": "after-movies", "expect": ["name == '@TREVOR'", "mode == 2"], "note": "accept the name, create the save, skip the movies"},
