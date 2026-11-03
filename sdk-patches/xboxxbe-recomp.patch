@@ -293,7 +293,7 @@ index 15f8ab1..5379649 100644
  SRC="$SRC $(ls "$H"/*.cpp) ${EXTRA[*]}"
  for x in "${EXCL[@]}"; do SRC=$(echo $SRC | tr ' ' '\n' | grep -Ev -- "$x"); done
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index e1c1254..8e2b5cc 100644
+index e1c1254..54ff60e 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
 @@ -26,7 +26,12 @@ struct Settings {
@@ -339,7 +339,15 @@ index e1c1254..8e2b5cc 100644
  // the game in assets (game_files.cpp): its folder and this executable's xbe, from the extracted files or a disc
  // image (.iso), which it mounts as D:; false after telling the player what is missing
  struct GameFiles {
-@@ -86,6 +107,14 @@ struct GameInfo {
+@@ -58,6 +79,7 @@ std::string Sha1(const std::vector<uint8_t>& data);  // lower case hex
+ bool PrepareGameCode(const GameFiles& game);
+ int Instance();  // --instance N on the command line, 0 without: a second copy on this PC for system link tests
+ void* Window();  // HWND
++Mode WindowPixels();  // the game window's size in pixels as drawn into (fullscreen and borderless: the display's)
+ // boot splash: GameInfo::splash .bmp or .png beside the exe, up before the game window
+ bool OpenSplash();        // window thread, at launch; false without one, and the game window opens at once
+ void SplashFirstFrame();  // the game's first Swap: waits out the splash's minimum, then opens the game window
+@@ -86,6 +108,14 @@ struct GameInfo {
      const wchar_t* splash;       // .bmp or .png beside the exe
      const wchar_t* missing;      // message when neither the game files nor a disc image are found
      std::vector<std::pair<const char*, const char*>> images;  // xbe file name, executable name
@@ -354,7 +362,7 @@ index e1c1254..8e2b5cc 100644
      std::vector<Option> options;
      // the settings file's toml::table, for what options cannot hold
      void (*load)(const void* table);
-@@ -98,6 +127,9 @@ struct GameInfo {
+@@ -98,6 +128,9 @@ struct GameInfo {
      void (*ui)(double fps);        // each frame inside the ImGui frame, UiLock held
      void (*pad)(int port, input::Pad& pad);  // a polled pad before the game gets it
      void (*rumble)(int port, uint16_t& left, uint16_t& right);
@@ -631,7 +639,7 @@ index bf8e3b9..0e3215b 100644
 +}  // namespace app
 +#endif
 diff --git a/runtime/app/main.cpp b/runtime/app/main.cpp
-index e36f7ac..84e4636 100644
+index e36f7ac..356c708 100644
 --- a/runtime/app/main.cpp
 +++ b/runtime/app/main.cpp
 @@ -1,4 +1,5 @@
@@ -641,7 +649,20 @@ index e36f7ac..84e4636 100644
  #ifndef WIN32_LEAN_AND_MEAN
  #define WIN32_LEAN_AND_MEAN
  #endif
-@@ -244,11 +245,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+@@ -189,6 +190,12 @@ int Instance() {
+ 
+ void* Window() { return g_hwnd; }
+ 
++Mode WindowPixels() {
++    RECT r{};
++    if (!g_hwnd || !GetClientRect(g_hwnd, &r)) return {0, 0};
++    return {uint32_t(r.right - r.left), uint32_t(r.bottom - r.top)};
++}
++
+ std::recursive_mutex& UiLock() {
+     static std::recursive_mutex m;
+     return m;
+@@ -244,11 +251,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
      std::signal(SIGABRT, [](int) { app::WriteCrashDump(nullptr); });
      timeBeginPeriod(1);
      SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -657,7 +678,7 @@ index e36f7ac..84e4636 100644
      app::Load();
      if (app::kGame.init) app::kGame.init();
      if (relaunched && !logx::kVerbose) LOGR("Relaunched: %s", IMAGE_XBE);
-@@ -305,3 +308,4 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+@@ -305,3 +314,4 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
      logx::Flush();
      kernel::Shutdown(0);
  }
@@ -3752,10 +3773,10 @@ index 0000000..08dbd97
 +#endif
 diff --git a/runtime/linux/main.cpp b/runtime/linux/main.cpp
 new file mode 100644
-index 0000000..48cb8fd
+index 0000000..dd921e5
 --- /dev/null
 +++ b/runtime/linux/main.cpp
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,354 @@
 +// Linux: the host's window and main loop (app/main.cpp's), on SDL. The main thread takes SDL's events: ImGui's input,
 +// the window messages GameInfo::message knows, controllers plugged in or out, the display settings; the game and
 +// the renderer run on threads of their own as on Windows.
@@ -3977,6 +3998,8 @@ index 0000000..48cb8fd
 +}
 +
 +void* Window() { return linuxapp::g_window.load(); }
++
++Mode WindowPixels() { return {linuxapp::g_pixel_w, linuxapp::g_pixel_h}; }
 +
 +std::recursive_mutex& UiLock() {
 +    static std::recursive_mutex m;

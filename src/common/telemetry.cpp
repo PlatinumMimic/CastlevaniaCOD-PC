@@ -40,21 +40,8 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
-
 #include "app/app.h"
 #include "audio/audio.h"
-#ifndef _WIN32
-#include "sdl_app.h"
-#endif
 #include "common/release.h"
 #include "core/input.h"
 #include "kernel/memory.h"
@@ -304,18 +291,8 @@ std::string GameStateJson() {
     if (!wide.empty()) out += ",\"wide\":" + wide;
     out += ",\"pad\":" + PadJson();
     // the game window's size in pixels, as drawn into (fullscreen and borderless: the display's)
-    uint32_t ww = 0, wh = 0;
-#ifdef _WIN32
-    RECT rc{};
-    if (HWND w = HWND(app::Window()); w && GetClientRect(w, &rc)) {
-        ww = uint32_t(rc.right - rc.left);
-        wh = uint32_t(rc.bottom - rc.top);
-    }
-#else
-    ww = linuxapp::g_pixel_w;
-    wh = linuxapp::g_pixel_h;
-#endif
-    out += ",\"window_size\":[" + std::to_string(ww) + "," + std::to_string(wh) + "]";
+    app::Mode px = app::WindowPixels();
+    out += ",\"window_size\":[" + std::to_string(px.width) + "," + std::to_string(px.height) + "]";
     // what the sound output played: frames, and those with sound in them
     audio::Played played = audio::PlayedSoFar();
     out += ",\"audio\":{\"frames\":" + std::to_string(played.frames) + ",\"loud\":" + std::to_string(played.loud) +
