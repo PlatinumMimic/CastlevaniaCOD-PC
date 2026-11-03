@@ -167,7 +167,8 @@ struct EnemyInfo {  // game/enemies.cpp
     float pos[3];
 };
 std::vector<EnemyInfo> Enemies();
-std::string BotJson();  // bot.cpp
+std::string BotJson();   // bot.cpp
+std::string WideJson();  // widescreen.cpp
 
 // for the bot (bot.cpp), each frame: Hector's position and facing, the camera's heading (the direction stick up
 // walks), the scene word and the pause menu
@@ -273,6 +274,9 @@ std::string GameStateJson() {
     out += ",\"enemies\":" + enemies + "]";
     std::string bot = BotJson();
     if (!bot.empty()) out += ",\"bot\":" + bot;
+    // widescreen's moves: the lock-on marker's and the HUD's, as last drawn
+    std::string wide = WideJson();
+    if (!wide.empty()) out += ",\"wide\":" + wide;
     return out + "}";
 }
 

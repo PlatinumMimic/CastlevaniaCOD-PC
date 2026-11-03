@@ -22,8 +22,11 @@
 // its fill, its digits that reach past the middle of the frame; a message's box at the bottom right and its text),
 // taken from the frame before: a piece at least twice as far from one side of the frame as from the other goes to
 // that side's screen edge, one about the middle stays, and so does one with none of the HUD's textures. Before the
-// HUD in the frame are the world's 2D effects (glows, sparks), drawn at the points they light, which stay; nothing
-// moves while the pause menu or a message box is up, or in a story scene.
+// HUD in the frame are the world's 2D effects (glows, sparks), drawn at the points they light, which stay; so does any
+// 2D draw placed at a point of the world (its vertices carry the point's depth, w, where the HUD's have 1), whatever
+// its texture: the lock-on marker is drawn from the HUD's sheet over the enemy locked on, and went to the screen's edge
+// with the HUD once the enemy was off the middle. Nothing moves while the pause menu or a message box is up, or in a
+// story scene.
 //
 // Skies past the fog: the game builds its skies from painted strips, a moon and clouds placed far out in the world,
 // past a room's far plane where its fog has hidden everything (the rampart of 5.7: a ring of sky strips up to 62000
@@ -45,6 +48,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -61,6 +66,17 @@ uint32_t SceneWord();     // telemetry.cpp
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);                              // texpack.cpp
 
 namespace {
+
+// for tests (telemetry.cpp: "wide"), as last drawn: the lock-on marker (the HUD's sheet at a point of the world) and
+// the HUD (its sheet's last draw of a frame, the health bar's), each on the console frame, its move across in clip
+// space and the frame it was drawn in
+struct Seen2D {
+    uint64_t frame = 0;
+    float x0 = 0, x1 = 0, move = 0;
+};
+std::mutex g_seen_m;
+Seen2D g_marker, g_hud;
+uint64_t g_frame = 0;
 
 constexpr float kSqueeze = (4.0f / 3.0f) / (16.0f / 9.0f);
 
@@ -135,16 +151,22 @@ public:
             return;
         }
         // on the console frame
+        uint32_t decode = a.decode & 0xF;
+        auto vertex_w = [decode](const float* v, uint32_t comps) {
+            return comps == 4 && decode != gpu::kDecodeW1 ? v[3] : decode == gpu::kDecodeFloat2H ? v[2] : 1.0f;
+        };
         auto screen = [&](int axis) {
             return Read(a, 0, [&](const float* v, uint32_t comps) {
                 if (!p.screen) return v[axis];
-                uint32_t decode = a.decode & 0xF;
-                float w = comps == 4 && decode != gpu::kDecodeW1 ? v[3] : decode == gpu::kDecodeFloat2H ? v[2] : 1.0f;
+                float w = vertex_w(v, comps);
                 return v[axis] * s.vsc[kScreenScale][axis] * (w != 0 ? 1 / w : 1) + s.vsc[kScreenOffset][axis];
             });
         };
         d_.x = screen(0);
         d_.y = screen(1);
+        // a point of the world's: its vertices carry the point's depth (the HUD's have w 1)
+        Span pw = Read(a, 0, vertex_w);
+        d_.at_point = !pw.Empty() && (pw.lo < 0.999f || pw.hi > 1.001f);
         const Span& x = d_.x;
         const Span& y = d_.y;
         float gw = float(s.viewport.w ? s.viewport.w : 640), gh = float(s.viewport.h ? s.viewport.h : 480);
@@ -227,7 +249,7 @@ public:
         // the HUD, from its first draw to the frame pass, to the screen's edges
         float shift = 0;
         if (back_buffer_ && d_.target && d_.whole) hud_ = false;
-        if (squeeze && hud_free_ && !d_.world && !d_.whole && !d_.target && !edges) {
+        if (squeeze && hud_free_ && !d_.world && !d_.whole && !d_.target && !edges && !d_.at_point) {
             bool named = std::find(std::begin(kHud), std::end(kHud), d_.name) != std::end(kHud);
             hud_ |= named;
             bool inside = !d_.x.Empty() && !d_.y.Empty() && d_.x.lo >= -2 && d_.x.hi <= float(d_.gw) + 2;
@@ -243,18 +265,23 @@ public:
         ext[2] = placed ? across * d_.move[0] : shift;
         ext[3] = placed ? d_.move[1] : 0.0f;
         if (Backdrop(vsc)) ext[0] = ext[1] = ext[2] = ext[3] = 0;  // not drawn: every vertex at the centre
+        if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty()) {
+            std::lock_guard lock(g_seen_m);
+            (d_.at_point ? g_marker : g_hud) = {frame_, d_.x.lo, d_.x.hi, ext[2]};
+            g_frame = frame_;
+        }
         // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
         if (kTrace && frame_ % kTrace == 0 && d_.world)
             LOGR("wide %llu: into %08x%s 3D, n %u", (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "",
                  d_.count);
         else if (kTrace && frame_ % kTrace == 0 && d_.squeeze)
             LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g v %g..%g%s "
-                 "blend %u: %s%s%s",
+                 "blend %u: %s%s%s%s",
                  (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
                  d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, (unsigned long long)d_.name, d_.u.lo,
                  d_.u.hi, d_.v.lo, d_.v.hi, d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
                  edges ? "edges out" : shift < 0 ? "hud left" : shift > 0 ? "hud right" : squeeze ? "squeezed" : "kept",
-                 placed ? ", placed" : "");
+                 placed ? ", placed" : "", d_.at_point ? ", at a point" : "");
     }
 
 private:
@@ -447,6 +474,7 @@ private:
         float past = 0;     // the part of its vertices ahead past the room's own far plane
         uint32_t count = 0;
         Span x, y, u, v;  // on the console frame; the first texture coordinate, for one quad on it (v: whole)
+        bool at_point = false;  // a 2D draw placed at a point of the world, by that point's depth
         gpu::TextureDesc tex;
     };
     Draw d_;
@@ -483,6 +511,22 @@ private:
 };
 
 }  // namespace
+
+// "wide" for telemetry.cpp: {"marker": {"x": [lo, hi], "move": m, "ago": frames since drawn}, "hud": {...}}, each
+// once drawn
+std::string WideJson() {
+    std::lock_guard lock(g_seen_m);
+    std::string out;
+    for (auto [name, seen] : {std::pair{"marker", &g_marker}, std::pair{"hud", &g_hud}}) {
+        if (!seen->frame) continue;
+        char b[160];
+        std::snprintf(b, sizeof(b), "%s\"%s\":{\"x\":[%.1f,%.1f],\"move\":%.4f,\"ago\":%llu}",
+                      out.empty() ? "" : ",", name, seen->x0, seen->x1, seen->move,
+                      (unsigned long long)(g_frame - seen->frame));
+        out += b;
+    }
+    return out.empty() ? out : "{" + out + "}";
+}
 
 // GameInfo::init: before the renderer is made
 void WidescreenInit() { gpu::SetExtension(std::make_unique<Widescreen>()); }

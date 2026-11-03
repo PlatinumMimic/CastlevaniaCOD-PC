@@ -613,6 +613,9 @@ Changes this game needed beyond the generated config:
 - `trevor.json` and `crazy.json` type `@TREVOR` and `@CRAZY` on the name screen of a game never beaten and play into
   the first courtyard: the game's mode (`mode`, 2 and 1, with the save's `name`) and Trevor's hearts and sub-weapons
   in the shots. `newgame.json` checks that a plain name gives mode 0.
+- `lockon.json` locks on (Black, the game's Lock-On ON/OFF) to the Executioner of room 5.2 with him off the middle of
+  a widescreen: its marker, drawn from the HUD's sheet at him, stays where the game puts it while the HUD goes to the
+  screen's corners. The telemetry's `wide` says how far widescreen moved the marker and the HUD as last drawn.
 - `python -I tools\cvtest\launcher_test.py <release .zip or .tar.xz, or a build folder> <USA disc> <European disc>`
   installs a release as `install.py` does, with one disc and then both, and drives the launcher by window messages (on
   Linux, on a virtual display) where it says its controls are (`CV_LAUNCHER_STATE`): with one disc no list beside
@@ -631,7 +634,7 @@ Changes this game needed beyond the generated config:
   give `CV_PAD_SCRIPT` a full path, the game runs from `out\build\release`.
 - `CV_PAD_SCRIPT` presses buttons on a timeline (see `src\common\keyboard.cpp`).
 - `XBE_VERBOSE=1` logs info lines to `logs\castlevania.log`; with `XBE_CAPTURE_DIR` set, F3 saves a frame with its
-  draw list.
+  draw list (each draw's state, its textures and shaders), as does the live entry `0:capture` at a step's start.
 
 ## Known Issues
 - Only the first areas have been tested so far, in both releases.

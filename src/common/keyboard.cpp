@@ -20,6 +20,8 @@
 // game has its room table. The window need not be in front. Live entries can also be
 //   0:warp=<map>.<room>[.<entry>]     Hector sent to that room at the command's start (game/warp.cpp)
 //   0:heal                            his HP back to full at the command's start
+//   0:capture                         the frame after the command's start into XBE_CAPTURE_DIR, as F3 captures one:
+//                                     each draw's state and textures (the SDK's gpu/d3d12.cpp)
 //   0:walk=<x>/<z>[/<r>]:<hold>       the bot (bot.cpp) walks him there; fight[=<r>] fights the enemies near
 //                                     him. The command ends once its goals are done, or at the hold at most
 //   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
@@ -48,6 +50,7 @@
 #include "app/app.h"
 #include "core/input.h"
 #include "core/log.h"
+#include "gpu/backend.h"
 #include "kernel/memory.h"
 #include "xdk/d3d8.h"
 
@@ -132,6 +135,7 @@ struct Step {
     int16_t lx, ly, rx, ry;
     int map = -1, room = 0, entry = 0;  // warp=<map>.<room>[.<entry>]: live commands send Hector there at their start
     bool goal = false, heal = false;    // walk=, fight (bot.cpp) and heal, live commands too
+    bool capture = false;               // capture, a live command's too
     BotGoal bot{};
     float guard = 0;  // guard=<r>, for the bot's walks
     std::string set;  // set=<setting>=<value>
@@ -191,6 +195,7 @@ std::vector<Step> ParseScript(std::string text) {
             else if (b.rfind("ls=", 0) == 0) Stick(b.substr(3), s.lx, s.ly);
             else if (b.rfind("rs=", 0) == 0) Stick(b.substr(3), s.rx, s.ry);
             else if (b == "heal") s.heal = true;
+            else if (b == "capture") s.capture = true;
             else if (b.rfind("guard=", 0) == 0) s.guard = float(std::atof(b.c_str() + 6));
             else if (b.rfind("set=", 0) == 0) s.set = b.substr(4);
             else if (b.rfind("walk=", 0) == 0) {
@@ -367,6 +372,7 @@ void LiveWait() {
             for (const Step& s : l.steps) {
                 if (s.map >= 0) RequestWarp(s.map, s.room, s.entry);
                 if (s.heal) HealPlayer();
+                if (s.capture) gpu::g_capture = true;
                 if (!s.set.empty()) ApplySetting(s.set);
                 if (s.goal) goals.push_back(s.bot);
                 guard = (std::max)(guard, s.guard);

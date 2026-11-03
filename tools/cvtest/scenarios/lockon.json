@@ -1,0 +1,20 @@
+{
+  "name": "lockon",
+  "after": "newgame.json",
+  "note": "Lock-on at the Executioner of room 5.2, off the middle of a widescreen: the lock-on marker, drawn from the HUD's sheet at the enemy, stays on him while the HUD goes to the screen's corners (hud_edges). The HUD's move used to take the marker out to the screen's side, away from him (widescreen.cpp: a 2D draw at a point of the world is not the HUD's).",
+  "steps": [
+    {"press": "0:warp=5.2,10f:wait:20f", "note": "the corridor of the first enemy, the Executioner"},
+    {"until": "room == 2 and player.active and not loading and not cutscene", "timeout": 30, "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"]]},
+    {"press": "0:walk=-17000/-20300/150:8000", "note": "near him: he breaks through the wall"},
+    {"until": "not modal and not cutscene and player.active", "poll": "30f:wait", "timeout": 30, "note": "his box goes by itself"},
+    {"press": "0f:rsl:50f", "shot": "turned", "note": "the camera turned: the Executioner to the left"},
+    {"press": "0f:black:5f,5f:wait:10f", "shot": "locked", "note": "Lock-On ON/OFF is Black (the game's Controller Config); its marker is drawn from the HUD's sheet, at him", "expect": ["wide.marker.ago < 3", "wide.marker.x[0] * 2 < 640 - wide.marker.x[1] or (640 - wide.marker.x[1]) * 2 < wide.marker.x[0]", "wide.marker.move == 0", "wide.hud.move < 0"]},
+    {"press": "0f:lsl:8f", "shot": "walk-0", "note": "locked on, Hector walks left", "expect": ["wide.marker.ago < 3", "wide.marker.move == 0"]},
+    {"press": "0f:lsl:8f", "shot": "walk-1", "note": "locked on, Hector walks left", "expect": ["wide.marker.ago < 3", "wide.marker.move == 0"]},
+    {"press": "0f:lsl:8f", "shot": "walk-2", "note": "locked on, Hector walks left", "expect": ["wide.marker.ago < 3", "wide.marker.move == 0"]},
+    {"press": "0f:lsl:8f", "shot": "walk-3", "note": "locked on, Hector walks left", "expect": ["wide.marker.ago < 3", "wide.marker.move == 0"]},
+    {"press": "0f:lsl:8f", "shot": "walk-4", "note": "locked on, Hector walks left", "expect": ["wide.marker.ago < 3", "wide.marker.move == 0"]},
+    {"press": "0f:lsl:8f", "shot": "walk-5", "note": "locked on, Hector walks left", "expect": ["wide.marker.ago < 3", "wide.marker.move == 0"]},
+    {"press": "0f:black:5f,5f:wait:10f", "shot": "unlocked", "expect": ["wide.marker.ago > 3"]}
+  ]
+}
