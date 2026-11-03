@@ -86,6 +86,10 @@ cp $SRC/LICENSE $PKG/LICENSE.txt
 cat /src/XboxXBE-Recomp/THIRD_PARTY.txt $SRC/tools/linux/THIRD_PARTY-linux.txt /cache/tex-gyre-GUST-FONT-LICENSE.txt > $PKG/THIRD_PARTY.txt
 echo "Put your game here: its disc image (.iso), or the extracted disc (default.xbe with its folders)." > "$PKG/assets/PUT YOUR GAME HERE.txt"
 echo "Optional: an HD texture pack made for PCSX2. Put its replacement pictures here (.png or .dds files, folders inside are fine)." > "$PKG/textures/PUT A TEXTURE PACK HERE.txt"
+# files copied from a Windows drive come out executable: only the programs are (a file manager offers to run the rest)
+find $PKG -type f -exec chmod 644 {} + && find $PKG -type d -exec chmod 755 {} +
+chmod 755 $PKG/Castlevania $PKG/CastlevaniaEU $PKG/CastlevaniaLauncher $PKG/compiler/xbe_recomp $PKG/compiler/clang \
+    $PKG/compiler/ld.lld
 # nothing of the game goes out: no game code or its sources, no xbe or disc image
 bad=$(find $PKG \( -name '*.xbe' -o -name '*.iso' -o -name '*.cpp' -o -name '*.o' -o -name 'x86_recomp*' -o \
     -name image_symbols.h -o -name Castlevania.so -o -name CastlevaniaEU.so \) -print)

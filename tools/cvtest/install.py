@@ -234,8 +234,10 @@ def main_linux(release, game, scenario):
             (pkg / "assets" / e.name).symlink_to(e)
     else:
         (pkg / "assets" / game.name).symlink_to(game)
-    # a desktop session's own variables: no build tools' or this PC's XBE_ and CV_ settings
-    env = {k: os.environ[k] for k in ("HOME", "USER", "LANG", "XDG_RUNTIME_DIR", "PULSE_SERVER") if k in os.environ}
+    # a desktop session's own variables: no build tools' or this PC's XBE_ and CV_ settings. The graphics drivers the
+    # machine is set up with pass (in WSL, VK_DRIVER_FILES picks Mesa's dozen, Vulkan on the PC's GPU)
+    env = {k: os.environ[k] for k in ("HOME", "USER", "LANG", "XDG_RUNTIME_DIR", "PULSE_SERVER", "VK_DRIVER_FILES",
+                                      "VK_ICD_FILENAMES", "GALLIUM_DRIVER") if k in os.environ}
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
     ok = cvtest.run(str(scenario), None, False, install=pkg, env=env, checks=checks)
     return ok, root
