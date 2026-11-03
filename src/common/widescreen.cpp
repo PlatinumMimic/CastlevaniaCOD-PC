@@ -316,16 +316,19 @@ public:
         return true;
     }
 
-    // HDR output (the SDK's gpu/d3d12.cpp): the frame's UI starts at its first 2D draw into the back buffer after its
-    // last 3D draw that does not add to what is there (a glow or a spark adds, and stays a highlight). What it and the
-    // draws after it change, the HUD, text, menus, their backdrops and movies, keeps scene brightness
+    // HDR output, anti-aliasing and upscaling (the SDK's gpu/d3d12.cpp): the frame's UI starts at its first 2D draw
+    // into the back buffer after its last 3D draw that does not add to what is there (a glow or a spark adds, and stays
+    // a highlight). What it and the draws after it change, the HUD, text, menus, their backdrops and movies, keeps
+    // scene brightness, and is drawn at the screen's resolution over the anti-aliased 3D. A tint over the whole frame,
+    // untextured, is the scene's: a room tints its sky and then draws the rest of its world (the Abandoned Castle's
+    // throne room, after 120 of its 1250 3D draws), which would otherwise be left out of the anti-aliasing
     bool UiStart(bool additive) override {
         if (!back_buffer_) return false;
         if (d_.world) {
             ui_ = false;
             return false;
         }
-        if (ui_ || additive || !d_.squeeze || d_.target) return false;
+        if (ui_ || additive || !d_.squeeze || d_.target || (d_.whole && !d_.textured)) return false;
         ui_ = true;
         return true;
     }
