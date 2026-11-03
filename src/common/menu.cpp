@@ -386,7 +386,9 @@ void MenuUi(double fps) {
     ImVec2 size{io.DisplaySize.y * 0.75f, io.DisplaySize.y * 0.55f};
     ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {0.5f, 0.5f});
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::SetNextWindowFocus();
+    // the menu keeps the focus (keys and pads drive it), but not over an open drop-down: focusing its window would
+    // close the drop-down's list on the frame after it opened
+    if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) ImGui::SetNextWindowFocus();
     bool open = true;
     if (ImGui::Begin("Castlevania: Curse of Darkness - Settings", &open,
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
