@@ -2,7 +2,7 @@
   "name": "rtfix",
   "save": "julian",
   "perf": true,
-  "note": "Julian's 4 Nov reports: the first rooms' mountain path with its purple lamps (5.1-5.3), each looked at level, up, down and turned (the lamps' light on the far slopes; the light changing with the camera's height; the seams on the ground); the save room 5.27 (slow with ray tracing) and the hall 10.29, held for their frame times.",
+  "note": "Julian's 4 Nov reports: the room before the courtyard with its wooden bridge by the mountains (5.0, where the light changed with the camera's height) and the first rooms' path with its purple lamps (5.1-5.3), each looked at level, up, down and turned (the lamps' light on the far slopes; the light changing with the camera's height; the seams on the ground); the save room 5.27 (slow with ray tracing) and the hall 10.29, held for their frame times.",
   "steps": [
     {
       "press": "0:wait:11000",
@@ -23,6 +23,58 @@
         ]
       ],
       "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 0 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-0-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "5-0-up",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:50f,55f:wait:1f",
+      "shot": "5-0-down",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "5-0-mid",
+      "judge": false
+    },
+    {
+      "press": "0f:rsr:30f,40f:wait:1f",
+      "shot": "5-0-r1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsr:30f,40f:wait:1f",
+      "shot": "5-0-r2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsr:30f,40f:wait:1f",
+      "shot": "5-0-r3",
       "judge": false
     },
     {
