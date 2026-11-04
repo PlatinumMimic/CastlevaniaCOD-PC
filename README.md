@@ -303,11 +303,19 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
     surface's own, so the bounce lighting's haze is smoothed while the stone's carving stays as sharp as its picture.
     It needs Streamline's DLSS-RR files (`sl.dlss_d.dll`, `nvngx_dlssd.dll`), which the launcher's DLSS download now
     brings with the rest (a download from before asks to be made again).
-    With AMD FSR (any card), or DLSS without those files, the port's own denoiser takes the bounce lighting before
-    the anti-aliasing: each surface's light is gathered over up to 24 frames, followed to where the frame's motion
-    says it was a frame before (taken only from the same surface: what a character or the camera uncovers starts
-    afresh, so nothing trails behind them), then smoothed across its neighbours on the same surface by how much it
-    still varies, a little where the frames have settled it, more where they have not. It costs about 0.2 ms at 1080p.
+    With AMD FSR (any card), or DLSS without those files, the port's own denoiser takes all three before the
+    anti-aliasing. Each surface's light is gathered over the frames, followed to where the frame's motion says it was
+    a frame before (taken only from the same surface: what a character or the camera uncovers starts afresh, so
+    nothing trails behind them):
+    - the bounce lighting over up to 24 frames, then smoothed across its neighbours on the same surface by how much
+      it still varies, a little where the frames have settled it, more where they have not;
+    - the ambient occlusion over up to 16, held within what the pixel's neighbours show this frame, so a character's
+      contact shadow moves with them rather than trailing behind;
+    - the reflections over a few frames on a mirror-like surface and up to 12 on the roughest that still reflects
+      (a reflection slides over its surface as the eye moves, so a sharp one keeps little history and needs little),
+      held within this frame's neighbours the same way, then smoothed as widely as the surface's roughness blurs it.
+
+    Together they cost about 0.55 ms at 1080p on a GeForce RTX 5080.
 
   All three cost about 1.5 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms).
   The shaders are compiled to DXIL by the Windows SDK's `dxc` when the port is built; a build without it, or a card
