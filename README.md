@@ -300,16 +300,19 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
     angle) rather than adding to it, too.
     - *Lights*: what the game adds onto the frame as light, a torch's flame, a glow, a spell in Hector's hand, lights
       the room too. Each pixel samples one of them a frame (picked among a few by how strongly each lights it) with a
-      ray toward it for its shadow, so a character between a torch and the wall throws one. Flames the game draws as
-      flat sprites are put back into the room at the depth they show at, a little before their wall; a haze over the
-      whole view is no light. Their light is light above the room's own, so the room's average leaves it out: a torch
-      brightens its wall without the rest of the room dimming to make up for it.
+      ray toward it for its shadow, so a character between a torch and the wall throws one. The same lights every
+      frame (up to 128), so the light they throw holds still. Flames and glows the game draws as flat sprites are put
+      back into the room at the depth they show at, a little before their wall, a third as bright as the room's own
+      (an effect more than a lamp: a cloud of motes tints the wall behind it); a haze over the whole view is no light.
+      Their light is light above the room's own, so the room's average leaves it out: a torch brightens its wall
+      without the rest of the room dimming to make up for it.
     - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
       arch or a ledge shades what lies under it.
-    - *Light shafts*: the air catches the light on its way to the eye, the sky's through the room's openings and the
-      lights' around them (a torch's glow in the air, cut by the bars before it). Marched at a quarter of the frame's
-      size, gathered over the frames and added over the frame; the game's own fog stays as it was.
+    - *Light shafts*: the air catches the lights' light on its way to the eye: a torch's glow in the air, cut by the
+      bars before it. Marched at a quarter of the frame's size, gathered over the frames and added over the frame;
+      the game's own fog stays as it was (the sky's light in the air is left out: outdoors it laid a haze over every
+      open place, which washed the courtyards out and turned the door's blur white).
   - *Reflections*: a surface with a texture pack's material maps reflects what its mirror direction meets, that
     draw's picture lit as the game lit it, blurred as its roughness spreads the rays. The HD pack's maps are rough all
     over (about 0.8, no metal), too rough to reflect anything, so the port gives the pack's iron (railings, gates)
@@ -330,7 +333,8 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
     It needs Streamline's DLSS-RR files (`sl.dlss_d.dll`, `nvngx_dlssd.dll`), which the launcher's DLSS download now
     brings with the rest (a download from before asks to be made again).
     With AMD FSR (any card), or DLSS without those files, the port's own denoiser takes all three before the
-    anti-aliasing. Each surface's light is gathered over the frames, followed to where the frame's motion says it was
+    anti-aliasing. The bounce lighting goes through the port's own with Ray Reconstruction too: the lights' samples
+    left to it alone flickered on the walls they lit. Each surface's light is gathered over the frames, followed to where the frame's motion says it was
     a frame before (taken only from the same surface: what a character or the camera uncovers starts afresh, so
     nothing trails behind them):
     - the bounce lighting over up to 24 frames, then smoothed across its neighbours on the same surface by how much

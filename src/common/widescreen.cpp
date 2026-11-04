@@ -75,6 +75,7 @@ uint32_t SceneWord();     // telemetry.cpp
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);                              // texpack.cpp
 bool TexturePackCensus();                                                                // texpack.cpp
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive);            // texpack.cpp
+int RoomId();  // telemetry.cpp: map * 256 + room, -1 before the game has one
 void TexturePackCensusFlush();                                                           // texpack.cpp
 // the game's movies (movies.cpp): their frames from a movie pack's HD versions, and drawn larger
 void MoviesFrame(uint64_t presents);
@@ -191,6 +192,7 @@ public:
         d_.world = !prog && !a.pretransformed;
         if (d_.world) return;
         Program p = prog ? Classify(*s.vs) : Program{};
+        if (prog) d_.program = gpu::Hash(s.vs->program.data(), s.vs->program.size() * 4);
         d_.world = p.camera;
         d_.skinned = p.skinned;
         if (p.camera) d_.matrix = p.world ? kCameraWorld : kCamera;
@@ -340,8 +342,10 @@ public:
         // (CV_WATER_LIST=2: each 3D draw)
         static const int list = std::getenv("CV_WATER_LIST") ? std::atoi(std::getenv("CV_WATER_LIST")) : 0;
         if (list && (list == 2 || (d_.blend && !d_.additive)) && listed_.insert(d_.name).second)
-            LOGR("water? %016llx tex %ux%u blend %03x %03x%s, %u vertices", (unsigned long long)d_.name, d_.tex.width,
-                 d_.tex.height, d_.blend >> 16, d_.blend & 0xFFFF, d_.zwrite ? " writes depth" : "", d_.count);
+            LOGR("water? %016llx tex %ux%u blend %03x %03x%s, %u vertices, program %016llx, %d textures, room %d.%d",
+                 (unsigned long long)d_.name, d_.tex.width, d_.tex.height, d_.blend >> 16, d_.blend & 0xFFFF,
+                 d_.zwrite ? " writes depth" : "", d_.count, (unsigned long long)d_.program, d_.ntex, RoomId() >> 8,
+                 RoomId() & 0xFF);
         static const std::vector<uint64_t> extra = [] {
             std::vector<uint64_t> v;
             if (const char* e = std::getenv("CV_WATER"))
@@ -1056,6 +1060,7 @@ private:
         bool card = false;     // samples a target smaller than the frame
         bool skinned = false;  // a skinned program's (Program::skinned)
         bool additive = false;
+        uint64_t program = 0;  // its vertex program's (Classify's key), for CV_WATER_LIST
         uint32_t matrix = 0;  // the first of the constants its vertices are put on the PS2's screen by (0: none)
         uint32_t blend = 0;   // its blend's source and destination factors (0: none), for the trace
         bool zwrite = false;  // it writes depth, for the trace

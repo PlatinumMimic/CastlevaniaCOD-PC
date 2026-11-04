@@ -1,0 +1,232 @@
+{
+  "name": "rtrooms",
+  "save": "julian",
+  "perf": true,
+  "note": "Ray tracing across rooms: from the courtyard (5.1) warped to 5.0 and 5.2, a shot every 5 frames of each transition, then four 2 frames apart as the room comes in and three 3 frames apart after it settles (flicker between them).",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.1,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 1 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:180f",
+      "shot": "court",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.0",
+      "shot": "r0-t00",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t05",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t10",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t15",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t20",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t25",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t30",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t35",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r0-t40",
+      "judge": false
+    },
+    {
+      "until": "map == 5 and room == 0 and player.active and not loading",
+      "timeout": 40,
+      "shot": "r0-in",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r0-f1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r0-f2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r0-f3",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r0-f4",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:180f",
+      "shot": "r0-settled",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:3f",
+      "shot": "r0-s1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:3f",
+      "shot": "r0-s2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:3f",
+      "shot": "r0-s3",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.2",
+      "shot": "r2-t00",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t05",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t10",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t15",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t20",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t25",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t30",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t35",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:5f",
+      "shot": "r2-t40",
+      "judge": false
+    },
+    {
+      "until": "map == 5 and room == 2 and player.active and not loading",
+      "timeout": 40,
+      "shot": "r2-in",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r2-f1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r2-f2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r2-f3",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "r2-f4",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:180f",
+      "shot": "r2-settled",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:3f",
+      "shot": "r2-s1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:3f",
+      "shot": "r2-s2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:3f",
+      "shot": "r2-s3",
+      "judge": false
+    }
+  ]
+}
