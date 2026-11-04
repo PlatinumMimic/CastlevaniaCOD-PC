@@ -14,9 +14,10 @@
 // pieces at the frame's left and right edges have those edges pulled out to the screen's, so the backdrop reaches
 // the sides, its outer pieces that much wider. Only for a backdrop of its own, drawn before the 3D world and any 4:3
 // picture of the frame: the world's effects touch the edges too, and the title's logo is in pieces at the edges over
-// its castle. And for a window over the world while one is up (ModalUp: naming an Innocent Devil, a tip picked up),
-// before the HUD: drawn over the 3D world as four or six pieces each half the frame wide, its dark edges stood as a
-// 4:3 box in the middle of the screen.
+// its castle. And for a window over the world while one is up (ModalUp: naming an Innocent Devil), before the HUD:
+// drawn over the 3D world as six pieces each half the frame wide, its dark edges stood as a 4:3 box in the middle of
+// the screen. A tip is one picture over the whole frame instead, its words in it: it goes to the sides as kSides do,
+// its middle as it was and its edges' black reaching the screen's (its texture clamped past them).
 //
 // HUD at the edges (hud_edges): the HUD's draws, from the first of the frame that takes one of its textures (kHud: the
 // sheet of the health bar's frame, digits and icons, the bar's fill, the icon at the bottom left) to the frame pass, go
@@ -434,6 +435,12 @@ public:
         // the HUD, from its first draw to the frame pass, to the screen's edges
         float shift = 0;
         if (back_buffer_ && d_.target && d_.whole) hud_ = false;
+        // a window's page over the world while one is up (a tip: one picture over the whole frame, its words in it):
+        // to the screen's sides as a kSides picture is, its edges' black reaching them; it covers the HUD drawn before
+        // it, as on a 4:3 screen, and what is drawn on it after (its "Next") stays on it rather than going with the HUD
+        bool page = back_buffer_ && modal_ && squeeze && d_.whole && d_.textured && !d_.target && d_.sampled &&
+                    !d_.u.Empty() && world_ >= kWorld;
+        if (page) hud_ = false;
         bool card_fx = (card_now_seen_ || card_before_seen_) && !d_.target && d_.name &&
                        std::find(std::begin(kCardFx), std::end(kCardFx), d_.name) != std::end(kCardFx);
         if (squeeze && hud_free_ && !d_.world && !d_.whole && !d_.target && !card_fx) {
@@ -479,7 +486,7 @@ public:
         if (TexturePackCensus())
             for (int i = 0; i < d_.ntex; i++) TexturePackUsed(d_.texs[i], d_.world, d_.skinned, d_.additive);
         bool sides = squeeze && d_.whole && d_.textured && !d_.target && d_.sampled && !d_.u.Empty() &&
-                     std::find(std::begin(kSides), std::end(kSides), d_.name) != std::end(kSides);
+                     (page || std::find(std::begin(kSides), std::end(kSides), d_.name) != std::end(kSides));
         ext[0] = squeeze ? Squeeze() : 1.0f;
         ext[1] = menu.strip ? menu.left : back_buffer_ && d_.target ? d_.stretch : 1.0f;
         // a fade or tint over the whole frame, the whole height too: to the screen's edges exactly
