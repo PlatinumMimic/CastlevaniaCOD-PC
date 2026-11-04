@@ -272,9 +272,11 @@ with (a missing one shows as ?) and says which are missing; `install.py` runs it
 ### Settings Menu
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be
 changed in the launcher (Game tab), for keyboards where F10 needs Fn or is taken by another program. Every change
-applies at once and is saved to `castlevania.toml`. While the menu is open the game gets no input; Escape, the menu
-key or L3 + R3 closes it. A controller runs it all: the d-pad and A choose, LB and RB turn its pages, B or Start
-closes it, and the buttons held as it closes do not reach the game. By Calm-Consideration41.
+applies at once and is saved to `castlevania.toml`. Its pages are the launcher's (Display, Graphics, View, Game,
+Controls, Tools), each in the launcher's sections. While the menu is open the game gets no input but a controller's
+right stick, which turns the camera, to look at what a setting changes; Escape, the menu key or L3 + R3 closes it. A
+controller runs it all: the d-pad (or left stick) moves and A chooses, LB and RB turn its pages, B or Start closes it,
+and the buttons held as it closes do not reach the game. By Calm-Consideration41.
 
 ### Display
 - **Any Resolution** - Renders at your display's resolution instead of 640x480.
@@ -348,7 +350,8 @@ background first); the size pictures load at applies from the next start.
 
 ### General
 - **FPS Counter** - Optional, in the corner.
-- **Pause on Focus Loss** - The game stops while another window is in front (on by default).
+- **Pause on Focus Loss** - The game stops while another window is in front (on by default), and so does its sound,
+  the looped ones too (the first courtyard's fountain).
 - **Lament of Innocence Save** - As the PS2 game did when it found a Lament of Innocence save on the memory card:
   a Moai to pick up at the far end of the room behind the first courtyard, beside the potion, for completing the
   item list (the launcher's or the in-game menu's Game page; `lament_save = true`).

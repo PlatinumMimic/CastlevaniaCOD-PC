@@ -64,6 +64,7 @@
 #include "core/log.h"
 #include "gpu/backend.h"
 #include "kernel/memory.h"
+#include "audio/audio.h"
 #include "xdk/d3d8.h"
 
 extern std::atomic<bool> g_closing;  // below: the window is closing
@@ -580,7 +581,10 @@ void KeyboardPad(int port, input::Pad& p) {
     // which go on behind other windows
     if (g_pause_on_focus_loss && Script().empty() && !LiveOn() && !Focused()) {
         RumbleFrame(port, true);  // the motors run until set again: they stop with the game
+        // and the sound: the mixer goes on by itself, so a looped sound (the courtyard's fountain) played on
+        audio::g_paused = true;
         while (!Focused() && !g_closing && IsWindow(g_hwnd)) Sleep(50);
+        audio::g_paused = false;
     }
     if (LiveOn()) LiveWait();
     p.connected = true;
@@ -596,6 +600,7 @@ void KeyboardPad(int port, input::Pad& p) {
         Rest(p.lx, p.ly);
         Rest(p.rx, p.ry);
     }
+    int16_t camera_x = p.rx, camera_y = p.ry;  // a controller's right stick, the camera's under the settings menu
     Keyboard(p);
     // a test's presses: into the pad, or with the virtual controller into it, which SDL reads back the frame after
     input::Pad scripted{};
@@ -625,9 +630,13 @@ void KeyboardPad(int port, input::Pad& p) {
         hold = any;
     }
     if (menu || hold) {
-        // the menu has the keyboard and controller
+        // the menu has the keyboard and controller, but for a controller's right stick: the camera, to look around
+        // at what a setting changes (the field of view, the distances, the anti-aliasing). The arrow keys move
+        // through the menu, so they do not turn it
         p = input::Pad{};
         p.connected = true;
+        p.rx = g_invert_camera_x ? Flip(camera_x) : camera_x;
+        p.ry = g_invert_camera_y ? Flip(camera_y) : camera_y;
         TelemetryFrame(p);
         return;
     }

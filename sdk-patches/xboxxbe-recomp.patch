@@ -1148,7 +1148,7 @@ index a739de7..41b16c4 100644
 +}  // namespace app
 +#endif
 diff --git a/runtime/audio/audio.h b/runtime/audio/audio.h
-index 6daa1dd..e1c9700 100644
+index 6daa1dd..39451b8 100644
 --- a/runtime/audio/audio.h
 +++ b/runtime/audio/audio.h
 @@ -1,4 +1,7 @@
@@ -1159,10 +1159,14 @@ index 6daa1dd..e1c9700 100644
  #include <cstdint>
  #include <functional>
  
-@@ -9,4 +12,18 @@ constexpr uint32_t kRate = 48000;
+@@ -9,4 +12,22 @@ constexpr uint32_t kRate = 48000;
  // the platform output pulls interleaved stereo float frames from render
  void StartOutput(std::function<void(float* out, uint32_t frames)> render);
  
++// the game paused (a game's pause on focus loss, which stops it at its pad read): the output plays silence and renders
++// nothing, so every voice waits where it is, a looped one too, and goes on from there
++inline std::atomic<bool> g_paused{false};
++
 +// what the output has played, for tests (a game's telemetry): the frames it rendered, and those of its blocks with
 +// sound in them (a sample over -60 dB)
 +struct Played {
@@ -1171,7 +1175,7 @@ index 6daa1dd..e1c9700 100644
 +inline std::atomic<uint64_t> g_played_frames{0}, g_played_loud{0};
 +inline void Count(const float* b, uint32_t frames) {
 +    float peak = 0;
-+    for (uint32_t i = 0; i < frames * 2; i++) peak = std::max(peak, std::fabs(b[i]));
++    for (uint32_t i = 0; i < frames * 2; i++) peak = (std::max)(peak, std::fabs(b[i]));  // (std::max): a windows.h without NOMINMAX before it
 +    g_played_frames += frames;
 +    if (peak > 0.001f) g_played_loud += frames;
 +}
@@ -1179,7 +1183,7 @@ index 6daa1dd..e1c9700 100644
 +
  }  // namespace audio
 diff --git a/runtime/audio/xaudio2.cpp b/runtime/audio/xaudio2.cpp
-index f95ebf5..96eff60 100644
+index f95ebf5..2003986 100644
 --- a/runtime/audio/xaudio2.cpp
 +++ b/runtime/audio/xaudio2.cpp
 @@ -1,4 +1,5 @@
@@ -1189,15 +1193,28 @@ index f95ebf5..96eff60 100644
  #ifndef WIN32_LEAN_AND_MEAN
  #define WIN32_LEAN_AND_MEAN
  #endif
-@@ -58,6 +59,7 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+@@ -8,6 +9,7 @@
+ #include <windows.h>
+ #include <xaudio2.h>
+ 
++#include <algorithm>
+ #include <thread>
+ #include <vector>
+ 
+@@ -57,7 +59,11 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+                 continue;
              }
              float* b = &bufs[(n % kSlots) * kFrames * 2];
-             render(b, kFrames);
+-            render(b, kFrames);
++            if (g_paused.load(std::memory_order_relaxed))
++                std::fill(b, b + kFrames * 2, 0.0f);
++            else
++                render(b, kFrames);
 +            Count(b, kFrames);
              XAUDIO2_BUFFER xb{};
              xb.AudioBytes = kFrames * 8;
              xb.pAudioData = reinterpret_cast<const BYTE*>(b);
-@@ -68,3 +70,4 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+@@ -68,3 +74,4 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
  }
  
  }  // namespace audio
@@ -1675,7 +1692,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..027b83a 100644
+index fe65837..8f326fe 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,6 +15,8 @@
@@ -3749,7 +3766,7 @@ index fe65837..027b83a 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4362,1146 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4362,1143 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -4859,10 +4876,11 @@ index fe65837..027b83a 100644
 +    hdr_cb_[2] = kHdrKnee;
 +}
 +
-+// the first controller for ImGui's navigation (a game's settings menu), before its frame: SDL reads any controller,
-+// where the Win32 backend knows XInput's alone (a PlayStation or Switch pad did nothing in the menu). The D-pad and
-+// left stick move, A takes, B backs out, the right stick scrolls; the other buttons are the game's to use
-+// (input::Raw), X and the shoulders left out so as not to start ImGui's window switching or tweak speeds
++// the first controller for ImGui's navigation (a game's settings menu), before its frame, on both platforms: SDL
++// reads any controller, where the Win32 backend knows XInput's alone (a PlayStation or Switch pad did nothing in the
++// menu). The D-pad and left stick move, A takes, B backs out; the other buttons are the game's to use (input::Raw), X
++// and the shoulders left out so as not to start ImGui's window switching or tweak speeds, the right stick the game's
++// camera under the menu
 +void UiPad() {
 +    input::Pad p = input::Raw(0);
 +    if (!p.connected) return;
@@ -4883,10 +4901,6 @@ index fe65837..027b83a 100644
 +    stick(ImGuiKey_GamepadLStickRight, p.lx);
 +    stick(ImGuiKey_GamepadLStickUp, p.ly);
 +    stick(ImGuiKey_GamepadLStickDown, -int(p.ly));
-+    stick(ImGuiKey_GamepadRStickLeft, -int(p.rx));
-+    stick(ImGuiKey_GamepadRStickRight, p.rx);
-+    stick(ImGuiKey_GamepadRStickUp, p.ry);
-+    stick(ImGuiKey_GamepadRStickDown, -int(p.ry));
  }
  
  void D3D12Backend::RenderUi() {
@@ -4901,7 +4915,7 @@ index fe65837..027b83a 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +5510,209 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5507,209 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -5112,7 +5126,7 @@ index fe65837..027b83a 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +5722,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5719,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -5123,7 +5137,7 @@ index fe65837..027b83a 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +5742,12 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5739,12 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -5136,7 +5150,7 @@ index fe65837..027b83a 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +5758,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +5755,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -5169,7 +5183,7 @@ index fe65837..027b83a 100644
      }
  }
  
-@@ -3317,12 +5796,14 @@ void LogPerf() {
+@@ -3317,12 +5793,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -5188,7 +5202,7 @@ index fe65837..027b83a 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +5812,98 @@ void LogPerf() {
+@@ -3331,25 +5809,98 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -5292,7 +5306,7 @@ index fe65837..027b83a 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +5914,33 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +5911,33 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -5326,7 +5340,7 @@ index fe65837..027b83a 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +5959,44 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +5956,44 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -5373,7 +5387,7 @@ index fe65837..027b83a 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +6004,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +6001,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -7691,14 +7705,15 @@ index bec6e36..088429d 100644
              W32(value + 0x58, 0x00400100);            // factory video standard
 diff --git a/runtime/linux/audio.cpp b/runtime/linux/audio.cpp
 new file mode 100644
-index 0000000..63981d5
+index 0000000..1898f36
 --- /dev/null
 +++ b/runtime/linux/audio.cpp
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,58 @@
 +// Linux: mixer output through SDL's audio (PipeWire, PulseAudio or ALSA, whichever the system has)
 +#ifndef _WIN32
 +#include <SDL3/SDL.h>
 +
++#include <algorithm>
 +#include <vector>
 +
 +#include "audio/audio.h"
@@ -7720,7 +7735,10 @@ index 0000000..63981d5
 +    auto* out = static_cast<Output*>(user);
 +    constexpr int kBlockBytes = int(kFrames * 2 * sizeof(float));
 +    for (int added = 0; added < additional; added += kBlockBytes) {
-+        out->render(out->buffer.data(), kFrames);
++        if (g_paused.load(std::memory_order_relaxed))
++            std::fill(out->buffer.begin(), out->buffer.end(), 0.0f);
++        else
++            out->render(out->buffer.data(), kFrames);
 +        Count(out->buffer.data(), kFrames);
 +        SDL_PutAudioStreamData(stream, out->buffer.data(), kBlockBytes);
 +    }
@@ -8985,7 +9003,7 @@ index 0000000..08dbd97
 +#endif
 diff --git a/runtime/linux/main.cpp b/runtime/linux/main.cpp
 new file mode 100644
-index 0000000..dd921e5
+index 0000000..b455d5e
 --- /dev/null
 +++ b/runtime/linux/main.cpp
 @@ -0,0 +1,354 @@
@@ -9316,7 +9334,7 @@ index 0000000..dd921e5
 +    io.IniFilename = nullptr;
 +    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 +    linuxapp::ImGuiInit(window);
-+    linuxapp::g_nav_pad = [] { return static_cast<SDL_Gamepad*>(input::SdlGamepad(0)); };
++    // the controller reaches the settings menu through the renderer's UiPad (gpu/d3d12.cpp), as on Windows
 +
 +    input::Init();
 +    if (app::kGame.window) app::kGame.window(window);

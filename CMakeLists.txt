@@ -1,7 +1,7 @@
 # Castlevania: Curse of Darkness (original Xbox), statically recompiled
 
 cmake_minimum_required(VERSION 3.25)
-project(castlevania VERSION 1.8.2 LANGUAGES C CXX)
+project(castlevania VERSION 1.8.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -62,7 +62,7 @@ his wall). After a test fails the next plays a fresh game. `--alone` plays every
 | Frame rate | `fps`, `fps-uncapped` | held at 60; well above it with the cap and v-sync off |
 | Graphics card choice | `gpu-1`, `gpu-2`, ... | each card the launcher lists draws the game when named in `gpu` |
 | The in-game settings menu (F10, L3 + R3) | `menu`, `vpad`, `display` (*Linux*) | opened by both sticks and by F10; a switch, a drop-down opened and a choice taken, each saved with the launcher's keys kept; Reset to defaults; Close; the FPS counter in the corner |
-| The settings menu by controller | `menu-pad` | a controller alone: RB and LB turning its pages both ways round, B closing it, Start closing it without the game's pause menu opening |
+| The settings menu by controller | `menu-pad` | a controller alone: RB and LB turning its pages both ways round, B closing it, Start closing it without the game's pause menu opening; the D-pad moving to a setting and A switching it on and off; the right stick turning the camera under the menu |
 | Display modes | `display` (*Linux*) | borderless and fullscreen fill the display, windowed is back to its size |
 | Linux on Wayland | `wayland` (*Linux*) | a new game on a headless Weston through SDL's Wayland video |
 
@@ -93,7 +93,7 @@ What no test here reaches, to try before a release when it changed:
 
 - A real controller over USB and Bluetooth (an Xbox, a DualSense, a Switch Pro), plugged in while playing, its rumble.
 - Fullscreen and borderless on Windows (the tests take the PC's screen only on Linux), with a monitor of another size.
-- Pause on focus loss (off in every scripted run, which goes on behind other windows).
+- Pause on focus loss, and its sound stopping with it, the courtyard's fountain too (off in every scripted run, which goes on behind other windows).
 - The launcher's file dialog (Add disc image) and the buttons that open the saves, logs and textures folders.
 - SmartScreen and a browser's download warning for a new release (the README's steps).
 - A dev build's program icon, made from the game's copy (packages have none).

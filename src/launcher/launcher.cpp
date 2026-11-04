@@ -2144,6 +2144,14 @@ Picture LoadCrest() {
 #endif
 }
 
+// a progress bar with its text still, in its middle: ImGui's own moves the text along with the fill
+void Progress(float fraction, ImVec2 size, const char* text) {
+    ImGui::ProgressBar(fraction, size, "");
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax(), t = ImGui::CalcTextSize(text);
+    ImGui::GetWindowDrawList()->AddText({a.x + (b.x - a.x - t.x) * 0.5f, a.y + (b.y - a.y - t.y) * 0.5f},
+                                        ImGui::GetColorU32(ImGuiCol_Text), text);
+}
+
 // the crest made from the player's own files, for a launcher without the icon (Linux, a release): as the build makes
 // the icon (src/common/crest.h), the HD pack's picture of it in its ring of runes, else the xbe's title image (assets'
 // default.xbe, or a disc image's); at the icon's largest size, 256. None without either
@@ -2626,8 +2634,8 @@ private:
     void VendorFiles(uint32_t k) {
         bool fsr = k == 1;
         if (fg_download_.running && fg_download_.kind == k) {
-            ImGui::ProgressBar(fg_download_.progress, {-FLT_MIN, S(30)},
-                               fsr ? T("Downloading from AMD...") : T("Downloading from NVIDIA..."));
+            Progress(fg_download_.progress, {-FLT_MIN, S(30)},
+                     fsr ? T("Downloading from AMD...") : T("Downloading from NVIDIA..."));
             return;
         }
         if (HaveFrameGen(ExeDir(), k)) {
@@ -3129,7 +3137,7 @@ private:
         if (!files_.assets.empty()) Wrapped(g_small, kMuted, Utf8(files_.assets.wstring()).c_str());
         ImGui::Dummy({0, S(6)});
         if (import_.running) {
-            ImGui::ProgressBar(import_.progress, {-FLT_MIN, S(36)}, T("Copying disc image..."));
+            Progress(import_.progress, {-FLT_MIN, S(36)}, T("Copying disc image..."));
         } else {
             if (Button(T("Add disc image"), {0, 0}, Kind::Primary)) AddImage();
             ImGui::SameLine();

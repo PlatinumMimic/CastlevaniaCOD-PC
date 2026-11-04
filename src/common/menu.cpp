@@ -180,6 +180,14 @@ bool BeginRows(const char* id) {
     return true;
 }
 
+// a page's group of settings under its heading, as the launcher's pages have them: the rows of a table of its own,
+// which the caller ends
+bool Section(const char* title, const char* id) {
+    ImGui::Spacing();
+    ImGui::SeparatorText(title);
+    return BeginRows(id);
+}
+
 // HDR: the switch with the display's state beside it, then the two brightness levels, which take effect at once
 void HdrRows(bool& save) {
     app::Settings& s = app::Get();
@@ -224,7 +232,7 @@ void HdrRows(bool& save) {
 
 void DisplayTab(bool& save) {
     app::Settings& s = app::Get();
-    if (!BeginRows("display")) return;
+    if (!Section("Screen", "display")) return;
     Row("Display mode", "Borderless fills the monitor without changing its mode and switches away instantly. "
                         "Fullscreen switches the monitor to the resolution below.");
     if (Choice("##mode", s.display_mode,
@@ -255,20 +263,18 @@ void DisplayTab(bool& save) {
     // no frame rate cap here: the game's logic steps once a frame, so it is held at the 60 it was made for
     Row("V-Sync", "Off can tear, and lowers input latency a little.");
     save |= Check("##vsync", &s.vsync);
-#ifdef _WIN32
-    HdrRows(save);  // Linux sends no HDR picture
-#endif
     ImGui::EndTable();
+#ifdef _WIN32  // Linux sends no HDR picture
+    if (Section("HDR", "hdr")) {
+        HdrRows(save);
+        ImGui::EndTable();
+    }
+#endif
 }
 
 void GraphicsTab(bool& save) {
     app::Settings& s = app::Get();
-    if (!BeginRows("graphics")) return;
-    Row("Render scale", "Of the output height. Above 100% supersamples for a sharper, smoother picture.");
-    save |= Choice<uint32_t>("##scale", s.render_percent, {50, 75, 100, 150, 200},
-                             {"50%", "75%", "100%", "150%", "200%"});
-    Row("Anisotropic filtering", "Sharper textures at an angle.");
-    save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
+    if (!Section("Anti-aliasing and upscaling", "aa")) return;
 #ifdef _WIN32
     Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames: AMD FSR on any graphics card, "
                          "NVIDIA DLSS on a GeForce RTX (from the next start once chosen). Their files come from AMD and "
@@ -332,6 +338,8 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled("not used by DLSS");
         }
     }
+    ImGui::EndTable();
+    if (!Section("Lighting and detail", "detail")) return;
     Row("Ambient occlusion", "Soft shadow where surfaces meet: corners, the gaps between stones, under railings, where "
                              "feet touch the floor. Worked out from the 3D's depth, and smoothed over the frames by the "
                              "anti-aliasing when it runs. Low is lighter on the graphics card.");
@@ -339,6 +347,20 @@ void GraphicsTab(bool& save) {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
         save |= Choice<uint32_t>("##ao", g_ambient_occlusion, {0, 1, 2}, {"Off", "Low", "High"});
     }
+    Row("Anisotropic filtering", "Sharper textures at an angle.");
+    save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
+    Row("Render scale", "Of the output height. Above 100% supersamples for a sharper, smoother picture.");
+    save |= Choice<uint32_t>("##scale", s.render_percent, {50, 75, 100, 150, 200},
+                             {"50%", "75%", "100%", "150%", "200%"});
+    ImGui::EndTable();
+    if (!Section("HD texture pack", "pack")) return;
+    Row("HD texture pack", "The pictures of an HD texture pack in the textures folder beside the game, in place of the "
+                           "game's own. Off: the game's textures, as the Xbox drew them. It changes as you switch it.");
+    save |= Check("##pack", &g_texture_pack);
+    Row("Surface depth", "HD texture pack: walls, floors and rock seen into, their mortar, cracks and crevices sunk "
+                         "below the surface and moving with the camera (parallax). Low is shallower; Off shades them "
+                         "only, flat.");
+    save |= Choice<uint32_t>("##depth", g_surface_depth, {0, 1, 2}, {"Off", "Low", "High"});
     // DLSS turned into multi frame generation by the NVIDIA app slows the game (FrameGenSeen): said in its help too
     static std::string fg_help;
     bool fg_slow = g_fg_seen.kind == 2 && g_fg_seen.game_fps > 1 && g_fg_seen.game_fps < 57 &&
@@ -358,6 +380,8 @@ void GraphicsTab(bool& save) {
         fg_help += line;
     }
 #ifdef _WIN32  // Linux has none: AMD's and NVIDIA's libraries are Windows ones
+    ImGui::EndTable();
+    if (!Section("Frame generation", "framegen")) return;
     Row("Frame generation", fg_help.c_str());
     {
         static const uint32_t running = s.frame_generation;  // as this run started
@@ -376,6 +400,13 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled("on (paused in this menu)");
     }
 #endif
+    ImGui::EndTable();
+}
+
+// what the camera shows: the screen's shape, the movies, how wide and far it sees
+void ViewTab(bool& save) {
+    app::Settings& s = app::Get();
+    if (!Section("Widescreen", "wide")) return;
     Row("Widescreen", "More of the world at the sides, nothing stretched: 16:9 for a 16:9 screen, 16:10 for a 16:10 "
                       "one (1920x1200). The HUD and menus stay 4:3 in the middle. Off shows the game 4:3, as on a "
                       "4:3 TV.");
@@ -394,6 +425,8 @@ void GraphicsTab(bool& save) {
                                         "screen's left side and its right column (status, equipment) toward the right, "
                                         "the page buttons staying in the middle, rather than all of it in the 4:3 middle.");
     save |= Check("##menuspread", &g_menu_spread);
+    ImGui::EndTable();
+    if (!Section("Movies", "movies")) return;
     Row("HD movies", "The story's movies from an HD movie pack (a movies folder beside the game), where it has them. "
                      "Off plays the game's own.");
     save |= Check("##hdmovies", &g_hd_movies);
@@ -401,13 +434,8 @@ void GraphicsTab(bool& save) {
                       "and below it. Fill: the whole screen, a little of the picture's top and bottom cut off on a "
                       "16:9 screen. Original: the game's 4:3 frame with its bars.");
     save |= Choice<uint32_t>("##movieview", g_movie_view, {1, 2, 0}, {"Fit", "Fill", "Original"});
-    Row("HD texture pack", "The pictures of an HD texture pack in the textures folder beside the game, in place of the "
-                           "game's own. Off: the game's textures, as the Xbox drew them. It changes as you switch it.");
-    save |= Check("##pack", &g_texture_pack);
-    Row("Surface depth", "HD texture pack: walls, floors and rock seen into, their mortar, cracks and crevices sunk "
-                         "below the surface and moving with the camera (parallax). Low is shallower; Off shades them "
-                         "only, flat.");
-    save |= Choice<uint32_t>("##depth", g_surface_depth, {0, 1, 2}, {"Off", "Low", "High"});
+    ImGui::EndTable();
+    if (!Section("Camera and distance", "camera")) return;
     Row("Field of view", "How much of the world the camera takes in: 100% is the game's own, which each room's camera "
                          "sets; more is wider. Story scenes keep the game's.");
     {
@@ -442,12 +470,14 @@ void GraphicsTab(bool& save) {
 }
 
 void GameTab(bool& save) {
-    if (!BeginRows("game")) return;
+    if (!Section("General", "game")) return;
     Row("FPS counter", "The frame rate in the top left corner; with frame generation, the frames reaching the "
                        "screen with the game's own beside them.");
     save |= Check("##fpsc", &g_fps_counter);
     Row("Pause on focus loss", "Stops the game while another window is in front.");
     save |= Check("##pause", &g_pause_on_focus_loss);
+    ImGui::EndTable();
+    if (!Section("Bonus", "bonus")) return;
     Row("Lament of Innocence save", "As the PS2 game with a Lament of Innocence save on the memory card: a Moai "
                                     "at the far end of the room behind the first courtyard, beside the potion.");
     save |= Check("##lament", &g_lament_save);
@@ -455,7 +485,7 @@ void GameTab(bool& save) {
 }
 
 void ControlsTab(bool& save) {
-    if (BeginRows("layout")) {
+    if (Section("Controller", "layout")) {
         Row("Button layout", "PS2: the PS2's button icons (from an HD texture pack made from the PS2 game) and its "
                              "shoulders: L1 resets the camera, R1 guards, L2 and R2 lock on. From the next start.");
         save |= Choice<uint32_t>("##layout", g_button_layout, {0, 1}, {"Xbox", "PS2"});
@@ -463,10 +493,16 @@ void ControlsTab(bool& save) {
                               "little, as on the PS2. Xbox: the Xbox release's, where a stick near up, down, left or "
                               "right walks straight along it and a walk starts at a third of his speed.");
         save |= Choice<bool>("##stick", g_ps2_stick, {true, false}, {"PS2", "Xbox"});
+        ImGui::EndTable();
+    }
+    if (Section("Camera", "camstick")) {
         Row("Invert camera left / right", "The right stick (and the arrow keys) turn the camera the other way across.");
         save |= Check("##invx", &g_invert_camera_x);
         Row("Invert camera up / down", "The right stick (and the arrow keys) move the camera the other way up and down.");
         save |= Check("##invy", &g_invert_camera_y);
+        ImGui::EndTable();
+    }
+    if (Section("Movement", "move")) {
         Row("Sprint", "Click the left stick in (L3), or press Left Shift, while Hector walks: he sprints at this speed "
                       "until you let go of the stick. Only his walk is faster: enemies, his dodge, jumps and attacks "
                       "keep their speed.");
@@ -474,6 +510,7 @@ void ControlsTab(bool& save) {
         ImGui::EndTable();
     }
     ImGui::Spacing();
+    ImGui::SeparatorText("Keyboard");
     ImGui::TextWrapped("Xbox, PlayStation and Switch controllers work as player 1. The keyboard plays alongside:");
     ImGui::Spacing();
     static const char* kKeys[][2] = {
@@ -720,13 +757,14 @@ void MenuUi(double fps) {
     rb_was = rb;
     start_was = start;
     b_was = b;
+    static bool shown = false;  // the menu drawn the frame before
     if (!g_open) {
-        busy_was = false;
+        busy_was = shown = false;
         g_marks.Write(0);
         return;
     }
     if (start_hit || (b_hit && !busy_was)) {
-        g_open = false;
+        g_open = shown = false;
         g_marks.Write(0);
         return;
     }
@@ -736,9 +774,10 @@ void MenuUi(double fps) {
     ImVec2 size{std::min(io.DisplaySize.y * 0.8f, io.DisplaySize.x * 0.45f), io.DisplaySize.y - 2 * margin};
     ImGui::SetNextWindowPos({io.DisplaySize.x - margin, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {1.0f, 0.5f});
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    // the menu keeps the focus (keys and pads drive it), but not over an open drop-down: focusing its window would
-    // close the drop-down's list on the frame after it opened
-    if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) ImGui::SetNextWindowFocus();
+    // the menu takes the focus as it opens (keys and pads drive it). Taking it every frame put the D-pad's and arrow
+    // keys' place back to the window itself each frame, so they moved through nothing and A chose nothing
+    if (!shown) ImGui::SetNextWindowFocus();
+    shown = true;
     bool open = true;
     g_focus_help = nullptr;
     if (ImGui::Begin("Castlevania: Curse of Darkness - Settings", &open,
@@ -758,13 +797,13 @@ void MenuUi(double fps) {
         // the pages; the shoulders turn them as a tab bar's arrows would
         static int page = 0;
         int want = -1;
-        constexpr int kPages = 5;
+        constexpr int kPages = 6;
         if (lb_hit) want = (page + kPages - 1) % kPages;
         if (rb_hit) want = (page + 1) % kPages;
         auto flags = [&](int i) { return want == i ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None; };
         // its items one list with the buttons below for the D-pad (NavFlattened)
         if (ImGui::BeginChild("tabs", {0, -footer}, ImGuiChildFlags_NavFlattened)) {
-            if (ImGui::BeginTabBar("tabbar")) {
+            if (ImGui::BeginTabBar("tabbar", ImGuiTabBarFlags_FittingPolicyScroll)) {
                 bool display = ImGui::BeginTabItem("Display", nullptr, flags(0));
                 g_marks.Mark("tab.Display");
                 if (display) {
@@ -779,24 +818,31 @@ void MenuUi(double fps) {
                     GraphicsTab(save);
                     ImGui::EndTabItem();
                 }
-                bool game = ImGui::BeginTabItem("Game", nullptr, flags(2));
+                bool view = ImGui::BeginTabItem("View", nullptr, flags(2));
+                g_marks.Mark("tab.View");
+                if (view) {
+                    page = 2;
+                    ViewTab(save);
+                    ImGui::EndTabItem();
+                }
+                bool game = ImGui::BeginTabItem("Game", nullptr, flags(3));
                 g_marks.Mark("tab.Game");
                 if (game) {
-                    page = 2;
+                    page = 3;
                     GameTab(save);
                     ImGui::EndTabItem();
                 }
-                bool controls = ImGui::BeginTabItem("Controls", nullptr, flags(3));
+                bool controls = ImGui::BeginTabItem("Controls", nullptr, flags(4));
                 g_marks.Mark("tab.Controls");
                 if (controls) {
-                    page = 3;
+                    page = 4;
                     ControlsTab(save);
                     ImGui::EndTabItem();
                 }
-                bool tools = ImGui::BeginTabItem("Tools", nullptr, flags(4));
+                bool tools = ImGui::BeginTabItem("Tools", nullptr, flags(5));
                 g_marks.Mark("tab.Tools");
                 if (tools) {
-                    page = 4;
+                    page = 5;
                     ToolsTab();
                     ImGui::EndTabItem();
                 }
