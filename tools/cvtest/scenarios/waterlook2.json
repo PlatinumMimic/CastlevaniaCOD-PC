@@ -1,0 +1,298 @@
+{
+  "name": "waterlook2",
+  "save": "julian",
+  "perf": true,
+  "note": "Water hunt: in each room the camera turned round in six steps, a shot at each (to see the room's water and whether it reflects).",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.16,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 16 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "5-16-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-16-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-16-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-16-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-16-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-16-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-16-6",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.20,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 20 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "5-20-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-20-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-20-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-20-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-20-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-20-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "5-20-6",
+      "judge": false
+    },
+    {
+      "press": "0:warp=9.4,10f:wait:20f"
+    },
+    {
+      "until": "map == 9 and room == 4 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "9-4-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-4-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-4-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-4-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-4-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-4-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-4-6",
+      "judge": false
+    },
+    {
+      "press": "0:warp=9.5,10f:wait:20f"
+    },
+    {
+      "until": "map == 9 and room == 5 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "9-5-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-5-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-5-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-5-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-5-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-5-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "9-5-6",
+      "judge": false
+    },
+    {
+      "press": "0:warp=10.7,10f:wait:20f"
+    },
+    {
+      "until": "map == 10 and room == 7 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "10-7-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "10-7-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "10-7-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "10-7-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "10-7-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "10-7-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,30f:wait:30f",
+      "shot": "10-7-6",
+      "judge": false
+    }
+  ]
+}

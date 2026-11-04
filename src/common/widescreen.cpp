@@ -403,6 +403,11 @@ public:
             return false;
         }
         if (ui_ || additive || !d_.squeeze || d_.target || (d_.whole && !d_.textured)) return false;
+        // a sprite the game draws wholly off the frame is no UI: an effect of the world's (10.5's haze, thousands of
+        // pixels to the side) closed the 3D before the torches' glows were drawn, and ray tracing never saw them
+        const Span& x = d_.x;
+        const Span& y = d_.y;
+        if (!x.Empty() && !y.Empty() && (x.hi < 0 || x.lo > d_.gw || y.hi < 0 || y.lo > d_.gh)) return false;
         ui_ = true;
         return true;
     }
@@ -498,14 +503,16 @@ public:
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
         // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
         if (trace_now_ && d_.world)
-            LOGR("wide %llu: into %08x%s 3D, n %u tex %ux%u %016llx blend %08x%s", (unsigned long long)frame_, trace_rt_,
-                 trace_device_ ? " device" : "", d_.count, d_.tex.width, d_.tex.height, (unsigned long long)d_.name,
-                 d_.blend, d_.zwrite ? " zwrite" : "");
+            LOGR("wide %llu: into %08x%s 3D, n %u tex %ux%u %016llx blend %08x%s%s%s", (unsigned long long)frame_,
+                 trace_rt_, trace_device_ ? " device" : "", d_.count, d_.tex.width, d_.tex.height,
+                 (unsigned long long)d_.name, d_.blend, d_.zwrite ? " zwrite" : "", d_.ntex ? " pack " : "",
+                 d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "");
         else if (trace_now_ && d_.squeeze)
-            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g%s blend %u: %s%s",
+            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g%s blend %u%s%s: %s%s",
                  (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
                  d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, (unsigned long long)d_.name, d_.u.lo, d_.u.hi,
-                 d_.target ? " target" : "", src_blend, d_.whole ? "whole, " : "",
+                 d_.target ? " target" : "", src_blend, d_.ntex ? " pack " : "",
+                 d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "", d_.whole ? "whole, " : "",
                  sides ? "to the sides" : edges ? "edges out" : menu.strip ? "menu strip" : menu.backdrop ? "menu backdrop"
                  : shift < 0 ? (menu_ ? "menu left" : "hud left") : shift > 0 ? (menu_ ? "menu right" : "hud right")
                  : squeeze ? "squeezed" : "kept");

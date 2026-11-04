@@ -630,7 +630,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..9a30b80 100644
+index fe65837..cc8ea57 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,6 +17,7 @@
@@ -654,7 +654,7 @@ index fe65837..9a30b80 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +56,47 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +56,56 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -696,13 +696,22 @@ index fe65837..9a30b80 100644
 +// the light shafts' (Shafts, rt_shafts.hlsl), last: this frame's march, its gathered twice over
 +constexpr uint32_t kShaftRtv = kMeanRtv + kMean;
 +constexpr uint32_t kShafts = 3;
++// the lights' points kept for each bounce texel from frame to frame (Lighting, rt_gi.hlsl: ReSTIR's reuse over time),
++// this frame's and the frame before's, by the frame's number, last
++constexpr uint32_t kRsRtv = kShaftRtv + kShafts;
++constexpr uint32_t kRs = 2;
++// the glows remembered off screen (Lighting, rt_glowmem.hlsl): the listed lights' summary, and the slots twice over
++// (this frame's and the frame before's, by the frame's number), last
++constexpr uint32_t kGlowRtv = kRsRtv + kRs;
++constexpr uint32_t kGlow = 3;
++constexpr uint32_t kGlowSlots = 32;
 +constexpr uint32_t kMaxLights = 128;  // the lights the bounce lighting and the light shafts sample (rt_gi.hlsl)
 +// the motion target's clear and MotionOut's value where a pixel has no motion of its own: the camera's from depth
 +constexpr float kNoMotion = 1024;
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +113,7 @@ struct Perf {
+@@ -72,6 +122,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -710,7 +719,7 @@ index fe65837..9a30b80 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,10 +136,37 @@ struct Perf {
+@@ -94,10 +145,37 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
@@ -748,7 +757,7 @@ index fe65837..9a30b80 100644
  struct PerfScope {
      double& acc;
      bool on = diag::Perf();
-@@ -140,6 +209,63 @@ float4 psmain(O i) : SV_Target {
+@@ -140,6 +218,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -812,7 +821,7 @@ index fe65837..9a30b80 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -148,6 +274,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+@@ -148,6 +283,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
  constexpr float kDepthFar = 0;
  
  const char* kDepthHlsl = R"(
@@ -820,7 +829,7 @@ index fe65837..9a30b80 100644
  Texture2D<float> img : register(t0);
  SamplerState ps : register(s1);
  struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
-@@ -157,7 +284,7 @@ O vs(uint id : SV_VertexID) {
+@@ -157,7 +293,7 @@ O vs(uint id : SV_VertexID) {
      o.p = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
      return o;
  }
@@ -829,30 +838,59 @@ index fe65837..9a30b80 100644
  )";
  
  const char* kClearHlsl = R"(
-@@ -215,6 +342,22 @@ D3D12_BLEND_OP BlendOp(uint32_t v) {
+@@ -215,6 +351,47 @@ D3D12_BLEND_OP BlendOp(uint32_t v) {
      }
  }
  
 +// Where a fixed function draw's alpha comes from, for ray tracing's cut-outs: 1 stage 0's picture, 2 the picture times
-+// the vertices' colour (D3DTOP_SELECTARG1 or 2 of D3DTA_TEXTURE, D3DTOP_MODULATE of it and D3DTA_DIFFUSE), with stage
-+// 1 off or passing it on; 0 anything else, a pixel shader program among them
++// the vertices' colour (D3DTOP_SELECTARG1 or 2 of D3DTA_TEXTURE, D3DTOP_MODULATE of it and D3DTA_DIFFUSE, or of
++// D3DTA_CURRENT, which at stage 0 is the diffuse), with stage 1 off or passing it on (with no texture of its own, a
++// stage that reads one ends the stages, shaders.cpp: this title draws its leaves, ivy and walls with a MODULATE of
++// TEXTURE and DIFFUSE left at stage 1 over none); 0 anything else, a pixel shader program among them
 +uint32_t AlphaFromPicture(const State& s) {
 +    if (s.ps) return 0;
 +    const auto& t0 = s.tss[0];
 +    uint32_t op = t0[kTssAlphaOp], a1 = t0[kTssAlphaArg1], a2 = t0[kTssAlphaArg2];
++    auto diffuse = [](uint32_t a) { return a == 0 || a == 1; };  // D3DTA_DIFFUSE, D3DTA_CURRENT
 +    uint32_t source = (op == 2 && a1 == 2) || (op == 3 && a2 == 2)                       ? 1
-+                      : op == 4 && ((a1 == 2 && a2 == 0) || (a1 == 0 && a2 == 2))       ? 2
++                      : op == 4 && ((a1 == 2 && diffuse(a2)) || (diffuse(a1) && a2 == 2)) ? 2
 +                                                                                        : 0;
 +    const auto& t1 = s.tss[1];
-+    bool passed = t1[kTssColorOp] == 1 || t1[kTssAlphaOp] == 1 || (t1[kTssAlphaOp] == 2 && t1[kTssAlphaArg1] == 1) ||
-+                  (t1[kTssAlphaOp] == 3 && t1[kTssAlphaArg2] == 1);
++    auto texture = [](uint32_t a) { return (a & 0xF) == 2; };  // D3DTA_TEXTURE, modifiers in the high bits
++    bool ends = !s.textures[1] && t1[kTssColorOp] > 1 &&
++                (texture(t1[kTssColorArg1]) || texture(t1[kTssColorArg2]) || texture(t1[kTssColorArg0]) ||
++                 texture(t1[kTssAlphaArg1]) || texture(t1[kTssAlphaArg2]) || texture(t1[kTssAlphaArg0]));
++    bool passed = ends || t1[kTssColorOp] == 1 || t1[kTssAlphaOp] == 1 ||
++                  (t1[kTssAlphaOp] == 2 && t1[kTssAlphaArg1] == 1) || (t1[kTssAlphaOp] == 3 && t1[kTssAlphaArg2] == 1);
 +    return passed ? source : 0;
++}
++
++// A picture's alpha for ray tracing's cut-outs, from every seventh texel of a BGRA8 level (w x h, pitch bytes a row):
++// 1 with clear parts (a texel in 200 under a quarter of its most alpha: ivy, leaves on the floor, a vine's fringe), 2
++// faint all over (its most alpha under 0.6, or none: glass, a haze, a sheet the game fades in and out), 0 solid
++uint8_t AlphaKind(const uint8_t* px, uint32_t w, uint32_t h, uint32_t pitch) {
++    size_t n = 0, clear = 0;
++    uint8_t most = 0;
++    for (uint32_t y = 0; y < h; y++)
++        for (uint32_t x = (y * 3) % 7; x < w; x += 7) {
++            most = std::max(most, px[size_t(y) * pitch + size_t(x) * 4 + 3]);
++            n++;
++        }
++    if (!n) return 0;
++    if (most < 153) return 2;
++    for (uint32_t y = 0; y < h; y++)
++        for (uint32_t x = (y * 3) % 7; x < w; x += 7) clear += px[size_t(y) * pitch + size_t(x) * 4 + 3] * 4 < most;
++    return clear * 200 > n ? 1 : 0;
 +}
 +
  // D3DCMP_NEVER 0x200 to D3DCMP_ALWAYS 0x207, D3D12's order from 1
  D3D12_COMPARISON_FUNC Cmp(uint32_t v) {
      uint32_t n = v >= 0x200 && v <= 0x207 ? v - 0x200 : 7;
-@@ -345,6 +488,18 @@ struct Tex {
+@@ -342,9 +519,23 @@ struct Tex {
+     uint64_t frame = 0;
+     uint64_t palette = 0;  // hash of the colours a P8 texture was decoded with
+     uint8_t flags = 0;  // Extension::Decoded's
++    uint8_t alpha = 1;  // its own picture's alpha for ray tracing's cut-outs (AlphaKind), as it was last uploaded
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -860,6 +898,7 @@ index fe65837..9a30b80 100644
 +    uint64_t repl_id = 0;
 +    ComPtr<ID3D12Resource> repl;
 +    uint32_t repl_levels = 0;
++    uint8_t repl_alpha = 1;  // its picture's alpha for ray tracing's cut-outs (AlphaKind)
 +    // the replacement before, kept for the next one of its size to be uploaded into rather than made anew: a movie's
 +    // frames, one after another in the same texture
 +    ComPtr<ID3D12Resource> spare;
@@ -871,7 +910,7 @@ index fe65837..9a30b80 100644
  };
  
  struct PsoKey {
-@@ -377,6 +532,8 @@ struct PsoKey {
+@@ -377,6 +568,8 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
@@ -880,7 +919,7 @@ index fe65837..9a30b80 100644
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +544,7 @@ struct BlitOptions {
+@@ -387,6 +580,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -888,7 +927,7 @@ index fe65837..9a30b80 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +559,16 @@ struct ShrinkOptions {
+@@ -401,11 +595,18 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -904,10 +943,12 @@ index fe65837..9a30b80 100644
      float k[4] = {1, 1, 1, 1};  // Extension::Sample's k
      float wide[4] = {};         // host texels per console texel of a target read into a smaller one, 0 otherwise
 +    bool replaced[4] = {};      // drawn from an extension's replacement, filtered across all its levels
++    uint8_t cutout[4] = {};     // the picture drawn's alpha for ray tracing's cut-outs (AlphaKind)
++    uint32_t data[4] = {};      // the title's texture data each stage drew from (0: none, a target)
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -460,6 +623,8 @@ public:
+@@ -460,6 +661,8 @@ public:
      void Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) override;
      void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects, uint32_t dst_points) override;
      void Present(const Surface& front) override;
@@ -916,7 +957,7 @@ index fe65837..9a30b80 100644
      void WaitGpuFrame(uint64_t n) override;
      void Sync(uint32_t data, uint32_t size) override;
      void SyncLate(uint32_t data) override;
-@@ -549,6 +714,8 @@ private:
+@@ -549,6 +752,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -925,7 +966,7 @@ index fe65837..9a30b80 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -565,10 +732,10 @@ private:
+@@ -565,10 +770,10 @@ private:
      ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
      void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
      void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
@@ -938,7 +979,7 @@ index fe65837..9a30b80 100644
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,10 +750,12 @@ private:
+@@ -583,10 +788,12 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -953,7 +994,7 @@ index fe65837..9a30b80 100644
      void UploadVertexBuffers(const Assembled& a);
      // visibility tests
      bool EnsureQueries();
-@@ -598,6 +767,7 @@ private:
+@@ -598,6 +805,7 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -961,7 +1002,7 @@ index fe65837..9a30b80 100644
      D3D12_GRAPHICS_PIPELINE_STATE_DESC FullScreenPipelineDesc(ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv) const;
      // Init, in order, each callee right after its caller
      bool CreateDevice();
-@@ -613,10 +783,77 @@ private:
+@@ -613,10 +821,77 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -1039,7 +1080,7 @@ index fe65837..9a30b80 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -665,6 +902,7 @@ private:
+@@ -665,6 +940,7 @@ private:
          uint32_t color;
          float z;
          uint32_t stencil;
@@ -1047,7 +1088,7 @@ index fe65837..9a30b80 100644
      };
      void ClearTarget(Target& t, const State& s, const ClearArgs& c, std::vector<D3D12_RECT>& rs);
      void ClearChannels(Target& t, const float col[4], uint8_t mask, const std::vector<D3D12_RECT>& rs);
-@@ -675,8 +913,9 @@ private:
+@@ -675,8 +951,9 @@ private:
          uint32_t src_rects;
          uint32_t dst_points;
      };
@@ -1058,7 +1099,7 @@ index fe65837..9a30b80 100644
      void CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state, Target& dst_t,
                        const CopyList& l);
      // the target as a guest sized BGRA copy source, and the shrunk copy that holds it when it is not one already
-@@ -708,6 +947,9 @@ private:
+@@ -708,6 +985,9 @@ private:
      // the constants last uploaded in this command list, reused while a draw's are the same; 0 after a submit
      decltype(State::vsc) last_vsc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_vsc_gpu_ = 0;
@@ -1068,7 +1109,7 @@ index fe65837..9a30b80 100644
      DrawConstants last_dc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_dc_gpu_ = 0;
      ComPtr<ID3D12GraphicsCommandList> cl_;
-@@ -766,6 +1008,10 @@ private:
+@@ -766,6 +1046,10 @@ private:
      uint32_t bb_w_ = 0;
      uint32_t bb_h_ = 0;
      float scale_ = 1.0f;
@@ -1079,7 +1120,7 @@ index fe65837..9a30b80 100644
      // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
      struct Late {
          ComPtr<ID3D12Resource> rb[kFrames];
-@@ -801,6 +1047,210 @@ private:
+@@ -801,6 +1085,244 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -1193,6 +1234,24 @@ index fe65837..9a30b80 100644
 +    D3D12_RESOURCE_STATES gi_state_{};
 +    uint32_t gi_w_ = 0, gi_h_ = 0;
 +    bool gi_said_ = false;
++    // the lights' points kept for each bounce texel (rt_gi.hlsl's second target, RGBA32F at the bounce target's size),
++    // this frame's and the frame before's by the frame's number, and the last frame that wrote one
++    ComPtr<ID3D12Resource> rs_[kRs];
++    D3D12_RESOURCE_STATES rs_state_[kRs] = {};
++    uint32_t rs_w_ = 0, rs_h_ = 0;
++    uint64_t rs_frame_ = UINT64_MAX;
++    bool rs_said_ = false;
++    bool EnsureReservoirs(uint32_t tw, uint32_t th);
++    // the glows remembered off screen (rt_glowmem.hlsl, RGBA32F): the listed lights' summary (128 x 3), the slots this
++    // frame and the frame before (kGlowSlots x 2, by the frame's number), the last frame that wrote them
++    ComPtr<ID3D12Resource> glow_[kGlow];
++    D3D12_RESOURCE_STATES glow_state_[kGlow] = {};
++    uint64_t glow_frame_ = UINT64_MAX;
++    bool glow_said_ = false;
++    bool EnsureGlowTargets();
++    // the glows remembered this frame (RememberGlows): their slots' SRV index, -1 for none
++    float RememberGlows(uint32_t slot, uint32_t first, uint32_t rw, uint32_t rh, const float lt[4], const float sk[4],
++                        const uint32_t list[][4]);
 +    // ray tracing's guides (Guides, rt_guide.hlsl) at the frame target's size, drawn once a frame: the surfaces' albedo
 +    // (RGBA8), world normals and roughness (RGBA16F), specular albedo (RGBA8) and the reflections' hit distance (R16F),
 +    // and the view space their normals were turned into the world from (the view's, as its projection has it: x, y, z
@@ -1221,6 +1280,17 @@ index fe65837..9a30b80 100644
 +    uint32_t mean_w_[4] = {}, mean_h_[4] = {}, mean_cur_ = 0, mean_for_w_ = 0, mean_for_h_ = 0;
 +    uint64_t mean_frame_ = UINT64_MAX;
 +    float RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th);
++    uint32_t LightList(float lt[4], float sk[4], uint32_t list[][4]);
++    // XBE_RT_LIGHTS_FLAME: the least area a flame drawn flat (a torch's, a candle's sprite) lights as, up to 16 times
++    // its own (rt_lights.hlsli), as a float's bits for the lights' list (8000: 5.8's torch warmed its wall by a third,
++    // the room some 15% against RT off's; 30000 washed the room out; 0: as its sprite alone)
++    static uint32_t FlameArea() {
++        static const float kFlame = std::getenv("XBE_RT_LIGHTS_FLAME") ? float(std::atof(std::getenv("XBE_RT_LIGHTS_FLAME")))
++                                                                      : 8000.0f;
++        uint32_t bits;
++        std::memcpy(&bits, &kFlame, sizeof(bits));
++        return bits;
++    }
 +    bool EnsureMeanTargets(uint32_t tw, uint32_t th);
 +    float SkyLight(Target& t, uint32_t rw, uint32_t rh, uint32_t tw, uint32_t th);
 +    // a 2D texture's view at an SRV heap slot
@@ -1260,8 +1330,13 @@ index fe65837..9a30b80 100644
 +    struct GlowSeen {
 +        uint64_t frame = UINT64_MAX - 1;
 +        uint32_t streak = 0, said = 0;
++        uint64_t count_frame = UINT64_MAX;  // its draws as a glow this frame, the frame they were counted in
++        uint32_t count = 0;
 +    };
-+    std::unordered_map<const void*, GlowSeen> glow_seen_;
++    std::unordered_map<const void*, GlowSeen> glow_seen_;     // by the renderer's copy: the draws a frame
++    std::unordered_map<uint64_t, GlowSeen> glow_steady_;        // by the title's texture data: how steady
++    std::unordered_set<const void*> glow_logged_;  // XBE_RT_LIGHTS_LOG's blended pictures
++    std::unordered_set<const void*> cutout_said_;  // XBE_RT_CUTOUT_LOG's pictures
 +    float rt_clip_to_prev_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 +    bool rr_said_ = false, guide_said_ = false;
 +    // ray tracing (raytrace.h): the frame's scene, whether this frame gathers one, the capture constants bound (rtc:
@@ -1290,7 +1365,7 @@ index fe65837..9a30b80 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -814,11 +1264,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -814,11 +1336,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      HWND hwnd = static_cast<HWND>(app::Window());
      if (!CreateDevice()) return false;
      if (!CreateSwapChain(hwnd)) return false;
@@ -1312,7 +1387,7 @@ index fe65837..9a30b80 100644
      ImGui_ImplDX12_Init(dev_.Get(), kFrames, DXGI_FORMAT_B8G8R8A8_UNORM, ui_heap_.Get(),
                          ui_heap_->GetCPUDescriptorHandleForHeapStart(), ui_heap_->GetGPUDescriptorHandleForHeapStart());
      LoadSettings();
-@@ -827,19 +1287,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -827,19 +1359,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      return true;
  }
  
@@ -1376,7 +1451,7 @@ index fe65837..9a30b80 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -847,9 +1347,17 @@ bool D3D12Backend::CreateDevice() {
+@@ -847,9 +1419,17 @@ bool D3D12Backend::CreateDevice() {
      DXGI_ADAPTER_DESC1 ad{};
      if (adapter) adapter->GetDesc1(&ad);
      LOGR("D3D12 adapter: %ls", adapter ? ad.Description : L"default");
@@ -1394,7 +1469,7 @@ index fe65837..9a30b80 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -871,6 +1379,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1451,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -1406,7 +1481,7 @@ index fe65837..9a30b80 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -899,9 +1412,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1484,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -1415,11 +1490,11 @@ index fe65837..9a30b80 100644
 +    srv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvCount + kMaterialViews, true, srv_heap_);
      smp_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, kSamplerCount, true, smp_heap_);
 -    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames, false, rtv_heap_);
-+    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kShaftRtv + kShafts, false, rtv_heap_);
++    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kGlowRtv + kGlow, false, rtv_heap_);
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,10 +1425,10 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,10 +1497,10 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -1432,7 +1507,7 @@ index fe65837..9a30b80 100644
      params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
      params[0].Descriptor.ShaderRegister = 0;
      params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-@@ -925,8 +1439,15 @@ bool D3D12Backend::CreateRootSignature() {
+@@ -925,8 +1511,15 @@ bool D3D12Backend::CreateRootSignature() {
          params[2 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
          params[2 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
      }
@@ -1449,7 +1524,7 @@ index fe65837..9a30b80 100644
      rsd.pParameters = params;
      rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
      ComPtr<ID3DBlob> rs;
-@@ -958,8 +1479,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1551,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -1462,7 +1537,7 @@ index fe65837..9a30b80 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -972,10 +1497,21 @@ void D3D12Backend::Begin() {
+@@ -972,10 +1569,21 @@ void D3D12Backend::Begin() {
      ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get(), smp_heap_.Get()};
      cl_->SetDescriptorHeaps(2, heaps);
      cl_->SetGraphicsRootSignature(root_.Get());
@@ -1484,7 +1559,7 @@ index fe65837..9a30b80 100644
  void D3D12Backend::Submit(bool wait) {
      last_vsc_gpu_ = 0;
      last_dc_gpu_ = 0;
-@@ -1063,12 +1599,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1671,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
      b.Transition.StateBefore = cur;
      b.Transition.StateAfter = want;
      cl_->ResourceBarrier(1, &b);
@@ -1500,7 +1575,7 @@ index fe65837..9a30b80 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1618,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1690,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -1509,7 +1584,7 @@ index fe65837..9a30b80 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,6 +1736,13 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,6 +1808,13 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -1523,7 +1598,7 @@ index fe65837..9a30b80 100644
      if (rt) {
          if (LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
          Transition(rt->res.Get(), rt->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-@@ -1205,17 +1751,151 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1205,17 +1823,151 @@ bool D3D12Backend::BindTargets(const State& s) {
      if (ds) {
          Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          ds->drawn = true;
@@ -1678,7 +1753,7 @@ index fe65837..9a30b80 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1260,6 +1940,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,6 +2012,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -1687,7 +1762,7 @@ index fe65837..9a30b80 100644
      DrawFullScreen(pso, cb.gpu, slot);
      dst.drawn = true;
      bound_rt_ = bound_ds_ = nullptr;
-@@ -1282,6 +1964,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +2036,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -1695,7 +1770,7 @@ index fe65837..9a30b80 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +2010,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +2082,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -1703,7 +1778,7 @@ index fe65837..9a30b80 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1397,23 +2081,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +2153,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -1797,7 +1872,7 @@ index fe65837..9a30b80 100644
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +2171,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +2243,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -1819,7 +1894,7 @@ index fe65837..9a30b80 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +2190,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +2262,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -1827,7 +1902,7 @@ index fe65837..9a30b80 100644
      return code.Get();
  }
  
-@@ -1477,6 +2234,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +2306,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -1857,7 +1932,7 @@ index fe65837..9a30b80 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2390,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2462,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -1892,7 +1967,7 @@ index fe65837..9a30b80 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2456,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +2528,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -1904,7 +1979,7 @@ index fe65837..9a30b80 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,6 +2480,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +2552,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -1912,7 +1987,7 @@ index fe65837..9a30b80 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1692,6 +2499,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +2571,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -1922,7 +1997,7 @@ index fe65837..9a30b80 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2513,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +2585,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -1937,7 +2012,7 @@ index fe65837..9a30b80 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2543,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +2615,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -1948,7 +2023,19 @@ index fe65837..9a30b80 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2663,69 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1802,6 +2694,11 @@ void D3D12Backend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo
+             uint32_t pitch;
+             DecodeLevel(d, l, f, p, colours, px, pitch);
+             if (ext_) ext_->Decoded(d, fi, f, l, px, pitch, tx.flags);
++            // (another format's, a compressed one's: taken as having clear parts, its test as the draw's)
++            if (f == 0 && l == 0)
++                tx.alpha = fi.host == Host::BGRA8 && !d.cube && d.depth <= 1 && px.size() >= size_t(pitch) * d.height
++                               ? AlphaKind(px.data(), d.width, d.height, pitch)
++                               : 1;
+             UploadTextureLevel(tx, f, l, px, pitch);
+         }
+     }
+@@ -1843,6 +2740,72 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -1961,6 +2048,9 @@ index fe65837..9a30b80 100644
 +        return;
 +    }
 +    repl_budget_--;
++    // its picture's alpha, ray tracing's cut-outs (AlphaKind)
++    if (r->width && r->height && r->levels[0].size() >= size_t(r->width) * r->height * 4)
++        tx.repl_alpha = AlphaKind(r->levels[0].data(), r->width, r->height, r->width * 4);
 +    // a picture as a BGRA8 texture with every level, null when it can't be made
 +    auto make = [&](const Picture& pic, uint32_t& levels) -> ComPtr<ID3D12Resource> {
 +        if (pic.levels.empty() || !pic.width || !pic.height) return nullptr;
@@ -2018,7 +2108,7 @@ index fe65837..9a30b80 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,8 +2753,47 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,13 +2833,56 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -2046,6 +2136,7 @@ index fe65837..9a30b80 100644
 +        stages.sv[stage].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 +        stages.sv[stage].Texture2D.MipLevels = tx.repl_levels;
 +        stages.replaced[stage] = true;
++        stages.cutout[stage] = tx.repl_alpha;
 +        if (tx.mat[0] && stages.mat_stage < 0 && !d.cube && d.depth <= 1) {
 +            stages.mat_stage = stage;
 +            for (int j = 0; j < 2; j++) {
@@ -2060,13 +2151,21 @@ index fe65837..9a30b80 100644
 +            std::memcpy(stages.mat, tx.mat_params, sizeof(stages.mat));
 +            std::memcpy(stages.gloss, tx.mat_gloss, sizeof(stages.gloss));
 +        }
++        stages.data[stage] = d.data;
 +        if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
 +        return tx.repl.Get();
 +    }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
      const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1969,7 +2891,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+     FillTextureView(drawn, d, stages.sv[stage]);
++    stages.cutout[stage] = tx.swap ? 1 : tx.alpha;
+     if (fi.depth) info.shadow = ShadowDepthKind(d.format);
++    stages.data[stage] = d.data;
+     if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
+     return drawn.res.Get();
+ }
+@@ -1969,7 +2975,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
  constexpr uint32_t kTaddressWrap = 1;
  constexpr uint32_t kTaddressClamp = 3;
  
@@ -2078,7 +2177,7 @@ index fe65837..9a30b80 100644
      D3D12_SAMPLER_DESC sd = {};
      const auto& t = s.tss[size_t(i)];
      uint32_t mag = t[kTssMagFilter];
-@@ -1982,8 +2907,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2991,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -2096,7 +2195,7 @@ index fe65837..9a30b80 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2925,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +3009,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -2107,7 +2206,7 @@ index fe65837..9a30b80 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2009,7 +2943,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -2009,7 +3027,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
  uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
      D3D12_SAMPLER_DESC sd[4];
      uint32_t aniso = app::Get().aniso;
@@ -2117,7 +2216,7 @@ index fe65837..9a30b80 100644
      uint64_t key = Hash(sd, sizeof(sd));
      auto it = samplers_.find(key);
      if (it != samplers_.end()) return it->second;
-@@ -2144,9 +3079,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2144,9 +3163,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -2130,7 +2229,7 @@ index fe65837..9a30b80 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +3100,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +3184,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -2139,7 +2238,7 @@ index fe65837..9a30b80 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +3153,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +3237,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -2162,7 +2261,7 @@ index fe65837..9a30b80 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +3191,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +3275,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -2173,7 +2272,7 @@ index fe65837..9a30b80 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2433,28 +3388,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +3472,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
      c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
@@ -2252,7 +2351,7 @@ index fe65837..9a30b80 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2469,6 +3465,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+@@ -2469,6 +3549,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
      if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
      binds_.vsc = last_vsc_gpu_;
      binds_.dc = last_dc_gpu_;
@@ -2260,7 +2359,7 @@ index fe65837..9a30b80 100644
  }
  
  void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
-@@ -2577,6 +3574,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +3658,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -2284,7 +2383,7 @@ index fe65837..9a30b80 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3608,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3692,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -2295,7 +2394,7 @@ index fe65837..9a30b80 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3623,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3707,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -2352,7 +2451,7 @@ index fe65837..9a30b80 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2676,21 +3706,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
+@@ -2676,21 +3790,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
      cl_->IASetVertexBuffers(0, a.buffer_count, vbv);
  }
  
@@ -2382,7 +2481,7 @@ index fe65837..9a30b80 100644
  }
  
  // calls the extension's EndDraw on every return from Draw once made
-@@ -2808,6 +3839,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +3923,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -2390,7 +2489,7 @@ index fe65837..9a30b80 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +3847,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +3931,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -2403,7 +2502,7 @@ index fe65837..9a30b80 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +3865,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +3949,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -2492,7 +2591,7 @@ index fe65837..9a30b80 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +3954,159 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +4038,233 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -2520,16 +2619,48 @@ index fe65837..9a30b80 100644
 +    // samples (rt_gi.hlsl), which rays pass through
 +    static const bool kRtLights = !(std::getenv("XBE_RT_LIGHTS") && std::atoi(std::getenv("XBE_RT_LIGHTS")) == 0);
 +    bool rt_glow = SimpleState(s, kMBlendEnable) && SimpleState(s, kMDestBlend) == 1;
++    // XBE_RT_LIGHTS_LOG: each blended picture drawn into the frame, the first time, and what keeps it from being a
++    // light (a flame drawn after the frame's 3D was anti-aliased is not in the scene)
++    static const bool kGlowLog = std::getenv("XBE_RT_LIGHTS_LOG") != nullptr;
++    if (kGlowLog && SimpleState(s, kMBlendEnable) && bound_rt_ && s.rt_back_buffer && stages.res[0] &&
++        glow_logged_.size() < 2000 && glow_logged_.insert(stages.res[0]).second)
++        LOGR("ray tracing: blended %p frame %llu: %s%s, blend %03x %03x, %s, %s, z %s%s, %u vertices%s",
++             static_cast<const void*>(stages.res[0]), (unsigned long long)presents_, world ? "3D" : "flat",
++             a.pretransformed ? " pretransformed" : "", SimpleState(s, kMSrcBlend), SimpleState(s, kMDestBlend),
++             s.ps ? "a pixel program" : "fixed function",
++             aa_done_frame_ == presents_ ? "after the 3D was anti-aliased" : "with the 3D",
++             s.rs[kRsZEnable] ? "tested" : "not tested", SimpleState(s, kMZWriteEnable) ? ", written" : "",
++             a.index_count ? a.index_count : a.draw_count, rt_frame_ ? "" : ", no scene this frame");
 +    // only a steady glow is a light: its picture drawn as a glow XBE_RT_LIGHTS_STEADY frames in a row (20, a third of
 +    // a second; 0: any). A sword's swing, a hit's sparks, a spell's burst are there for a moment, and the light they
 +    // threw was grain on the walls that no frame had time to settle
 +    bool steady_glow = true;
++    // listed as a light (sampled for the light it throws, rt_gi.hlsl) only the first XBE_RT_LIGHTS_PER_PICTURE draws of
++    // a picture a frame (16, 0: all): the save room's water glows in some 500 draws of one picture, which filled the
++    // list of 128 before the candles got in, and which of them did changed as the camera turned. The rest stay in the
++    // scene, their light gathered by the bounce lighting's rays that pass through them
++    bool glow_listed = true;
++    // A glow steady by the title's own texture (the data it draws from), not the renderer's copy of it: a torch's or a
++    // candle's flame is animated by its palette, each of whose colours is a copy of its own, and by its copy no flame
++    // was ever drawn two frames in a row (none was steady, none a light). Counted by its copy, as it was
++    const uint64_t glow_key = stages.data[0] ? uint64_t(stages.data[0])
++                                             : (uint64_t(uintptr_t(stages.res[0])) | (uint64_t(1) << 63));
 +    if (rt_glow && rt_frame_ && kRtLights) {
++        static const uint32_t kPerPicture = std::getenv("XBE_RT_LIGHTS_PER_PICTURE")
++                                                ? uint32_t(std::atoi(std::getenv("XBE_RT_LIGHTS_PER_PICTURE")))
++                                                : 16u;
++        GlowSeen& c = glow_seen_[stages.res[0] ? static_cast<const void*>(stages.res[0]) : nullptr];
++        c.frame = presents_;
++        if (c.count_frame != presents_) {
++            c.count_frame = presents_;
++            c.count = 0;
++        }
++        glow_listed = kPerPicture == 0 || ++c.count <= kPerPicture;
 +        static const uint32_t kSteady = std::getenv("XBE_RT_LIGHTS_STEADY")
 +                                            ? uint32_t(std::atoi(std::getenv("XBE_RT_LIGHTS_STEADY")))
 +                                            : 20u;
 +        if (kSteady > 0) {
-+            GlowSeen& g = glow_seen_[stages.res[0] ? static_cast<const void*>(stages.res[0]) : nullptr];
++            GlowSeen& g = glow_steady_[glow_key];
 +            if (g.frame != presents_) {
 +                g.streak = g.frame + 1 == presents_ ? g.streak + 1 : 1;
 +                g.frame = presents_;
@@ -2538,23 +2669,31 @@ index fe65837..9a30b80 100644
 +            // XBE_RT_LIGHTS_LOG: each glow's picture as it is first drawn and as it turns steady (a light)
 +            static const bool kLightsLog = std::getenv("XBE_RT_LIGHTS_LOG") != nullptr;
 +            if (kLightsLog && (g.streak == 1 || g.streak == kSteady) && g.said < 2) {
-+                LOGR("ray tracing: a glow, picture %p, %s, %u vertices, %s", static_cast<const void*>(stages.res[0]),
++                LOGR("ray tracing: a glow, texture %08llx (picture %p), %s, %u vertices, %s", (unsigned long long)glow_key,
++                     static_cast<const void*>(stages.res[0]),
 +                     world ? "3D" : ext_ && ext_->ScreenLight() ? "flat, a light" : "flat, not a light",
 +                     a.index_count ? a.index_count : a.draw_count, g.streak == kSteady ? "steady" : "first drawn");
 +                g.said++;
 +            }
-+            if (glow_seen_.size() > 4096)  // pictures long gone
-+                for (auto it = glow_seen_.begin(); it != glow_seen_.end();)
-+                    it = it->second.frame + 600 < presents_ ? glow_seen_.erase(it) : std::next(it);
++            if (glow_steady_.size() > 4096)  // textures long gone
++                for (auto it = glow_steady_.begin(); it != glow_steady_.end();)
++                    it = it->second.frame + 600 < presents_ ? glow_steady_.erase(it) : std::next(it);
++        }
++        if (glow_seen_.size() > 4096) {  // pictures long gone
++            for (auto it = glow_seen_.begin(); it != glow_seen_.end();)
++                it = it->second.frame + 600 < presents_ ? glow_seen_.erase(it) : std::next(it);
 +        }
 +    }
 +    // a flame, a glow drawn flat over the world (Extension::ScreenLight), depth tested: a light at its depth
-+    bool rt_flat = rt_frame_ && !world && rt_glow && kRtLights && steady_glow && aa_done_frame_ != presents_ &&
++    // a glow drawn by a pixel shader program is no light: its light is not its picture's (the save room marker's
++    // swirl, masked to a ring by a second picture, lit a square of floor bright blue the size of its quad)
++    const bool glow_light = kRtLights && steady_glow && !s.ps;
++    bool rt_flat = rt_frame_ && !world && rt_glow && glow_light && aa_done_frame_ != presents_ &&
 +                   !a.pretransformed && a.topology == Topology::Triangles && s.rs[kRsZEnable] && ext_ &&
 +                   ext_->ScreenLight();
 +    if (rt_water || rt_flat ||
 +        (rt_frame_ && world && aa_done_frame_ != presents_ && !a.pretransformed && a.topology == Topology::Triangles &&
-+         s.rs[kRsZEnable] && (rt_glow ? kRtLights && steady_glow : SimpleState(s, kMZWriteEnable) != 0 || is_water))) {
++         s.rs[kRsZEnable] && (rt_glow ? glow_light : SimpleState(s, kMZWriteEnable) != 0 || is_water))) {
 +        bool fits = true;
 +        if (a.index_count) {
 +            rt_ix_.resize(a.index_count);
@@ -2619,12 +2758,45 @@ index fe65837..9a30b80 100644
 +        rt::Look look;
 +        bool pic = stages.res[0] && !stages.rt[0] && stages.sv[0].ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D;
 +        if (pic) look.picture = binds_.views;
-+        uint32_t source = SimpleState(s, kMAlphaTestEnable) && pic ? AlphaFromPicture(s) : 0;
-+        if (source) {
-+            uint32_t f = uint32_t(Cmp(SimpleState(s, kMAlphaFunc))) - 1;
-+            if (f != 7)
-+                look.alpha = 0x10000u | (source == 2 ? 0x20000u : 0) | f << 8 | (SimpleState(s, kMAlphaRef) & 0xFF);
++        // its picture's alpha (AlphaKind): solid (a wall: opaque to rays, tested or not; this title alpha tests and
++        // blends its every draw), with clear parts (a cut-out: alpha tested, as the test has it; blended with no test,
++        // there where it is more than nearly clear, XBE_RT_CUTOUT_BLEND, the alpha it starts at in 255ths: 16, 0 for
++        // none), or faint all over (glass, a haze, a sheet the game fades: blended, none at all to rays). Rays met the
++        // whole quad of ivy and fallen leaves, and the stone behind and the floor under them shaded black in boxes;
++        // the floor under a faint sheet, black
++        static const uint32_t kCutoutBlend =
++            std::getenv("XBE_RT_CUTOUT_BLEND") ? uint32_t(std::atoi(std::getenv("XBE_RT_CUTOUT_BLEND"))) : 16u;
++        const bool blended = SimpleState(s, kMBlendEnable) && SimpleState(s, kMSrcBlend) == 0x302 &&
++                             SimpleState(s, kMDestBlend) == 0x303;
++        const uint32_t from = pic ? AlphaFromPicture(s) : 0;
++        const uint8_t kind = pic ? stages.cutout[0] : 0;
++        const uint32_t times = from == 2 ? 0x20000u : 0;
++        if (from && kind == 2 && blended && kCutoutBlend && !rt_glow) {
++            look.alpha = 0x10000u | times;  // never solid
++        } else if (from && kind != 0) {
++            if (SimpleState(s, kMAlphaTestEnable)) {
++                uint32_t f = uint32_t(Cmp(SimpleState(s, kMAlphaFunc))) - 1;
++                if (f != 7) look.alpha = 0x10000u | times | f << 8 | (SimpleState(s, kMAlphaRef) & 0xFF);
++            } else if (blended && kCutoutBlend && !rt_glow) {
++                look.alpha = 0x10000u | times | 4u << 8 | (std::min(kCutoutBlend, 255u) & 0xFF);
++            }
 +        }
++        // a blended cut-out covers its pixel as much as its alpha (0x40000: rt_ao.hlsl's cover)
++        if (look.alpha && blended) look.alpha |= 0x40000u;
++        // XBE_RT_CUTOUT_LOG: each picture drawn blended into the scene, once: how rays take it
++        static const bool kCutoutLog = std::getenv("XBE_RT_CUTOUT_LOG") != nullptr;
++        if (kCutoutLog && pic && !rt_glow && SimpleState(s, kMBlendEnable) && stages.res[0] &&
++            cutout_said_.insert(stages.res[0]).second && cutout_said_.size() < 600)
++            LOGR("ray tracing: blended picture %p: blend %x %x, alpha test %u func %x ref %u, alpha from the picture %u "
++                 "(program %d; stage 0 alpha op %u args %x %x, stage 1 colour op %u alpha op %u args %x %x), its alpha "
++                 "%u (replaced %d), rays %s, %u vertices",
++                 static_cast<const void*>(stages.res[0]), SimpleState(s, kMSrcBlend), SimpleState(s, kMDestBlend),
++                 SimpleState(s, kMAlphaTestEnable), SimpleState(s, kMAlphaFunc), SimpleState(s, kMAlphaRef) & 0xFF,
++                 from, s.ps ? 1 : 0, s.tss[0][kTssAlphaOp], s.tss[0][kTssAlphaArg1], s.tss[0][kTssAlphaArg2],
++                 s.tss[1][kTssColorOp], s.tss[1][kTssAlphaOp], s.tss[1][kTssAlphaArg1], s.tss[1][kTssAlphaArg2],
++                 stages.cutout[0], stages.replaced[0] ? 1 : 0,
++                 !look.alpha ? "solid" : ((look.alpha >> 8) & 7) == 0 ? "through" : "cut-out",
++                 a.index_count ? a.index_count : a.draw_count);
 +        if (stages.mat_stage == 0 && stages.res[4] && stages.res[5]) {
 +            look.normal = binds_.views + 4;
 +            look.orm = binds_.views + 5;
@@ -2635,6 +2807,7 @@ index fe65837..9a30b80 100644
 +        }
 +        look.character = !rt_glow && ext_ && ext_->Character();
 +        look.screen = rt_flat;
++        look.listed = glow_listed;
 +        look.water = is_water && !rt_glow;
 +        if (rt_glow) {
 +            constexpr uint32_t kSrcAlpha = 0x302;  // D3DBLEND_SRCALPHA (the XDK's)
@@ -2657,7 +2830,7 @@ index fe65837..9a30b80 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +4122,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +4280,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -2673,7 +2846,7 @@ index fe65837..9a30b80 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2961,7 +4203,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +4361,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -2684,7 +2857,7 @@ index fe65837..9a30b80 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +4287,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +4445,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -2704,7 +2877,7 @@ index fe65837..9a30b80 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +4305,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +4463,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -2713,7 +2886,7 @@ index fe65837..9a30b80 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,7 +4314,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,7 +4472,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -2723,7 +2896,7 @@ index fe65837..9a30b80 100644
          uint32_t taps = uint32_t(std::ceil(std::max(src_scale / dst_scale, 1.0f) - kTapsSlack));
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
-@@ -3084,7 +4332,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +4490,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -2732,7 +2905,7 @@ index fe65837..9a30b80 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +4342,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +4500,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -2751,7 +2924,7 @@ index fe65837..9a30b80 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3136,6 +4384,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +4542,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -2767,7 +2940,7 @@ index fe65837..9a30b80 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3155,16 +4412,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -3155,16 +4570,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -2858,7 +3031,7 @@ index fe65837..9a30b80 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +4508,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +4666,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -2868,7 +3041,7 @@ index fe65837..9a30b80 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +4518,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +4676,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -2878,7 +3051,7 @@ index fe65837..9a30b80 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4554,1945 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4712,2190 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3496,6 +3669,132 @@ index fe65837..9a30b80 100644
 +    return light;
 +}
 +
++// the lights' points kept for each bounce texel, this frame's and the frame before's (rt_gi.hlsl's second target), for a
++// bounce target of tw x th: false when they could not be made
++bool D3D12Backend::EnsureReservoirs(uint32_t tw, uint32_t th) {
++    if (rs_[0] && rs_[1] && rs_w_ == tw && rs_h_ == th) return true;
++    const DXGI_FORMAT f = DXGI_FORMAT_R32G32B32A32_FLOAT;
++    for (uint32_t i = 0; i < kRs; i++) {
++        if (rs_[i]) Release(std::move(rs_[i]));
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++        D3D12_RESOURCE_DESC td = Texture2DDesc(f, tw, th);
++        td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++        D3D12_CLEAR_VALUE cv{};
++        cv.Format = f;
++        rs_state_[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
++        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, rs_state_[i], &cv,
++                                                 IID_PPV_ARGS(&rs_[i])))) {
++            for (auto& r : rs_) r = nullptr;
++            rs_w_ = rs_h_ = 0;
++            return false;
++        }
++        dev_->CreateRenderTargetView(rs_[i].Get(), nullptr, Cpu(rtv_heap_.Get(), kRsRtv + i, rtv_inc_));
++    }
++    rs_w_ = tw;
++    rs_h_ = th;
++    rs_frame_ = UINT64_MAX;
++    return true;
++}
++
++// the glows remembered off screen's targets (rt_glowmem.hlsl's): false when they could not be made
++bool D3D12Backend::EnsureGlowTargets() {
++    if (glow_[0] && glow_[1] && glow_[2]) return true;
++    const DXGI_FORMAT f = DXGI_FORMAT_R32G32B32A32_FLOAT;
++    for (uint32_t i = 0; i < kGlow; i++) {
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++        D3D12_RESOURCE_DESC td = i == 0 ? Texture2DDesc(f, kMaxLights, 3) : Texture2DDesc(f, kGlowSlots, 2);
++        td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++        D3D12_CLEAR_VALUE cv{};
++        cv.Format = f;
++        glow_state_[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
++        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, glow_state_[i], &cv,
++                                                 IID_PPV_ARGS(&glow_[i])))) {
++            for (auto& g : glow_) g = nullptr;
++            return false;
++        }
++        dev_->CreateRenderTargetView(glow_[i].Get(), nullptr, Cpu(rtv_heap_.Get(), kGlowRtv + i, rtv_inc_));
++    }
++    glow_frame_ = UINT64_MAX;
++    return true;
++}
++
++// The glows remembered off screen (rt_glowmem.hlsl), for the bounce lighting's lights: the game draws only what is on
++// screen, and a torch just out of view stopped lighting the wall in view beside it (the wall darkened as the camera
++// turned). Each frame the listed lights (lt, sk, list: rt_gi.hlsl's) are summed up, and the slots the frame before
++// left are moved with the camera and matched with them: a glow drawn is the list's, one not drawn and off screen is
++// remembered for XBE_RT_GLOW_MEMORY seconds (20; 0: none), one not drawn on screen is gone (a spell over). slot: the
++// pass's depth table; first: three SRV slots of its own. Returns this frame's slots' SRV index, -1 for none
++float D3D12Backend::RememberGlows(uint32_t slot, uint32_t first, uint32_t rw, uint32_t rh, const float lt[4],
++                                  const float sk[4], const uint32_t list[][4]) {
++    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
++    // XBE_RT_GLOW_MATCH: how near a light drawn is to a remembered glow to be it, a part of its size's (the square root
++    // of its area: 1.5) and at least 150; XBE_RT_GLOW_SCREEN: the part of the screen's middle where a glow not drawn is
++    // gone rather than out of view (0.9: one at the edge may be culled before it leaves)
++    static const float kSeconds = env("XBE_RT_GLOW_MEMORY", 20.0f), kMatch = env("XBE_RT_GLOW_MATCH", 1.5f),
++                       kScreen = env("XBE_RT_GLOW_SCREEN", 0.9f);
++    if (kSeconds <= 0 || !EnsureGlowTargets()) return -1.0f;
++    const uint32_t cur = 1 + uint32_t(presents_ & 1), prev = 1 + uint32_t((presents_ & 1) ^ 1);
++    const bool before = !rt_reset_ && glow_frame_ != UINT64_MAX && glow_frame_ + 1 == presents_;
++    // the camera's move the other way: the frame before's clip space to this frame's
++    double m[16], inv[16];
++    for (int i = 0; i < 16; i++) m[i] = rt_clip_to_prev_[i];
++    float pc[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
++    const bool moved = Invert4(m, inv);
++    if (moved)
++        for (int i = 0; i < 16; i++) pc[i] = float(inv[i]);
++    TextureSrv(glow_[0].Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, first);
++    TextureSrv(glow_[prev].Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, first + 1);
++    TextureSrv(glow_[cur].Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, first + 2);
++    struct GlowConstants {
++        float p[8];
++        float lt[4];
++        float sk[4];
++        float gm[4];
++        float gm2[4];
++        float pc[16];
++        uint32_t list[kMaxLights][4];
++    } gc{};
++    float tan_y = std::tan(0.5f * ao_view_.fov_y);
++    float p[8] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y, float(rw), float(rh), 0, 0};
++    std::memcpy(gc.p, p, sizeof(p));
++    std::memcpy(gc.lt, lt, sizeof(gc.lt));
++    std::memcpy(gc.sk, sk, sizeof(gc.sk));
++    std::memcpy(gc.list, list, sizeof(gc.list));
++    gc.gm[1] = float(first);
++    gc.gm[2] = before && moved ? float(first + 1) : -1.0f;
++    gc.gm[3] = std::max(1.0f, kSeconds * 60.0f);
++    gc.gm2[0] = kMatch;
++    gc.gm2[1] = 150.0f;
++    gc.gm2[2] = kScreen;
++    gc.gm2[3] = float(kGlowSlots);
++    std::memcpy(gc.pc, pc, sizeof(pc));
++    const D3D12_RESOURCE_STATES kRead =
++        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++    const DXGI_FORMAT f = DXGI_FORMAT_R32G32B32A32_FLOAT;
++    // the summary, then the slots from it
++    Alloc sum = Upload(sizeof(GlowConstants), 256);
++    std::memcpy(sum.cpu, &gc, sizeof(gc));
++    gc.gm[0] = 1;
++    Alloc keep = Upload(sizeof(GlowConstants), 256);
++    std::memcpy(keep.cpu, &gc, sizeof(gc));
++    Transition(glow_[0].Get(), glow_state_[0], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    Transition(glow_[prev].Get(), glow_state_[prev], kRead);
++    bool drawn = rt_.Trace(rt::Scene::Pass::GlowMemory, sum.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++                           Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kGlowRtv, rtv_inc_), f, kMaxLights, 3);
++    Transition(glow_[0].Get(), glow_state_[0], kRead);
++    Transition(glow_[cur].Get(), glow_state_[cur], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    drawn = drawn && rt_.Trace(rt::Scene::Pass::GlowMemory, keep.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++                               Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kGlowRtv + cur, rtv_inc_), f,
++                               kGlowSlots, 2);
++    Transition(glow_[cur].Get(), glow_state_[cur], kRead);
++    glow_frame_ = drawn ? presents_ : UINT64_MAX;
++    if (drawn && !glow_said_) {
++        LOGR("ray tracing: glows remembered off screen for up to %.0f s, %u of them", double(kSeconds), kGlowSlots);
++        glow_said_ = true;
++    }
++    return drawn ? float(first + 2) : -1.0f;
++}
++
 +// the room's average's targets (RoomBounce's levels, each 1/8 of the one before, and its eased pair) and the sky's
 +// (SkyLight's), for a bounce target of tw x th: false when they could not be made
 +bool D3D12Backend::EnsureMeanTargets(uint32_t tw, uint32_t th) {
@@ -3510,10 +3809,12 @@ index fe65837..9a30b80 100644
 +            uint32_t mw = i < 4 ? w : 1, mh = i < 4 ? h : 1;
 +            if (mean_[i]) Release(std::move(mean_[i]));
 +            D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
-+            D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_R16G16B16A16_FLOAT, mw, mh);
++            // the eased pair at full precision: a frame's share of it is as small as a part in a thousand or so
++            const DXGI_FORMAT mf = i == 4 || i == 5 ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT;
++            D3D12_RESOURCE_DESC td = Texture2DDesc(mf, mw, mh);
 +            td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 +            D3D12_CLEAR_VALUE cv{};
-+            cv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++            cv.Format = mf;
 +            mean_state_[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
 +            if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, mean_state_[i], &cv,
 +                                                     IID_PPV_ARGS(&mean_[i])))) {
@@ -3565,19 +3866,21 @@ index fe65837..9a30b80 100644
 +}
 +
 +// The bounce lighting's room average (rt_gimean.hlsl), which it takes the place of the game's flat fill by: the bounce
-+// target's (bounce_slot, gw x gh drawn of tw x th) averaged down four levels to one texel, then eased toward over the
-+// frames (XBE_RT_GI_EASE of the way a frame, 0.03: about a second), afresh after a cut. The eased value's SRV slot, -1
-+// when it could not be made
++// target's (bounce_slot, gw x gh drawn of tw x th) averaged down four levels to one texel, then the mean of every
++// frame's since the cut (the room's, whichever way the camera looked: eased toward this frame's alone, it rose and
++// fell as the camera turned, and the room's light with it), the last XBE_RT_GI_HOLD frames' once there are more
++// (1200, about 20 seconds). The held value's SRV slot, -1 when it could not be made
 +float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th) {
 +    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
-+    static const float kEase = std::clamp(env("XBE_RT_GI_EASE", 0.03f), 0.001f, 1.0f);
++    static const float kEase = 1.0f / std::clamp(env("XBE_RT_GI_HOLD", 1200.0f), 1.0f, 100000.0f);
 +    auto down = [](uint32_t v) { return std::max(1u, (v + 7) / 8); };
 +    if (!EnsureMeanTargets(tw, th)) return -1;
 +    const D3D12_RESOURCE_STATES kRead =
 +        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 +    const DXGI_FORMAT f16 = DXGI_FORMAT_R16G16B16A16_FLOAT;
 +    uint32_t slot = AllocSrvSlots(kMean);
-+    for (uint32_t i = 0; i < kMean; i++) TextureSrv(mean_[i].Get(), f16, slot + i);
++    const DXGI_FORMAT f32 = DXGI_FORMAT_R32G32B32A32_FLOAT;
++    for (uint32_t i = 0; i < kMean; i++) TextureSrv(mean_[i].Get(), i == 4 || i == 5 ? f32 : f16, slot + i);
 +    uint32_t sw = gw, sh = gh;
 +    bool drawn = true;
 +    for (uint32_t i = 0; i < 4 && drawn; i++) {
@@ -3593,19 +3896,47 @@ index fe65837..9a30b80 100644
 +        sh = dh;
 +    }
 +    uint32_t cur = 4 + (mean_cur_ ^ 1), prev = 4 + mean_cur_;
-+    bool reset = rt_reset_ || mean_frame_ == UINT64_MAX || mean_frame_ + 1 != presents_;
++    // afresh after a cut or a time without a view (a loading, a room's change); not after a frame without bounce
++    // lighting alone (a menu over the room, the bounce off a while): the room's held as it was
++    bool reset = rt_reset_ || mean_frame_ == UINT64_MAX;
 +    float e[8] = {float(slot + 3), 1, 1, 2, float(slot + prev), kEase, reset ? 1.0f : 0.0f, 0};
 +    Alloc ecb = Upload(256, 256);
 +    std::memcpy(ecb.cpu, e, sizeof(e));
 +    Transition(mean_[prev].Get(), mean_state_[prev], kRead);
 +    Transition(mean_[cur].Get(), mean_state_[cur], D3D12_RESOURCE_STATE_RENDER_TARGET);
 +    drawn = drawn && rt_.Trace(rt::Scene::Pass::BounceMean, ecb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
-+                               Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kMeanRtv + cur, rtv_inc_), f16, 1, 1);
++                               Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kMeanRtv + cur, rtv_inc_), f32, 1, 1);
 +    Transition(mean_[cur].Get(), mean_state_[cur], kRead);
 +    if (!drawn) return -1;
 +    mean_cur_ ^= 1;
 +    mean_frame_ = presents_;
 +    return float(slot + cur);
++}
++
++// The scene's lights as a pass that samples them takes them (rt_lights.hlsli): lt (the lights listed, their brightness,
++// the candidates a sample is picked from, the most light they throw on a surface), sk's z and w (the lights drawn
++// flat's brightness, the most area a light's light is counted from) and the list, as Lighting gives them (its
++// XBE_RT_LIGHTS_* settings). The lights listed
++uint32_t D3D12Backend::LightList(float lt[4], float sk[4], uint32_t list[][4]) {
++    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
++    static const float kLightGain = env("XBE_RT_LIGHTS_GAIN", 24.0f), kLightTriesSet = env("XBE_RT_LIGHTS_TRIES", 0),
++                       kLightMost = env("XBE_RT_LIGHTS_MAX", 0.75f), kFlat = env("XBE_RT_LIGHTS_FLAT", 0.8f),
++                       kLightArea = env("XBE_RT_LIGHTS_AREA", 30000.0f);
++    const std::vector<uint32_t>& em = rt_.Emissive();
++    uint32_t lights = uint32_t(std::min<size_t>(em.size() / 2, kMaxLights));
++    lt[0] = float(lights);
++    lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
++    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * RtQuality()));
++    lt[3] = kLightMost;
++    sk[2] = kFlat;
++    sk[3] = kLightArea;
++    const uint32_t flame = FlameArea();
++    for (uint32_t i = 0; i < lights; i++) {
++        list[i][0] = em[i * 2];
++        list[i][1] = em[i * 2 + 1];
++        list[i][2] = flame;
++    }
++    return lights;
 +}
 +
 +// Ray traced bounce lighting over the frame's 3D (rt_gi.hlsl, rt_giapply.hlsl): the light its surfaces throw onto each
@@ -3647,7 +3978,9 @@ index fe65837..9a30b80 100644
 +    uint32_t gw = std::max(1u, uint32_t(float(rw) * kScale)), gh = std::max(1u, uint32_t(float(rh) * kScale));
 +    // the depth (the bounce pass's table, and every pass's by its index), the bounce target, the guides (the
 +    // smoothing's), the motion and the denoiser's targets (Denoise's)
-+    uint32_t slot = AllocSrvSlots(5 + kDn);
++    // (and after them, the lights' points kept the frame before, rt_gi.hlsl's, the glows remembered's three, and the
++    // anti-aliasing's reactive mask, rt_giapply.hlsl's)
++    uint32_t slot = AllocSrvSlots(10 + kDn);
 +    ID3D12Resource* src[5 + kDn] = {aa_depth_.Get(), gi_.Get(), guide_[0].Get(), guide_[1].Get(), aa_motion_.Get()};
 +    DXGI_FORMAT fmt[5 + kDn] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, kGuideFmt[0], kGuideFmt[1],
 +                                DXGI_FORMAT_R16G16_FLOAT};
@@ -3687,6 +4020,10 @@ index fe65837..9a30b80 100644
 +        float lt[4];
 +        float sky[4];
 +        float sk[4];
++        float gl[4];
++        float rs[4];
++        float pv[16];
++        float gm[4];
 +        uint32_t list[kMaxLights][4];
 +    } gc{};
 +    // the sky's light (SkyLight), outdoors
@@ -3704,6 +4041,40 @@ index fe65837..9a30b80 100644
 +    // Hector, mist, a beam, is lit as a torch at most
 +    static const float kLightArea = env("XBE_RT_LIGHTS_AREA", 30000.0f);
 +    gc.sk[3] = kLightArea;
++    // XBE_RT_GLOW_BOUNCE: the glows' light the bounce rays gather as they pass through them (1: as the eye sees them;
++    // the save room's water's glow on the stone around it, all of it, not the few draws of it that are listed)
++    // XBE_RT_GLOW_SKIP: from how far off a surface they count (40 units: a glow laid over the floor, the marker that
++    // points to a save room, is the floor's look, not light thrown on it)
++    static const float kGlowBounce = env("XBE_RT_GLOW_BOUNCE", 1.0f), kGlowSkip = env("XBE_RT_GLOW_SKIP", 40.0f);
++    gc.gl[0] = kGlowBounce;
++    gc.gl[1] = kGlowSkip;
++    // XBE_RT_GI_BOUNCE2: the lights' light bounced a second time, off what the bounce rays meet (1, 0: none), each
++    // ray's sample picked of XBE_RT_GI_BOUNCE2_TRIES candidates (2)
++    static const float kBounce2 = env("XBE_RT_GI_BOUNCE2", 1.0f), kBounce2Tries = env("XBE_RT_GI_BOUNCE2_TRIES", 2.0f);
++    gc.gl[2] = kBounce2;
++    gc.gl[3] = std::max(1.0f, kBounce2Tries);
++    // XBE_RT_LIGHTS_REUSE: each bounce texel's lights' point kept from frame to frame and resampled with the next
++    // frame's candidates (ReSTIR's reuse over time), counting for at most this many frames' candidates (4; 0: each
++    // frame's afresh). A torch found once is kept while it is strong there: the grain of its light on a wall settles
++    // rather than crawls, as if it were picked of several times the candidates
++    // XBE_RT_LIGHTS_REUSE_DEPTH: kept only where the surface was as deep as this one was, within this part (0.05)
++    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 4.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++    const uint32_t rs_cur = uint32_t(presents_ & 1), rs_prev = rs_cur ^ 1;
++    const bool kept = EnsureReservoirs(tw, th);
++    const bool reuse = kept && kReuse > 0 && !rt_reset_ && rs_frame_ != UINT64_MAX && rs_frame_ + 1 == presents_;
++    const float tries = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * q));
++    gc.rs[0] = float(slot + 5 + kDn);
++    gc.rs[1] = reuse ? 1.0f : 0.0f;
++    gc.rs[2] = kReuse > 0 ? std::min(kReuse * tries, 63.0f - tries) : 0.0f;
++    gc.rs[3] = kReuseDepth;
++    std::memcpy(gc.pv, rt_clip_to_prev_, sizeof(rt_clip_to_prev_));
++    if (kept) TextureSrv(rs_[rs_prev].Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, slot + 5 + kDn);
++    if (kept && !rs_said_) {
++        if (kReuse > 0)
++            LOGR("ray tracing: the lights' points kept from frame to frame, counting for up to %.0f candidates",
++                 gc.rs[2]);
++        rs_said_ = true;
++    }
 +    float gp[16] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
 +                    float(rw), float(rh), float(gw), float(gh),
 +                    kReach, std::max(1.0f, kRays), strength, kFade,
@@ -3713,44 +4084,73 @@ index fe65837..9a30b80 100644
 +    gc.lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
 +    gc.lt[2] = std::max(1.0f, kLightTries);
 +    gc.lt[3] = kLightMost;
++    const uint32_t flame = FlameArea();
 +    for (uint32_t i = 0; i < lights; i++) {
 +        gc.list[i][0] = em[i * 2];
 +        gc.list[i][1] = em[i * 2 + 1];
++        gc.list[i][2] = flame;
 +    }
 +    if (lights && !lights_said_) {
 +        LOGR("ray tracing: %zu lights in the scene (its glows, flames and spells), %u sampled a frame", em.size() / 2,
 +             lights);
 +        lights_said_ = true;
 +    }
++    // the glows remembered off screen (RememberGlows), every one a candidate for the lights' sample
++    gc.gm[0] = RememberGlows(slot, slot + 6 + kDn, rw, rh, gc.lt, gc.sk, gc.list);
++    gc.gm[1] = float(kGlowSlots);
 +    Alloc gcb = Upload(sizeof(GiConstants), 256);
 +    std::memcpy(gcb.cpu, &gc, sizeof(gc));
-+    Transition(gi_.Get(), gi_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
-+    bool drawn = rt_.Trace(rt::Scene::Pass::Bounce, gcb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
-+                           Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kGiRtv, rtv_inc_),
-+                           DXGI_FORMAT_R16G16B16A16_FLOAT, gw, gh);
 +    const D3D12_RESOURCE_STATES kRead =
 +        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++    Transition(gi_.Get(), gi_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    // its second target the lights' points kept here, for the frame after (the frame before's read)
++    rt::Scene::Out keep{Cpu(rtv_heap_.Get(), kRsRtv + rs_cur, rtv_inc_), DXGI_FORMAT_R32G32B32A32_FLOAT};
++    if (kept) {
++        Transition(rs_[rs_prev].Get(), rs_state_[rs_prev], kRead);
++        Transition(rs_[rs_cur].Get(), rs_state_[rs_cur], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    }
++    bool drawn = rt_.Trace(rt::Scene::Pass::Bounce, gcb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++                           Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kGiRtv, rtv_inc_),
++                           DXGI_FORMAT_R16G16B16A16_FLOAT, gw, gh, kept ? &keep : nullptr, kept ? 1 : 0);
++    if (kept) {
++        Transition(rs_[rs_cur].Get(), rs_state_[rs_cur], kRead);
++        rs_frame_ = drawn ? presents_ : UINT64_MAX;
++    }
 +    Transition(gi_.Get(), gi_state_, kRead);
 +    // gathered over the frames and smoothed (Denoise), else as the rays found it
 +    uint32_t light = drawn && denoise ? Denoise(slot, tw, th, gw, gh, rw, rh) : slot + 1;
 +    // in the place of the game's flat fill (its room average, RoomBounce), unless XBE_RT_GI_NEUTRAL=0 (all of it added,
-+    // brightening the room): what falls short of the average takes out up to XBE_RT_GI_FILL of the frame's own (0.5),
++    // brightening the room): what falls short of the average takes out up to XBE_RT_GI_FILL of the frame's own (0.3),
 +    // as the strength (the Lighting strength setting) has it
-+    // XBE_RT_GI_BOOST: how much of the light above the room's average is added (1.6), the lit side of the contrast as
++    // XBE_RT_GI_BOOST: how much of the light above the room's average is added (1), the lit side of the contrast as
 +    // the fill is the dark side
-+    static const float kNeutral = env("XBE_RT_GI_NEUTRAL", 1), kFill = env("XBE_RT_GI_FILL", 0.5f),
-+                       kBoost = env("XBE_RT_GI_BOOST", 1.6f);
++    // XBE_RT_GI_CHAR_FILL: a character's share (0.6), as the strength has it; XBE_RT_GI_CHAR_BOOST: how much of what
++    // it gets above the room's average is added to a character (0: none; the game lights Hector and the enemies with
++    // lights of their own, and what the rays added stood them out brighter than the floor they stood on)
++    static const float kNeutral = env("XBE_RT_GI_NEUTRAL", 1), kFill = env("XBE_RT_GI_FILL", 0.3f),
++                       kBoost = env("XBE_RT_GI_BOOST", 1.0f), kCharFill = env("XBE_RT_GI_CHAR_FILL", 0.6f),
++                       kCharBoost = env("XBE_RT_GI_CHAR_BOOST", 0.0f);
 +    float mean = drawn && kNeutral != 0 ? RoomBounce(slot + 1, gw, gh, tw, th) : -1.0f;
 +    float fill = std::clamp(kFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 0.9f);
++    float char_fill = std::clamp(kCharFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 0.9f);
++    // the frame's effects (the anti-aliasing's reactive mask: glows, beams, fire drawn into the frame before it), left
++    // as the game drew them (rt_giapply.hlsl), unless XBE_RT_GI_EFFECTS=0
++    static const bool kEffects = env("XBE_RT_GI_EFFECTS", 1) != 0;
++    const bool effects = kEffects && aa_rx_ && aa_rx_frame_ == presents_ && aa_rx_w_ == t.w && aa_rx_h_ == t.h;
++    if (effects) {
++        Transition(aa_rx_.Get(), aa_rx_state_, kRead);
++        TextureSrv(aa_rx_.Get(), DXGI_FORMAT_R8_UNORM, slot + 9 + kDn);
++    }
 +    float ap[20] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
 +                    float(rw), float(rh), float(gw), float(gh),
 +                    float(slot), float(light), std::max(1.0f, kStep), float(kView),
 +                    float(slot + 2), float(slot + 3), mean, fill,
-+                    kBoost, 0, 0, 0};
++                    kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f};
 +    Alloc acb = Upload(256, 256);
 +    std::memcpy(acb.cpu, ap, sizeof(ap));
 +    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-+    drawn = drawn && rt_.Trace(rt::Scene::Pass::BounceApply, acb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++    drawn = drawn && rt_.Trace(kView ? rt::Scene::Pass::BounceApplyView : rt::Scene::Pass::BounceApply, acb.gpu,
++                               Gpu(srv_heap_.Get(), slot, srv_inc_),
 +                               Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), t.view, rtv_inc_), t.fmt, rw, rh);
 +    EndRtPass();
 +    if (!gi_said_) {
@@ -4218,8 +4618,22 @@ index fe65837..9a30b80 100644
 +                 double(kShadowReach));
 +            shadow_said_ = true;
 +        }
-+        Alloc rcb = Upload(256, 256);
-+        std::memcpy(rcb.cpu, rp, sizeof(rp));
++        // and from the scene's lights (rt_lights.hlsli, the bounce lighting's list): XBE_RT_SHADOWS_LAMPS their
++        // darkest (0.7, 0: none) where a lamp lights a surface as much as a lamp can
++        static const float kLampShadow = env("XBE_RT_SHADOWS_LAMPS", 0.7f);
++        struct AoConstants {
++            float p[24];
++            float lt[4];
++            float sk[4];
++            uint32_t list[kMaxLights][4];
++        } ac{};
++        std::memcpy(ac.p, rp, sizeof(rp));
++        if (shade && kLampShadow > 0 && (g_ray_tracing.load(std::memory_order_relaxed) & kRtLighting)) {
++            uint32_t n = LightList(ac.lt, ac.sk, ac.list);
++            ac.sk[0] = n ? kLampShadow : 0.0f;
++        }
++        Alloc rcb = Upload(sizeof(AoConstants), 256);
++        std::memcpy(rcb.cpu, &ac, sizeof(ac));
 +        // drawn into the ambient occlusion's target as the screen space pass is, with the depth and the frame's
 +        // pictures (the cut-outs')
 +        Transition(ao_.Get(), ao_state_, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -4268,6 +4682,10 @@ index fe65837..9a30b80 100644
 +bool D3D12Backend::AntiAliasFrame(Target& t) {
 +    if (aa_done_frame_ == presents_) return false;
 +    aa_done_frame_ = presents_;
++    // XBE_AA_TRACE=N: where every Nth frame's 3D is closed, among the game's draws (with CV_WIDE_TRACE=N's)
++    static const uint64_t kAaTrace = std::getenv("XBE_AA_TRACE") ? std::max(1, std::atoi(std::getenv("XBE_AA_TRACE"))) : 0;
++    if (kAaTrace && presents_ % kAaTrace == 0)
++        LOGR("antialias %llu: the frame's 3D closed and anti-aliased here", (unsigned long long)presents_);
 +    if (!aa_ || aa_jitter_frame_ != presents_) return false;
 +    Target* ds = fg_ds_frame_ == presents_ ? fg_ds_ : nullptr;
 +    // the frame as the game draws it, 8 bit gamma-encoded colour (AMD's pass is told so)
@@ -4829,7 +5247,7 @@ index fe65837..9a30b80 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +6501,203 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +6904,203 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -5034,7 +5452,7 @@ index fe65837..9a30b80 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +6707,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +7110,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -5045,7 +5463,7 @@ index fe65837..9a30b80 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +6727,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +7130,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -5066,7 +5484,7 @@ index fe65837..9a30b80 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +6751,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +7154,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -5099,7 +5517,7 @@ index fe65837..9a30b80 100644
      }
  }
  
-@@ -3317,12 +6789,14 @@ void LogPerf() {
+@@ -3317,12 +7192,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -5118,7 +5536,7 @@ index fe65837..9a30b80 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +6805,120 @@ void LogPerf() {
+@@ -3331,25 +7208,120 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -5244,7 +5662,7 @@ index fe65837..9a30b80 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +6929,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +7332,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -5275,7 +5693,7 @@ index fe65837..9a30b80 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +6970,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +7373,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -5321,7 +5739,7 @@ index fe65837..9a30b80 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +7014,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +7417,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6741,10 +7159,10 @@ index 0000000..2c20ca0
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/raytrace.cpp b/runtime/gpu/raytrace.cpp
 new file mode 100644
-index 0000000..e3b9338
+index 0000000..6f3dac5
 --- /dev/null
 +++ b/runtime/gpu/raytrace.cpp
-@@ -0,0 +1,795 @@
+@@ -0,0 +1,814 @@
 +#include "gpu/raytrace.h"
 +
 +#include <algorithm>
@@ -6780,6 +7198,8 @@ index 0000000..e3b9338
 +#include "rt_water_vs.h"
 +#include "rt_shafts_ps.h"  // light shafts: rt_shafts.hlsl's
 +#include "rt_shafts_vs.h"
++#include "rt_glowmem_ps.h"  // the glows remembered off screen: rt_glowmem.hlsl's
++#include "rt_glowmem_vs.h"
 +#endif
 +
 +namespace gpu::rt {
@@ -7193,7 +7613,7 @@ index 0000000..e3b9338
 +        s.table_map[i] = {g.first,          g.index_start, l.picture,        l.alpha,           l.orm,
 +                          l.normal,         l.rough_bias,  l.metal_scale,    l.gloss_roughness, l.gloss_metalness,
 +                          l.water ? 1.0f : l.character ? 2.0f : 0.0f, float(l.emissive) + (l.screen ? 2.0f : 0.0f)};
-+        if (l.emissive) {
++        if (l.emissive && l.listed) {
 +            emissive_.push_back(uint32_t(i));
 +            emissive_.push_back((g.indices ? g.index_count : g.vertex_count) / 3);
 +            if (!l.screen) emissive_solid_++;
@@ -7374,11 +7794,14 @@ index 0000000..e3b9338
 +    cl_->BuildRaytracingAccelerationStructure(&td, 0, nullptr);
 +    UavBarrier();
 +    built_ = true;
-+    // the first frame's, then one every half minute or so
-+    if (builds_++ % 1800 == 0) {
++    // the first frame's, then one every half minute or so (XBE_RT_LIGHTS_LOG: every 5 seconds, with its lights)
++    static const uint64_t kEvery = std::getenv("XBE_RT_LIGHTS_LOG") ? 300 : 1800;
++    if (builds_++ % kEvery == 0) {
 +        LOGR("ray tracing: the frame's scene, %zu draws (%zu of characters, %zu lights drawn flat, %u of water), %llu "
-+             "triangles, %u vertices; %.1f MB built", n, chars, flat, waters_, (unsigned long long)triangles, used_,
-+             double(bi.ResultDataMaxSizeInBytes + ci.ResultDataMaxSizeInBytes) / 1048576.0);
++             "triangles, %u vertices; %.1f MB built; %zu lights listed (%zu of them drawn flat)", n, chars, flat,
++             waters_, (unsigned long long)triangles, used_,
++             double(bi.ResultDataMaxSizeInBytes + ci.ResultDataMaxSizeInBytes) / 1048576.0, emissive_.size() / 2,
++             emissive_.size() / 2 - emissive_solid_);
 +    }
 +    return true;
 +}
@@ -7419,6 +7842,7 @@ index 0000000..e3b9338
 +            pd.PS = {k_rt_gi_ps, sizeof(k_rt_gi_ps)};
 +            break;
 +        case Pass::BounceApply:
++        case Pass::BounceApplyView:
 +            pd.VS = {k_rt_giapply_vs, sizeof(k_rt_giapply_vs)};
 +            pd.PS = {k_rt_giapply_ps, sizeof(k_rt_giapply_ps)};
 +            break;
@@ -7464,10 +7888,15 @@ index 0000000..e3b9338
 +            pd.VS = {k_rt_shafts_vs, sizeof(k_rt_shafts_vs)};
 +            pd.PS = {k_rt_shafts_ps, sizeof(k_rt_shafts_ps)};
 +            break;
++        case Pass::GlowMemory:
++            pd.VS = {k_rt_glowmem_vs, sizeof(k_rt_glowmem_vs)};
++            pd.PS = {k_rt_glowmem_ps, sizeof(k_rt_glowmem_ps)};
++            break;
 +    }
 +    auto& b = pd.BlendState.RenderTarget[0];
 +    b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-+    if (pass == Pass::Reflections || pass == Pass::BounceApply || pass == Pass::ReflectionSmoothOver ||
++    if (pass == Pass::Reflections || pass == Pass::BounceApply || pass == Pass::BounceApplyView ||
++        pass == Pass::ReflectionSmoothOver ||
 +        pass == Pass::Water || pass == Pass::ShaftsOver) {
 +        // over the frame: their colour added, premultiplied, the alpha taking out what they replace
 +        b.BlendEnable = TRUE;
@@ -7483,6 +7912,14 @@ index 0000000..e3b9338
 +        // the light shafts as a screen lays light over: what the frame already lit takes less of them (added, the
 +        // glow round a fountain's bright water washed it white)
 +        if (pass == Pass::ShaftsOver) b.SrcBlend = D3D12_BLEND_INV_DEST_COLOR;
++        // the bounce lighting as a gain on the frame's own light, per colour: its colour the part over 1, its alpha
++        // the part up to 1 (frame x (colour + alpha)). Added in the surface's picture's colour, it lit what the game
++        // had darkened by its vertices' colour (the save room door's glowing panel, drawn dark) as bright as its
++        // picture
++        if (pass == Pass::BounceApply) {
++            b.SrcBlend = D3D12_BLEND_DEST_COLOR;
++            b.DestBlend = D3D12_BLEND_SRC_ALPHA;
++        }
 +    }
 +    pd.SampleMask = UINT_MAX;
 +    pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -7542,10 +7979,10 @@ index 0000000..e3b9338
 +}  // namespace gpu::rt
 diff --git a/runtime/gpu/raytrace.h b/runtime/gpu/raytrace.h
 new file mode 100644
-index 0000000..adc025f
+index 0000000..4555714
 --- /dev/null
 +++ b/runtime/gpu/raytrace.h
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,266 @@
 +#pragma once
 +// Ray tracing over a title's own 3D (DXR 1.1 inline ray queries): each frame, the triangles its world's draws put on
 +// the screen are gathered into an acceleration structure, which passes after the frame's 3D trace rays through.
@@ -7606,8 +8043,9 @@ index 0000000..adc025f
 +// until the passes (UINT32_MAX none)
 +struct Look {
 +    uint32_t picture = UINT32_MAX;  // its stage 0 picture (2D)
-+    uint32_t alpha = 0;             // a cut-out's alpha test: 0x10000, 0x20000 times the vertices' alpha, D3D12
-+                                    // comparison - 1 << 8, reference (0: solid)
++    uint32_t alpha = 0;             // a cut-out's alpha test: 0x10000, 0x20000 times the vertices' alpha, 0x40000
++                                    // blended (it covers as much as its alpha), D3D12 comparison - 1 << 8, reference
++                                    // (0: solid)
 +    uint32_t orm = UINT32_MAX, normal = UINT32_MAX;  // a texture pack material's maps, over stage 0's coordinates
 +    float rough_bias = 0, metal_scale = 0;           // its parameters (Material::params[2] y, z)
 +    float gloss_roughness = 0, gloss_metalness = 0;  // Material::gloss
@@ -7621,6 +8059,9 @@ index 0000000..adc025f
 +    // a glow, a flame, a spell drawn adding its light (blending onto what is there), which the passes take as a light
 +    // (rt_gi.hlsl) and see through: 1 its light weighted by its alpha, 2 as it is
 +    uint8_t emissive = 0;
++    // and listed among the lights the bounce lighting samples (d3d12.cpp: a few draws of a picture a frame); one not
++    // listed is in the scene still, its light gathered by the bounce rays that pass through it
++    bool listed = true;
 +};
 +
 +// a draw in the scene: its indices (a list; 0 for none, its vertices taken three by three) and its vertices' first slot
@@ -7715,7 +8156,8 @@ index 0000000..adc025f
 +        AmbientOcclusion,
 +        Reflections,
 +        Bounce,
-+        BounceApply,
++        BounceApply,      // the bounce lighting into the frame, as a gain on the game's own light (rt_giapply.hlsl)
++        BounceApplyView,  // its debug views (XBE_RT_VIEW), in the frame's place
 +        Guides,
 +        BounceGather,
 +        BounceSmooth,
@@ -7728,6 +8170,7 @@ index 0000000..adc025f
 +        Water,       // reflections on water over the frame, premultiplied (rt_water.hlsl)
 +        Shafts,      // light shafts marched and gathered into targets of their own (rt_shafts.hlsl)
 +        ShaftsOver,  // and laid over the frame, added
++        GlowMemory,  // the glows remembered off screen, their two steps (rt_glowmem.hlsl)
 +    };
 +    struct Out {
 +        D3D12_CPU_DESCRIPTOR_HANDLE rtv;
@@ -7808,10 +8251,10 @@ index 0000000..adc025f
 +}  // namespace gpu
 diff --git a/runtime/gpu/rt_ao.hlsl b/runtime/gpu/rt_ao.hlsl
 new file mode 100644
-index 0000000..557732c
+index 0000000..7bc0077
 --- /dev/null
 +++ b/runtime/gpu/rt_ao.hlsl
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,176 @@
 +// Ray traced ambient occlusion (raytrace.cpp, DXR 1.1 inline ray queries, shader model 6.5, compiled to DXIL when the
 +// runtime is built): each pixel of the frame's 3D, found again in view space from its depth as the screen space pass
 +// finds it (kAoHlsl in d3d12.cpp), sends a few rays over the hemisphere above its surface into the frame's scene (the
@@ -7833,6 +8276,9 @@ index 0000000..557732c
 +    float4 fr;    // the frame's number, XBE_RT_VIEW, the rays' start off the surface: a constant and a part of the depth
 +    float4 sh;    // characters' shadows: the world's up in view space, their darkest (0: none)
 +    float4 sh2;   // how far above a character still shades, the light's width (the tangent of its half angle)
++    float4 lt;    // the scene's lights (rt_lights.hlsli): listed, their brightness, candidates, the most they light
++    float4 sk;    // the lamps' shadows' darkest (0: none); unused; the lights drawn flat's brightness; the most area
++    uint4 lights[128];  // each light's draw and triangles (rt_gi.hlsl's)
 +};
 +#include "rt_scene.hlsli"
 +Texture2D<float> depth : register(t1);
@@ -7854,12 +8300,17 @@ index 0000000..557732c
 +    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
 +    return float(v.x & 0xFFFFFF) / 16777216.0f;
 +}
++#include "rt_lights.hlsli"
 +// the scene's surface along d from the eye between tmin and tmax: its distance (-1 for none) and its normal
-+float Primary(float3 d, float tmin, float tmax, out float3 n) {
-+    uint geom, prim;
-+    float t = TraceScene(0, d, tmin, tmax, 32, geom, prim);
++float Primary(float3 d, float tmin, float tmax, out float3 n, out uint geom, out uint prim, out float2 bary) {
++    float t = TraceScene(0, d, tmin, tmax, 32, geom, prim, bary);
 +    n = t >= 0 ? FaceNormal(geom, prim, d) : 0;
 +    return t;
++}
++float Primary(float3 d, float tmin, float tmax, out float3 n) {
++    uint geom, prim;
++    float2 bary;
++    return Primary(d, tmin, tmax, n, geom, prim, bary);
 +}
 +
 +float ps(float4 pos : SV_Position) : SV_Target {
@@ -7872,13 +8323,18 @@ index 0000000..557732c
 +    // the surface: the scene's, met from the eye
 +    float len = length(p);
 +    float3 dir = p / len, n;
-+    float t = Primary(dir, 0, 1e30f, n);
++    uint hit_geom, hit_prim;
++    float2 hit_bary;
++    float t = Primary(dir, 0, 1e30f, n, hit_geom, hit_prim, hit_bary);
 +    // XBE_RT_VIEW 1: whether the scene is where the frame drew it: a ray from the eye through the pixel meets it
 +    // within 2% of the depth (white), farther or nearer (grey: the depth from something not in the scene), or not at
 +    // all (black). 2: the surface's slope as used (the share of it facing up, 0.5 level). 3, 4: below
 +    if (fr.y == 1) return t < 0 ? 0.0f : abs(t - len) < 0.02f * len ? 1.0f : 0.5f;
 +    bool met = t >= 0 && t > 0.98f * len && any(n != 0), crack = false;
-+    if (met && t > 1.02f * len) {
++    // the depth a glow's that wrote it (a lamp's light beam, which rays pass through): the place is what lies behind
++    // it, which the frame shows through its light (from the depth, the beam was shaded dark as a wall's corner)
++    bool glow = met && t > 1.02f * len && LightAlong(0, dir, 0.98f * len, 1.02f * len);
++    if (met && t > 1.02f * len && !glow) {
 +        float2 uv = (float2(px) + 0.5f) / part.xy;
 +        float2 off[4] = {float2(0.5f, 0), float2(-0.5f, 0), float2(0, 0.5f), float2(0, -0.5f)};
 +        [unroll] for (int k = 0; k < 4 && !crack; k++) {
@@ -7890,8 +8346,13 @@ index 0000000..557732c
 +            if (crack) n = n2;
 +        }
 +    }
++    // how much of the pixel the surface met covers: a blended cut-out's (ivy, a pane) by its alpha there, the rest
++    // of the pixel what lies behind it, which this surface's occlusion does not darken (a lamp's pale glass panes
++    // and the edges of a clump of leaves shaded dark as stone)
++    float cover = 1;
 +    if (met && !crack) {
 +        p = dir * t;
++        if ((geo[hit_geom].a.w & 0x50000) == 0x50000) cover = saturate(CutoutAlpha(hit_geom, hit_prim, hit_bary));
 +    } else if (!crack) {
 +        // the depth's: the surface's slope from the nearer neighbour each way, so an edge doesn't bend it
 +        float3 pr = ViewPos(px + int2(1, 0), Depth(px + int2(1, 0))) - p, pl = p - ViewPos(px - int2(1, 0), Depth(px - int2(1, 0)));
@@ -7947,8 +8408,26 @@ index 0000000..557732c
 +            if (th >= 0) shadow = 1 - sh.w * saturate(1.5f - 1.5f * th / sh2.x);
 +        }
 +    }
++    // and the lamps' (a torch's, a candle's, a brazier's): a ray toward a point of one of them picked for this
++    // surface, which the characters alone block, as dark as sk.x where a lamp lights it as much as a lamp can (lt.w),
++    // the light above's shadow giving way as much: by a torch Hector's shadow falls away from its flame
++    if (sk.x > 0 && lt.x > 0) {
++        float3 q;
++        float ll = dot(PickLight(o, n, id, uint(fr.x), 2, q) * lt.y, float3(0.2126f, 0.7152f, 0.0722f));
++        float share = saturate(ll / max(lt.w, 1e-3f));
++        float3 dq = q - o;
++        float dist = length(dq);
++        float lamp = 1;
++        if (share > 0 && dist > 1e-3f && TraceCharacters(o, dq / dist, 2, dist * 0.98f) >= 0) lamp = 1 - sk.x * share;
++        shadow = (1 - (1 - shadow) * (1 - share)) * lamp;
++    }
 +    if (fr.y == 15) return shadow;
-+    vis *= shadow;
++    vis = lerp(1, vis, cover) * shadow;
++    // the glows drawn over the pixel (a lamp's light beams, adding their light: the frame holds them before this is
++    // multiplied in): the occlusion darkens the surface's own light, not theirs, so the less the more they brighten
++    // it (the beams by the lamps were shaded dark as the corner behind them)
++    float glow_l = dot(GlowsAlong(0, dir, len * 1.02f), float3(0.2126f, 0.7152f, 0.0722f));
++    vis = lerp(vis, 1, saturate(glow_l * 4));
 +    // faded out with distance: the far half of its reach
 +    return lerp(vis, 1, saturate((p.z - 0.5f * ao.z) / (0.5f * ao.z)));
 +}
@@ -8042,10 +8521,10 @@ index 0000000..06d0649
 +}
 diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
 new file mode 100644
-index 0000000..e7c164e
+index 0000000..71fc90b
 --- /dev/null
 +++ b/runtime/gpu/rt_gi.hlsl
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,179 @@
 +// Ray traced bounce lighting (raytrace.cpp, DXR 1.1 inline ray queries, compiled to DXIL when the runtime is built):
 +// the light the room's own surfaces throw onto each other. Each pixel of the frame's 3D, at a part of its size, finds
 +// its surface in the frame's scene (as ambient occlusion does, rt_ao.hlsl) and sends a few rays over the hemisphere
@@ -8067,6 +8546,17 @@ index 0000000..e7c164e
 +    float4 sk;    // the sky light's strength; the share of the frame that is sky where it is whole; the lights drawn flat's
 +                  // brightness against the scene's own (a glow's sprite, a spark's: an effect more than a lamp); the
 +                  // most area a light's light is counted from (0: any)
++    float4 gl;    // the glows' light the bounce rays gather passing through them (XBE_RT_GLOW_BOUNCE), from how far off the
++                  // surface (XBE_RT_GLOW_SKIP); the lights' light bounced a second time (XBE_RT_GI_BOUNCE2) and the
++                  // candidates its samples are picked from
++    float4 rs;    // the lights' points kept from frame to frame (ReSTIR's reuse over time): the SRV heap's index of the
++                  // frame before's, 1 where there is one to take from (0: a cut, the room's first frame), the most
++                  // candidates it counts for (0: none), the depth's tolerance (a part of it)
++    float4 pv0;   // the camera's move: this frame's clip space to the frame before's, rows
++    float4 pv1;
++    float4 pv2;
++    float4 pv3;
++    float4 gm;    // the glows remembered off screen (rt_glowmem.hlsl's): their SRV heap index (-1: none), their slots
 +    uint4 lights[128];  // each light's draw among the scene's and its triangles
 +};
 +#include "rt_scene.hlsli"
@@ -8094,86 +8584,48 @@ index 0000000..e7c164e
 +    return t.SampleLevel(wrap, s.at, LevelOf(t, s, footprint)).rgb;
 +}
 +
-+// The scene's lights (Look::emissive: a glow, a flame, a spell, which the game added onto the frame): one sample of
-+// the light they throw on a surface at p facing n, picked by resampling (of lt.z candidates, each a point on a
-+// triangle of a light picked at random, the one kept as its unshadowed light is strong), then a ray toward it for its
-+// shadow (a character between a torch and the wall throws one). The light as the bounce rays' average is (radiance
-+// over pi), so it adds into them
-+float3 LightAt(float3 p, float3 n, uint2 id, uint frame) {
-+    uint count = min(uint(lt.x), 128u);  // the list holds 128
-+    if (count == 0) return 0;
-+    float3 keep_l = 0, keep_q = 0;
-+    float keep_f = 0, wsum = 0;
-+    int tries = int(lt.z);
-+    [loop] for (int k = 0; k < tries; k++) {
-+        float u0 = Hash(uint3(id, frame * 16u + uint(k) + 101u));
-+        float u1 = Hash(uint3(id.yx + 31u, frame * 16u + uint(k) + 211u));
-+        float u2 = Hash(uint3(id + 977u, frame * 16u + uint(k) + 331u));
-+        float u3 = Hash(uint3(id.yx + 4111u, frame * 16u + uint(k) + 457u));
-+        uint li = min(uint(u0 * count), count - 1);
-+        uint geom = lights[li].x, tris = max(lights[li].y, 1u);
-+        uint prim = min(uint(u1 * tris), tris - 1);
-+        // a point on the triangle, evenly over it
-+        float su = sqrt(u2);
-+        float2 bary = float2(su * (1 - u3), su * u3);
-+        Spot s = SpotOf(geom, prim, bary);
-+        float3 e = s.tint.rgb * s.tint.a;
-+        if (geo[geom].c.w > 2.5f) {
-+            // drawn flat: where it shows, before what the frame drew there; a haze over the view is none
-+            // (the depth at its triangle's middle: the same place for every sample of it, frame to frame)
-+            if (FlatShare(s) > 0.02f) e = 0;
-+            e *= sk.z;
-+            FlatAt(s, 0.95f * ViewZ(Depth(FlatPixel(s, float2(1.0f / 3, 1.0f / 3)))));
-+        }
-+        float3 q = s.p[0] * (1 - bary.x - bary.y) + s.p[1] * bary.x + s.p[2] * bary.y;
-+        float area = 0.5f * length(cross(s.p[1] - s.p[0], s.p[2] - s.p[0]));
-+        // no light bigger than a torch's flame (sk.w, its area): a glowing sheet (mist, a beam of light, the marker on
-+        // the floor that points to a save room) is a glow, not a lamp, and lit whole rooms its colour
-+        if (sk.w > 0) e *= min(1.0f, sk.w / (area * float(tris)));
-+        uint pic = geo[geom].a.z;
-+        if (pic != kNone) {
-+            float4 c = pictures[NonUniformResourceIndex(pic)].SampleLevel(wrap, s.at, 2);
-+            e *= c.rgb * (geo[geom].c.w == 1 || geo[geom].c.w == 3 ? c.a : 1.0f);
-+        }
-+        float3 d = q - p;
-+        float d2 = dot(d, d);
-+        float3 l = d * rsqrt(max(d2, 1e-8f));
-+        float cosn = saturate(dot(n, l));
-+        // its light here, unshadowed, as a small glowing patch (no side of a sprite turned away from it)
-+        // (no nearer than a little way off: a wall right behind a flame is lit, not burnt white)
-+        float3 f = e * cosn / (d2 + max(area * 0.25f, 3600.0f));
-+        float target = dot(f, float3(0.2126f, 0.7152f, 0.0722f));
-+        float w = target * area * float(tris) * float(count);  // over how likely the point was
-+        wsum += w;
-+        if (w > 0 && Hash(uint3(id.x + uint(k) * 7u, id.y, frame * 3u + 991u)) * wsum <= w) {
-+            keep_l = f;
-+            keep_q = q;
-+            keep_f = target;
-+        }
-+    }
-+    if (keep_f <= 0) return 0;
-+    float3 dq = keep_q - p;
-+    float dist = length(dq);
-+    // its shadow: anything solid between (the lights themselves and water let it through)
-+    if (TraceScene(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
-+    return keep_l / keep_f * (wsum / float(tries)) / 3.14159265f;
++#define RT_GLOW_MEMORY
++#include "rt_lights.hlsli"
++
++// the lights' point kept the frame before for this texel's surface (none: m 0): where the camera's move puts it in the
++// frame before's target, kept only where that texel's surface was as deep as this one was then
++Kept KeptBefore(int2 px, float d) {
++    Kept none = (Kept)0;
++    if (rs.y <= 0 || rs.z <= 0) return none;
++    float4 c = float4((float(px.x) + 0.5) / part.x * 2 - 1, 1 - (float(px.y) + 0.5) / part.y * 2, d, 1);
++    float4 q = float4(dot(pv0, c), dot(pv1, c), dot(pv2, c), dot(pv3, c));
++    if (abs(q.w) < 1e-20f) return none;
++    float2 uv = float2(q.x / q.w * 0.5f + 0.5f, 0.5f - q.y / q.w * 0.5f);
++    int2 at = int2(floor(uv * part.zw));
++    if (any(at < 0) || any(at >= int2(part.zw))) return none;
++    float4 v = pictures[NonUniformResourceIndex(uint(rs.x))].Load(int3(at, 0));
++    float zc = ViewZ(saturate(q.z / q.w));
++    if (v.w <= 0 || abs(v.w - zc) > rs.w * zc) return none;
++    return UnpackKept(v);
 +}
 +
-+float4 ps(float4 pos : SV_Position) : SV_Target {
++struct Out {
++    float4 light : SV_Target0;  // the light arriving (RGB); 1 + the lights' and glows' share of it (A)
++    float4 kept : SV_Target1;   // the lights' point kept here for the frame after (PackKept), 0: none
++};
++
++Out ps(float4 pos : SV_Position) {
++    Out res = (Out)0;
 +    uint2 id = uint2(pos.xy);
 +    // the depth texel at the middle of its part
 +    int2 px = int2((float2(id) + 0.5) * part.xy / part.zw);
-+    float3 p = ViewPos(px, Depth(px));
-+    if (p.z >= 0.999 * max(cam.x, cam.y) || p.z >= gi.w) return 0;  // nothing drawn there, or too far
++    float dz = Depth(px);
++    float3 p = ViewPos(px, dz);
++    if (p.z >= 0.999 * max(cam.x, cam.y) || p.z >= gi.w) return res;  // nothing drawn there, or too far
 +    float len = length(p);
 +    float3 dir = p / len;
 +    uint geom, prim;
 +    float2 bary;
 +    float t = TraceScene(0, dir, 0, 1e30f, 32, geom, prim, bary);
-+    if (t < 0 || abs(t - len) > 0.02f * len) return 0;  // not the scene's surface: no bounce
++    if (t < 0 || abs(t - len) > 0.02f * len) return res;  // not the scene's surface: no bounce
 +    Spot s = SpotOf(geom, prim, bary);
 +    float3 n = Facing(s.p[0], s.p[1], s.p[2], dir);
-+    if (all(n == 0)) return 0;
++    if (all(n == 0)) return res;
 +    float pixel = 2 * cam.w / part.y;
 +    float3 t0 = normalize(abs(n.y) < 0.99f ? cross(n, float3(0, 1, 0)) : cross(n, float3(1, 0, 0)));
 +    float3 b0 = cross(n, t0);
@@ -8189,6 +8641,7 @@ index 0000000..e7c164e
 +        skyc = sc.rgb * sk.x * saturate(sc.a / max(sk.y, 1e-3f));
 +    }
 +    bool open = any(skyc > 0);
++    float3 glow = 0, bounced = 0;
 +    [loop] for (int k = 0; k < rays; k++) {
 +        // cosine weighted: each ray counts as much as the light from its way does
 +        float u1 = Hash(uint3(id, uint(fr.x) * 8u + uint(k)));
@@ -8197,7 +8650,11 @@ index 0000000..e7c164e
 +        float3 rd = t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u1));
 +        uint g2, p2;
 +        float2 b2;
-+        float t2 = TraceScene(o, rd, 0, open ? 1e30f : gi.x, 16, g2, p2, b2);
++        // the world alone: a character throws no light (Hector's red sash lit the floor under him red) and lets the
++        // room's through (its own shadow is ambient occlusion's)
++        float t2 = TraceSceneMasked(o, rd, 0, open ? 1e30f : gi.x, 16, 0x01, g2, p2, b2);
++        // (not the glows laid on the surface itself, a marker on the floor: its own look, not light thrown on it)
++        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0));
 +        if (t2 < 0) {
 +            if (open) sum += skyc * saturate(dot(rd, sky.xyz) * 1.5f + 0.25f);  // the open sky
 +            continue;
@@ -8205,42 +8662,73 @@ index 0000000..e7c164e
 +        if (t2 >= gi.x) continue;  // past the reach: none from there
 +        Spot hs = SpotOf(g2, p2, b2);
 +        // its colour as the game lit it, its picture read broadly (what a bounce sees is soft)
-+        float3 seen = saturate(hs.tint.rgb) * PictureAt(g2, hs, (t + t2) * pixel * 8);
-+        sum += seen * saturate(4 * (1 - t2 / gi.x));  // fading near the reach, so where it ends draws no line
++        float3 pic = PictureAt(g2, hs, (t + t2) * pixel * 8);
++        float3 seen = saturate(hs.tint.rgb) * pic;
++        float reach = saturate(4 * (1 - t2 / gi.x));  // fading near the reach, so where it ends draws no line
++        sum += seen * reach;
++        // a second bounce: the lights' light where it met, thrown on in that surface's colour (a torch's light off its
++        // wall onto the floor before it, off the floor onto the ceiling). The game's colour there holds the light its
++        // artists painted; the lights' the rays found besides comes on top (gl.z: XBE_RT_GI_BOUNCE2, 1; gl.w: the
++        // candidates a sample is picked from)
++        if (gl.z > 0 && lt.x > 0) {
++            float3 hn = Facing(hs.p[0], hs.p[1], hs.p[2], rd);
++            float3 hp = o + rd * t2;
++            float3 hl = LightAt(hp + hn * (fr.z + fr.w * (t + t2)), hn, id + uint2(k * 977u, 0), uint(fr.x), int(gl.w));
++            bounced += pic * hl * reach;
++        }
 +    }
 +    float3 light = sum / float(max(rays, 1)) * gi.z;
-+    // the scene's lights on it (their brightness, lt.y, the Lighting strength's too), at most lt.w
-+    float3 lit = LightAt(o, n, id, uint(fr.x)) * lt.y;
++    // the glows' light, which the room's average leaves out as it does the lights' (a pool's glow lights the stone
++    // around it above the room's own, and does not dim the rest of the room)
++    float3 glowed = glow / float(max(rays, 1)) * gi.z * gl.x;
++    // the scene's lights on it (their brightness, lt.y, the Lighting strength's too), at most lt.w: its point picked
++    // of this frame's candidates and the one kept here the frame before (a light found once is kept while it is
++    // strong here: a torch's light on a wall settles rather than crawls), the one picked kept for the frame after
++    Kept kept;
++    float3 lit = LightAtKept(o, n, id, uint(fr.x), int(lt.z), KeptBefore(px, dz), rs.z, kept) * lt.y;
++    res.kept = kept.m > 0 ? PackKept(kept, p.z) : float4(0, 0, 0, 0);
 +    float ll = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));
 +    if (ll > lt.w) lit *= lt.w / ll;
++    // and their light bounced once more off what is around it, as much as a light's at most
++    float3 lit2 = bounced / float(max(rays, 1)) * lt.y * gl.z;
++    float ll2 = dot(lit2, float3(0.2126f, 0.7152f, 0.0722f));
++    if (ll2 > lt.w) lit2 *= lt.w / ll2;
++    lit += lit2;
 +    // fading out with distance: the far half of its reach on screen
 +    float fade = saturate((gi.w - p.z) / (0.5f * gi.w));
 +    if (fr.y == 17) light = 0;  // XBE_RT_VIEW 17: the lights' light alone (with 8: as it arrives)
-+    // alpha: there is light here (1), and how much of it the lights threw (over 1), which the room's average leaves
-+    // out (rt_gimean.hlsl: a torch lights its wall above the room's own, a spell does not dim the room around it)
-+    return float4((light + lit) * fade, 1 + min(ll, lt.w) * fade);
++    // alpha: there is light here (1), and how much of it the lights and glows threw (over 1), which the room's average
++    // leaves out (rt_gimean.hlsl: a torch lights its wall above the room's own, a spell does not dim the room around
++    // it)
++    float gll = dot(glowed, float3(0.2126f, 0.7152f, 0.0722f));
++    res.light = float4((light + lit + glowed) * fade, 1 + (dot(lit, float3(0.2126f, 0.7152f, 0.0722f)) + gll) * fade);
++    return res;
 +}
 diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
 new file mode 100644
-index 0000000..7305652
+index 0000000..3251f12
 --- /dev/null
 +++ b/runtime/gpu/rt_giapply.hlsl
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,88 @@
 +// Ray traced bounce lighting's second step (rt_gi.hlsl): the light arriving at each surface, gathered by a few rays a
 +// pixel at a part of the frame's size, smoothed across a 5x5 of its texels that lie on the same surface as the pixel
-+// (by their depth and their normal, rt_guide.hlsl's), then thrown back in the surface's own colour at the frame's full
-+// size (the guides' albedo: the stone's carving stays as sharp as its picture) and put into the frame's 3D. It takes
-+// the place of the flat fill the game's artists lit each room with (rt_gimean.hlsl, the room's average bounce): a
-+// surface gets what it gets above that average (the water's blue on the stone beside it), and gives up a share of the
-+// game's own light as it gets less (a corner, under a ledge), so each room keeps its brightness. The anti-aliasing
-+// after it gathers what noise is left over the frames.
++// (by their depth and their normal, rt_guide.hlsl's), then put into the frame's 3D at its full size as a gain on the
++// game's own light there, colour by colour (raytrace.cpp's blend: frame x (colour + alpha)). It takes the place of the
++// flat fill the game's artists lit each room with (rt_gimean.hlsl, the room's average bounce): a surface gains a share
++// of its own light as it gets more than that average (the water's blue on the stone beside it, a torch's wall), and
++// gives up a share as it gets less (a corner, under a ledge), so each room keeps its brightness, and what the game drew
++// dark stays its colour (the light added in the surface's picture's colour lit the save room door's panel, drawn dark,
++// as bright as its picture). The anti-aliasing after it gathers what noise is left over the frames.
 +cbuffer P : register(b0) {
 +    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
 +    float4 part;  // the 3D's size in depth texels (rw, rh), the bounce target's part (gw, gh)
 +    float4 ap;    // the SRV heap's indices of the depth and the bounce target, its step between taps, XBE_RT_VIEW
 +    float4 gu;    // the SRV heap's indices of the guides' albedo and normals, of the room's average bounce (-1: none,
 +                  // all of it added, XBE_RT_GI_NEUTRAL=0), the share of the game's light that is its fill
-+    float4 gx;    // how much of what a surface gets above the room's average is added (XBE_RT_GI_BOOST)
++    float4 gx;    // how much of what a surface gets above the room's average is added (XBE_RT_GI_BOOST); the share of
++                  // the game's light a character gives up as it gets less (XBE_RT_GI_CHAR_FILL); how much of what a
++                  // character gets above it is added (XBE_RT_GI_CHAR_BOOST); the reactive mask's SRV heap index + 1
++                  // (0: none)
 +};
 +#include "rt_scene.hlsli"
 +
@@ -8254,7 +8742,11 @@ index 0000000..7305652
 +    Texture2D<float4> normals = pictures[NonUniformResourceIndex(uint(gu.y))];
 +    int2 px = int2(pos.xy);
 +    float4 a = albedo.Load(int3(px, 0));
-+    if (a.a == 0) return 0;  // not the scene's surface: as the game drew it
++    // XBE_RT_VIEW 18: the guides' colour, magenta where the pixel is not the scene's surface
++    if (ap.w == 18) return a.a == 0 ? float4(1, 0, 1, 1) : float4(a.rgb, 1);
++    // the frame as it is: a gain of 1, or with a debug view (BounceApplyView: the frame x (1 - alpha) + colour) none
++    const float4 kAsIs = ap.w != 0 ? float4(0, 0, 0, 0) : float4(0, 0, 0, 1);
++    if (a.a == 0) return kAsIs;  // not the scene's surface: as the game drew it
 +    float zc = ViewZ(depth.Load(int3(px, 0)).r);
 +    float3 nc = normals.Load(int3(px, 0)).xyz;  // in the world: only their angle to each other counts here
 +    // the pixel's place in the bounce target
@@ -8281,13 +8773,30 @@ index 0000000..7305652
 +    // lights' alone, rt_gi.hlsl), 9: thrown back (in the frame's place)
 +    if (ap.w == 8 || ap.w == 10 || ap.w == 17) return float4(light, 1);
 +    if (ap.w == 9) return float4(light * a.rgb, 1);
-+    if (gu.z < 0) return float4(light * a.rgb, 0);  // all of it added
-+    // in the fill's place: what is above the room's average added, colour by colour; a share of the frame's own taken
-+    // out as it falls short of it (the blend keeps that share: frame x (1 - alpha) + colour)
++    if (ap.w != 0 || gu.z < 0) return kAsIs;  // another debug view's; no room average (XBE_RT_GI_NEUTRAL=0)
++    // in the fill's place: a share of the frame's own light taken out as it falls short of the room's average, and
++    // given as it gets more, colour by colour (the alpha the part of the gain up to 1, the colour the part over 1)
 +    float3 mean = pictures[NonUniformResourceIndex(uint(gu.z))].Load(int3(0, 0, 0)).rgb;
 +    float lm = Luma(mean);
-+    float dim = lm > 1e-5f ? gu.w * saturate(1 - Luma(light) / lm) : 0;
-+    return float4(max(light - mean, 0) * a.rgb * gx.x, dim);
++    if (lm <= 1e-5f) return kAsIs;
++    // a character (the guides' albedo alpha a half) by its own share: the game lights Hector and the enemies apart from
++    // the room, as brightly in its darkest corner as by its torches, so they stood out lit up against their
++    // surroundings; with the larger share they take the room's light as the stone beside them does
++    bool person = a.a < 0.75f;
++    float share = person ? gx.y : gu.w;
++    float dim = share * saturate(1 - Luma(light) / lm);
++    // and a character gains none (XBE_RT_GI_CHAR_BOOST, 0) of what it gets above the average: the game's own lights
++    // light it already, and added to theirs it stood out brighter than the floor beside it. Twice its own at most
++    float3 lift = saturate((person ? gx.z : gx.x) * share * max(light / lm - 1, 0));
++    // under the frame's effects (the anti-aliasing's reactive mask, gx.w its SRV heap index + 1: a glow, a beam of
++    // light, fire, drawn into the frame before this) their share of the pixel is left as the game drew it: the gain
++    // is the surface's behind them, not theirs (10.5's purple beam lost half its light to the dark corner behind it)
++    if (gx.w > 0) {
++        float fx = saturate(pictures[NonUniformResourceIndex(uint(gx.w - 1))].Load(int3(px, 0)).r);
++        lift *= 1 - fx;
++        dim *= 1 - fx;
++    }
++    return float4(lift, 1 - dim);
 +}
 diff --git a/runtime/gpu/rt_giatrous.hlsl b/runtime/gpu/rt_giatrous.hlsl
 new file mode 100644
@@ -8368,14 +8877,14 @@ index 0000000..bb07375
 +}
 diff --git a/runtime/gpu/rt_gimean.hlsl b/runtime/gpu/rt_gimean.hlsl
 new file mode 100644
-index 0000000..24ac42a
+index 0000000..cb3a6dc
 --- /dev/null
 +++ b/runtime/gpu/rt_gimean.hlsl
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,72 @@
 +// Ray traced bounce lighting's room average (d3d12.cpp's Lighting): the light the bounce pass found (rt_gi.hlsl),
 +// averaged over every texel that had any, a few passes each a block of the one before (the bounce target, then 1/8 of
-+// it each time down to one texel), then eased toward over the frames (about a second: a turn of the camera does not
-+// pump the room's brightness). The game's artists lit each room with a flat fill standing in for its bounced light;
++// it each time down to one texel), then held over the frames since the cut (a turn of the camera does not pump the
++// room's brightness). The game's artists lit each room with a flat fill standing in for its bounced light;
 +// the bounce lighting takes the place of that fill rather than adding to it (rt_giapply.hlsl): a surface gets the
 +// light it gets above the room's average, and gives up some of the game's own where it gets less (a corner, under a
 +// ledge), so the room keeps the brightness they gave it and its light comes from where the rays say.
@@ -8384,9 +8893,10 @@ index 0000000..24ac42a
 +                  // whether a texel had any, 1 and over, and the light the scene's lights threw on it over 1, which the
 +                  // room's average leaves out: theirs is light above the room's), 1: a level before, 3: the sky's colour
 +                  // (the frame's, where it drew nothing: ease holds the depth's SRV index and the view's depth at the
-+                  // buffer's 0 and 1), and the share of the frame it covers (rgb the mean, alpha the share that had any), 2: ease
-+                  // the room's mean toward the last level's
-+    float4 ease;  // the SRV heap's index of the eased mean before, how far toward this frame's (0 to 1), 1: start over
++                  // buffer's 0 and 1), and the share of the frame it covers (rgb the mean, alpha the share that had any), 2: hold
++                  // the room's mean over the frames, the last level's this frame's
++    float4 ease;  // the SRV heap's index of the held mean before, the least share of it this frame's is (1 over the
++                  // frames it holds), 1: start over
 +};
 +static const float4 cam = float4(0, 0, 0, 0);  // rt_scene.hlsli's view and size, which nothing here traces
 +static const float4 part = float4(1, 1, 1, 1);  // through
@@ -8415,11 +8925,14 @@ index 0000000..24ac42a
 +        return n > 0 ? float4(sum / n, n / (64 * 36)) : 0;
 +    }
 +    if (src.w == 2) {
++        // the mean of the frames since the cut (alpha: how many), of the last 1 / ease.y once there are more: the
++        // room's, not the view's (eased toward each frame's, it rose and fell as the camera turned)
 +        float4 now = Tex(src.x).Load(int3(0, 0, 0));
 +        float4 before = Tex(ease.x).Load(int3(0, 0, 0));
-+        if (ease.z != 0 || before.a <= 0) return now;
++        if (ease.z != 0 || before.a <= 0) return float4(now.rgb, now.a > 0 ? 1 : 0);
 +        if (now.a <= 0) return before;  // no bounce this frame (a fade): the room's as it was
-+        return lerp(before, now, ease.y);
++        float n = min(before.a + 1, 1 / max(ease.y, 1e-6f));
++        return float4(lerp(before.rgb, now.rgb, 1 / n), n);
 +    }
 +    // the block of the level before this texel covers: 8 x 8, the last texels taking what is left over
 +    int2 size = int2(src.yz);
@@ -8546,12 +9059,202 @@ index 0000000..f964668
 +    if (opt.w == 10) o.history = float4(frames <= 1 ? 1 : 0, frames / 32, frames / 32, frames);
 +    return o;
 +}
+diff --git a/runtime/gpu/rt_glowmem.hlsl b/runtime/gpu/rt_glowmem.hlsl
+new file mode 100644
+index 0000000..90e0ccf
+--- /dev/null
++++ b/runtime/gpu/rt_glowmem.hlsl
+@@ -0,0 +1,184 @@
++// The glows remembered off screen (d3d12.cpp's Lighting, for the bounce lighting's lights, rt_gi.hlsl). The scene's
++// lights are the glows, flames and spells the game drew this frame (Scene::Emissive), and the game draws only what is
++// on screen: a torch just out of view stopped lighting the wall in view beside it, and the wall darkened as the camera
++// turned. This pass keeps, frame to frame, a few slots of the glows seen: each where it is (moved with the camera into
++// each frame's view space), all the light it gives off, and how long it has been out of view. A glow the frame drew
++// is the list's (age 0, not sampled from here); one not drawn that is off screen is remembered (age 1 and up), for at
++// most gm.w frames; one not drawn that is on screen is gone (a spell over, a light put out) and its slot freed.
++// Two steps, each a pixel shader over a small RGBA32F target (gm.x):
++//  0: each listed light's summary, 128 x 3 texels by its place in the list: its middle (view space) and area; all
++//     the light it gives off and the least distance its light is counted from; whether a slot already holds it
++//  1: the slots, gm2.w x 2 texels: where (view space) and its age (-1: none); its light and least distance (as 0's)
++cbuffer P : register(b0) {
++    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
++    float4 part;  // the 3D's size in depth texels (rw, rh)
++    float4 lt;    // the scene's lights listed (rt_gi.hlsl's lt)
++    float4 sk;    // z: the lights drawn flat's brightness; w: the most area a light's light is counted from
++    float4 gm;    // the step (0, 1); the SRV heap's indices: the summary (step 1's), the slots the frame before (-1:
++                  // none, a cut); the frames a glow is remembered off screen at most
++    float4 gm2;   // how near a light is to a slot's glow to be it: a part of the square root of the light's area, and
++                  // at least; the part of the screen's middle where a glow not drawn is on screen; the slots
++    float4 pc0;   // the camera's move the other way: the frame before's clip space to this frame's, rows
++    float4 pc1;
++    float4 pc2;
++    float4 pc3;
++    uint4 lights[128];  // each light's draw among the scene's and its triangles
++};
++#include "rt_scene.hlsli"
++Texture2D<float> depth : register(t1);
++
++float ViewZ(float d) { return cam.x * cam.y / (d * cam.x + (1 - d) * cam.y); }
++float Depth(int2 px) { return depth.Load(int3(clamp(px, int2(0, 0), int2(part.xy) - 1), 0)); }
++float Hash(uint3 v) {
++    v = v * 1664525u + 1013904223u;
++    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
++    v ^= v >> 16u;
++    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
++    return float(v.x & 0xFFFFFF) / 16777216.0f;
++}
++#include "rt_lights.hlsli"
++
++Texture2D<float4> Tex(float i) { return pictures[NonUniformResourceIndex(uint(i))]; }
++float Luma(float3 c) { return dot(c, float3(0.2126f, 0.7152f, 0.0722f)); }
++
++// a place in the frame before's view space moved into this frame's (the camera's move undone: its clip space, x and y
++// over the view's tan, the depth buffer's value times the view depth, w the view depth; a point behind the eye stays
++// behind it)
++float3 Move(float3 v) {
++    float4 c = float4(v.x / cam.z, v.y / cam.w, cam.y * (cam.x - v.z) / (cam.x - cam.y), v.z);
++    float4 q = float4(dot(pc0, c), dot(pc1, c), dot(pc2, c), dot(pc3, c));
++    if (abs(q.w) < 1e-6f) return float3(0, 0, -1e30f);
++    float z = ViewZ(q.z / q.w);
++    return float3(q.xy / q.w * cam.zw * z, z);
++}
++bool OnScreen(float3 v) {
++    if (v.z <= 0) return false;
++    float2 ndc = v.xy / (cam.zw * v.z);
++    return all(abs(ndc) < gm2.z);
++}
++
++struct Glow {
++    float3 p;   // where, this frame's view space
++    float age;  // -1: none; 0: drawn this frame; frames out of view
++    float4 b;   // its light, its least distance
++};
++// slot s as the frame before left it, moved into this frame's view
++Glow Before(uint s) {
++    Glow g;
++    g.p = 0;
++    g.age = -1;
++    g.b = 0;
++    if (gm.z < 0) return g;
++    float4 a = Tex(gm.z).Load(int3(s, 0, 0));
++    if (a.w < 0) return g;
++    g.p = Move(a.xyz);
++    g.age = a.w;
++    g.b = Tex(gm.z).Load(int3(s, 1, 0));
++    return g;
++}
++
++// step 0: listed light li's texel of row
++float4 Summary(uint li, uint row) {
++    uint count = min(uint(lt.x), 128u);
++    if (li >= count) return row == 0 ? float4(0, 0, 0, -1) : float4(0, 0, 0, 0);
++    uint tris = max(lights[li].y, 1u);
++    // a few of its triangles' middles, for a light of many (a glow's many quads)
++    uint stride = max(1u, (tris + 31u) / 32u);
++    float3 mid = 0, power = 0;
++    float area = 0, n = 0;
++    [loop] for (uint t = 0; t < tris; t += stride) {
++        Spot s;
++        float a;
++        float3 e = LightEmits(li, t, float2(1.0f / 3, 1.0f / 3), s, a);
++        mid += (s.p[0] + s.p[1] + s.p[2]) * (a / 3);
++        power += e * a;
++        area += a;
++        n += 1;
++    }
++    float scale = float(tris) / max(n, 1);
++    float3 at = area > 0 ? mid / area : 0;
++    if (Luma(power) <= 0) area = 0;  // no light given off (a flame off the screen, a haze): none to remember
++    if (row == 0) return float4(at, area > 0 ? area * scale : -1);
++    if (row == 1) return float4(power * scale, max(0.25f * area / max(n, 1), 3600.0f));
++    // held: a glow the slots have (the frame before's, moved) is where this one is
++    float held = 0;
++    if (area > 0) {
++        float reach = max(gm2.x * sqrt(area * scale), gm2.y);
++        [loop] for (uint slot = 0; slot < uint(gm2.w); slot++) {
++            Glow g = Before(slot);
++            if (g.age >= 0 && length(g.p - at) < reach) {
++                held = 1;
++                break;
++            }
++        }
++    }
++    return float4(held, 0, 0, 0);
++}
++
++// step 1: slot s this frame, before a light new to the slots is put in a free one: the light it was matched with
++// (the nearest listed within reach) drawn this frame, else remembered while off screen
++Glow Now(uint s) {
++    Glow g = Before(s);
++    if (g.age < 0) return g;
++    // two slots come to hold one glow (the light that kept them apart gone): the later one gives way
++    [loop] for (uint k = 0; k < s; k++) {
++        Glow h = Before(k);
++        if (h.age >= 0 && length(h.p - g.p) < gm2.y) {
++            g.age = -1;
++            return g;
++        }
++    }
++    uint count = min(uint(lt.x), 128u);
++    int best = -1;
++    float bd = 1e30f;
++    [loop] for (uint li = 0; li < count; li++) {
++        float4 a = Tex(gm.y).Load(int3(li, 0, 0));
++        if (a.w <= 0) continue;
++        float d = length(a.xyz - g.p);
++        if (d < max(gm2.x * sqrt(a.w), gm2.y) && d < bd) {
++            bd = d;
++            best = int(li);
++        }
++    }
++    if (best >= 0) {
++        g.p = Tex(gm.y).Load(int3(best, 0, 0)).xyz;
++        g.age = 0;
++        g.b = Tex(gm.y).Load(int3(best, 1, 0));
++        return g;
++    }
++    if (OnScreen(g.p) || g.age + 1 > gm.w) {
++        g.age = -1;
++        return g;
++    }
++    g.age += 1;
++    return g;
++}
++
++float4 ps(float4 pos : SV_Position) : SV_Target {
++    uint2 q = uint2(pos.xy);
++    if (gm.x == 0) return Summary(q.x, q.y);
++    uint s = q.x;
++    Glow g = Now(s);
++    if (g.age < 0) {
++        // free: the free slots before it in order take the lights no slot holds in order, this one its own
++        uint rank = 0;
++        [loop] for (uint k = 0; k < s; k++)
++            if (Now(k).age < 0) rank++;
++        uint count = min(uint(lt.x), 128u);
++        [loop] for (uint li = 0; li < count; li++) {
++            float4 a = Tex(gm.y).Load(int3(li, 0, 0));
++            if (a.w <= 0 || Tex(gm.y).Load(int3(li, 2, 0)).x > 0) continue;
++            float4 b = Tex(gm.y).Load(int3(li, 1, 0));
++            if (Luma(b.rgb) <= 0) continue;
++            if (rank == 0) {
++                g.p = a.xyz;
++                g.age = 0;
++                g.b = b;
++                break;
++            }
++            rank--;
++        }
++    }
++    if (q.y == 0) return float4(g.p, g.age);
++    return g.age < 0 ? float4(0, 0, 0, 0) : g.b;
++}
 diff --git a/runtime/gpu/rt_guide.hlsl b/runtime/gpu/rt_guide.hlsl
 new file mode 100644
-index 0000000..f636d7c
+index 0000000..1ce54be
 --- /dev/null
 +++ b/runtime/gpu/rt_guide.hlsl
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,118 @@
 +// Ray tracing's guides (raytrace.cpp): what each pixel of the frame's 3D is, at its full size, for the passes that
 +// smooth what the rays gathered and for the denoiser that takes them (DLSS Ray Reconstruction). A ray from the eye
 +// through the pixel meets the scene where the frame drew it, and its draw tells the surface: its picture's colour there
@@ -8593,7 +9296,7 @@ index 0000000..f636d7c
 +float3 ToWorld(float3 n) { return normalize(right.xyz * n.x + up.xyz * n.y + ahead.xyz * n.z); }
 +
 +struct Guide {
-+    float4 albedo : SV_Target0;    // the picture's colour, alpha 1 where the surface is the scene's
++    float4 albedo : SV_Target0;    // the picture's colour, alpha 1 where the surface is the scene's (a half: a character's)
 +    float4 normal : SV_Target1;    // world normal, roughness
 +    float4 specular : SV_Target2;  // specular albedo
 +    float hit : SV_Target3;        // the reflections' hit distance, theirs to write
@@ -8617,6 +9320,7 @@ index 0000000..f636d7c
 +    float2 bary;
 +    float t = TraceScene(0, dir, 0, 1e30f, 32, geom, prim, bary);
 +    if (t < 0 || abs(t - len) > 0.02f * len) return o;
++    TopDraw(0, dir, len, t, geom, prim, bary);
 +    Draw g = geo[geom];
 +    Spot s = SpotOf(geom, prim, bary);
 +    float3 n = Facing(s.p[0], s.p[1], s.p[2], dir);
@@ -8660,7 +9364,7 @@ index 0000000..f636d7c
 +            }
 +        }
 +    }
-+    o.albedo = float4(albedo, 1);
++    o.albedo = float4(albedo, g.c.z == 2 ? 0.5f : 1.0f);  // alpha: the scene's surface, a half for a character's
 +    o.normal = float4(ToWorld(n), rough);
 +    o.surface = float4(o.normal.xyz, p.z);
 +    if (g.b.x != kNone || person || water)
@@ -8668,6 +9372,251 @@ index 0000000..f636d7c
 +                                                 : lerp(float3(0.04f, 0.04f, 0.04f), saturate(albedo), metal),
 +                                           rough, saturate(dot(n, -dir))), 1);
 +    return o;
++}
+diff --git a/runtime/gpu/rt_lights.hlsli b/runtime/gpu/rt_lights.hlsli
+new file mode 100644
+index 0000000..253dec4
+--- /dev/null
++++ b/runtime/gpu/rt_lights.hlsli
+@@ -0,0 +1,239 @@
++// The scene's lights for the passes that sample them (rt_gi.hlsl's bounce lighting, rt_ao.hlsl's characters' shadows
++// from them): a pass declares in its constants, after rt_scene.hlsli's, lt (the lights listed, their brightness, the
++// candidates a sample is picked from, the most light they throw on a surface), sk (z: the lights drawn flat's
++// brightness, w: the most area a light's light is counted from) and lights[128] (each light's draw, its triangles, and
++// the least area a flame drawn flat lights as, a float's bits), and
++// before including this, Hash, ViewZ and Depth (the frame's depth at a texel: a light drawn flat goes where it shows).
++// A pass that has the glows remembered off screen (rt_glowmem.hlsl) defines RT_GLOW_MEMORY and declares gm (x: their
++// SRV heap index, -1 none; y: their slots).
++
++// A point of one of the lights (list entry li, its triangle prim, at bary): the light it gives off as the game drew
++// it (its colour, its picture's; a light drawn flat put where it shows, before what the frame drew there; a haze over
++// the view none; none bigger than a torch's flame, sk.w its area: a glowing sheet, mist, a beam of light, the marker on
++// the floor that points to a save room, is a glow, not a lamp, and lit whole rooms its colour), its triangle (s) and
++// that triangle's area
++float3 LightEmits(uint li, uint prim, float2 bary, out Spot s, out float area) {
++    uint geom = lights[li].x, tris = max(lights[li].y, 1u);
++    s = SpotOf(geom, min(prim, tris - 1), bary);
++    float3 e = s.tint.rgb * s.tint.a;
++    if (geo[geom].c.w > 2.5f) {
++        // (the depth at its triangle's middle: the same place for every sample of it, frame to frame; a sprite the
++        // title drew off the screen has no depth there, and would have been put at the screen's edge)
++        if (FlatShare(s) > 0.02f) e = 0;
++        float2 mid = (FlatNdc(s.p[0]) + FlatNdc(s.p[1]) + FlatNdc(s.p[2])) / 3;
++        if (any(abs(mid) > 1.0f)) e = 0;
++        e *= sk.z;
++        FlatAt(s, 0.95f * ViewZ(Depth(FlatPixel(s, float2(1.0f / 3, 1.0f / 3)))));
++    }
++    area = 0.5f * length(cross(s.p[1] - s.p[0], s.p[2] - s.p[0]));
++    // a flame drawn flat (a torch's, a candle's) lights as one of at least lights[li].z's area would (as a float,
++    // XBE_RT_LIGHTS_FLAME; up to 16 times its own): its sprite is small, and the fire it stands for lights the wall
++    // round it warm, where its sprite alone barely tinted it
++    if (geo[geom].c.w > 2.5f) {
++        float least = asfloat(lights[li].z);
++        if (least > 0) e *= clamp(least / max(area * float(tris), 1.0f), 1.0f, 16.0f);
++    }
++    if (sk.w > 0) e *= min(1.0f, sk.w / (area * float(tris)));
++    uint pic = geo[geom].a.z;
++    if (pic != kNone) {
++        float4 c = pictures[NonUniformResourceIndex(pic)].SampleLevel(wrap, s.at, 2);
++        e *= c.rgb * (geo[geom].c.w == 1 || geo[geom].c.w == 3 ? c.a : 1.0f);
++    }
++    return e;
++}
++
++// A point of one of the lights (list entry li, its triangle prim, at bary): its light on a surface at p facing n,
++// unshadowed, as a small glowing patch (no side of a sprite turned away from it; no nearer than a little way off: a
++// wall right behind a flame is lit, not burnt white), the point (q), and one over how likely a candidate is to be it
++// (inv: its triangle's area, its light's triangles, the lights)
++float3 LightPoint(uint li, uint prim, float2 bary, float3 p, float3 n, out float3 q, out float inv) {
++    uint count = min(uint(lt.x), 128u);
++    uint tris = max(lights[li].y, 1u);
++    Spot s;
++    float area;
++    float3 e = LightEmits(li, prim, bary, s, area);
++    q = s.p[0] * (1 - bary.x - bary.y) + s.p[1] * bary.x + s.p[2] * bary.y;
++    inv = area * float(tris) * float(count);
++    float3 d = q - p;
++    float d2 = dot(d, d);
++    float cosn = saturate(dot(n, d * rsqrt(max(d2, 1e-8f))));
++    return e * cosn / (d2 + max(area * 0.25f, 3600.0f));
++}
++
++#ifdef RT_GLOW_MEMORY
++// A glow remembered off screen (rt_glowmem.hlsl's slot r, in the SRV heap at gm.x; gm.y the slots): its light on a
++// surface at p facing n, unshadowed, as all of it given off at its middle (q); 0 where the slot holds none, or holds a
++// glow the frame drew (the list has it)
++float3 Remembered(uint r, float3 p, float3 n, out float3 q) {
++    q = 0;
++    if (gm.x < 0 || r >= uint(gm.y)) return 0;
++    Texture2D<float4> m = pictures[NonUniformResourceIndex(uint(gm.x))];
++    float4 a = m.Load(int3(r, 0, 0));
++    if (a.w < 0.5f) return 0;  // none (-1), or drawn this frame (0)
++    float4 b = m.Load(int3(r, 1, 0));
++    q = a.xyz;
++    float3 d = q - p;
++    float d2 = dot(d, d);
++    float cosn = saturate(dot(n, d * rsqrt(max(d2, 1e-8f))));
++    return b.rgb * cosn / (d2 + b.w);
++}
++#endif
++
++// A light's point kept for a pixel from frame to frame (rt_gi.hlsl's reservoirs, ReSTIR's reuse): which (li, prim,
++// bary), its weight (w: wsum over its candidates over its target) and how many candidates it stands for (m), packed
++// into a float4 with the depth of the surface it was kept for (exact in floats: li + 256 prim, li 128 and over the
++// glows remembered, rt_glowmem.hlsl's; the barycentrics in 9 bits each and m in 6 above, under 2^24)
++struct Kept {
++    uint li, prim;
++    float2 bary;
++    float w, m;
++};
++float4 PackKept(Kept k, float depth) {
++    float bx = round(saturate(k.bary.x) * 511), by = round(saturate(k.bary.y) * 511);
++    return float4(float(k.li) + 256 * float(k.prim), bx + 512 * by + 262144 * min(floor(k.m), 63), k.w, depth);
++}
++Kept UnpackKept(float4 v) {
++    Kept k;
++    uint x = uint(v.x), y = uint(v.y);
++    k.li = x % 256u;
++    k.prim = x / 256u;
++    k.bary = float2(y % 512u, (y / 512u) % 512u) / 511;
++    k.m = float(y / 262144u);
++    k.w = v.z;
++    return k;
++}
++
++// One of the lights' points picked for a surface at p facing n (Look::emissive: a glow, a flame, a spell, which the
++// game added onto the frame), by resampling: of tries candidates, each a point on a triangle of a light picked at
++// random, every glow remembered off screen (remember, where the pass has them: RT_GLOW_MEMORY), and the point kept
++// for this pixel the frame before (before.m > 0, its candidates counted up to most), the one kept as its unshadowed
++// light there is strong. q: the point; kept: it, to keep for the frame after; its light here unshadowed, as the bounce
++// rays' average is (radiance over pi), returned (0: none)
++float3 PickLightKept(float3 p, float3 n, uint2 id, uint frame, int tries, Kept before, float most, bool remember,
++                     out float3 q_out, out Kept kept) {
++    q_out = 0;
++    kept = (Kept)0;
++    uint count = min(uint(lt.x), 128u);  // the list holds 128
++#ifdef RT_GLOW_MEMORY
++    remember = remember && gm.x >= 0;
++#else
++    remember = false;
++#endif
++    if (count == 0 && !remember) return 0;
++    float3 keep_l = 0, keep_q = 0;
++    float keep_f = 0, wsum = 0;
++    [loop] for (int k = 0; k < (count > 0 ? tries : 0); k++) {
++        float u0 = Hash(uint3(id, frame * 16u + uint(k) + 101u));
++        float u1 = Hash(uint3(id.yx + 31u, frame * 16u + uint(k) + 211u));
++        float u2 = Hash(uint3(id + 977u, frame * 16u + uint(k) + 331u));
++        float u3 = Hash(uint3(id.yx + 4111u, frame * 16u + uint(k) + 457u));
++        uint li = min(uint(u0 * count), count - 1);
++        uint tris = max(lights[li].y, 1u);
++        uint prim = min(uint(u1 * tris), tris - 1);
++        // a point on the triangle, evenly over it
++        float su = sqrt(u2);
++        float2 bary = float2(su * (1 - u3), su * u3);
++        float3 q;
++        float inv;
++        float3 f = LightPoint(li, prim, bary, p, n, q, inv);
++        float target = dot(f, float3(0.2126f, 0.7152f, 0.0722f));
++        float w = target * inv;  // over how likely the point was
++        wsum += w;
++        if (w > 0 && Hash(uint3(id.x + uint(k) * 7u, id.y, frame * 3u + 991u)) * wsum <= w) {
++            keep_l = f;
++            keep_q = q;
++            keep_f = target;
++            kept.li = li;
++            kept.prim = prim;
++            kept.bary = bary;
++        }
++    }
++#ifdef RT_GLOW_MEMORY
++    // the glows remembered, each a candidate there for certain: counted as the list's candidates together are
++    // (tries of them, each over how likely it was)
++    if (remember) {
++        [loop] for (uint r = 0; r < uint(gm.y); r++) {
++            float3 q;
++            float3 f = Remembered(r, p, n, q);
++            float target = dot(f, float3(0.2126f, 0.7152f, 0.0722f));
++            if (target <= 0) continue;
++            float w = target * float(tries);
++            wsum += w;
++            if (Hash(uint3(id.x + r * 13u, id.y + 7u, frame * 3u + 2333u)) * wsum <= w) {
++                keep_l = f;
++                keep_q = q;
++                keep_f = target;
++                kept.li = 128u + r;
++                kept.prim = 0;
++                kept.bary = 0;
++            }
++        }
++    }
++#endif
++    float m = float(tries);
++    // the frame before's, its light weighed again here (the same light still, by its place in the list, or the same
++    // glow remembered, by its slot)
++    bool listed = before.li < count && before.prim < max(lights[min(before.li, 127u)].y, 1u);
++    if (before.m > 0 && (listed || (remember && before.li >= 128u))) {
++        float3 q = 0;
++        float inv = 0;
++        float3 f = 0;
++        if (listed) f = LightPoint(before.li, before.prim, before.bary, p, n, q, inv);
++#ifdef RT_GLOW_MEMORY
++        else f = Remembered(before.li - 128u, p, n, q);
++#endif
++        float target = dot(f, float3(0.2126f, 0.7152f, 0.0722f));
++        float bm = min(before.m, most);
++        float w = target * before.w * bm;
++        wsum += w;
++        m += bm;
++        if (w > 0 && Hash(uint3(id.yx + 5u, frame * 3u + 1777u)) * wsum <= w) {
++            keep_l = f;
++            keep_q = q;
++            keep_f = target;
++            kept.li = before.li;
++            kept.prim = before.prim;
++            kept.bary = before.bary;
++        }
++    }
++    if (keep_f <= 0) return 0;
++    kept.w = wsum / (m * keep_f);
++    kept.m = m;
++    q_out = keep_q;
++    return keep_l * kept.w / 3.14159265f;
++}
++
++// One of the lights' points picked for a surface at p facing n, of tries candidates, afresh
++float3 PickLight(float3 p, float3 n, uint2 id, uint frame, int tries, out float3 q_out) {
++    Kept none = (Kept)0;
++    Kept kept;
++    return PickLightKept(p, n, id, frame, tries, none, 0, false, q_out, kept);
++}
++
++// The lights' light on a surface at p facing n: one point picked (PickLight, lt.z candidates), then a ray toward it for
++// its shadow (anything solid between: a character between a torch and the wall throws one; the lights themselves and
++// water let it through)
++float3 LightAt(float3 p, float3 n, uint2 id, uint frame, int tries) {
++    float3 q;
++    float3 l = PickLight(p, n, id, frame, tries, q);
++    if (all(l == 0)) return 0;
++    float3 dq = q - p;
++    float dist = length(dq);
++    if (dist < 1e-3f || TraceScene(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
++    return l;
++}
++float3 LightAt(float3 p, float3 n, uint2 id, uint frame) { return LightAt(p, n, id, frame, int(lt.z)); }
++
++// The lights' light on a surface at p facing n as LightAt has it, the glows remembered off screen among them, its point
++// resampled with the one kept for this pixel the frame before (before, counted as most candidates at most), and the
++// one kept now (kept) for the frame after. The shadow is not kept: a point kept behind a pillar is still the light's,
++// and its light is back when the pillar moves out of the way
++float3 LightAtKept(float3 p, float3 n, uint2 id, uint frame, int tries, Kept before, float most, out Kept kept) {
++    float3 q;
++    float3 l = PickLightKept(p, n, id, frame, tries, before, most, true, q, kept);
++    if (all(l == 0)) return 0;
++    float3 dq = q - p;
++    float dist = length(dq);
++    if (dist < 1e-3f || TraceScene(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
++    return l;
 +}
 diff --git a/runtime/gpu/rt_refl.hlsl b/runtime/gpu/rt_refl.hlsl
 new file mode 100644
@@ -9010,10 +9959,10 @@ index 0000000..aa89638
 +}
 diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
 new file mode 100644
-index 0000000..af08efe
+index 0000000..4852371
 --- /dev/null
 +++ b/runtime/gpu/rt_scene.hlsli
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,337 @@
 +// The frame's scene for ray tracing's passes (raytrace.h, rt_*.hlsl): its acceleration structure and what a hit is.
 +// A pass declares its constants first, cam among them: the view's depth at the buffer's 0 and its 1, tan of half the
 +// view across, down (cam.zw put a captured vertex back into view space, as the scene's instance does).
@@ -9055,9 +10004,9 @@ index 0000000..af08efe
 +    uint3 i = Corners(geo[geom].a, prim);
 +    return Facing(VertexView(i.x), VertexView(i.y), VertexView(i.z), d);
 +}
-+// a cut-out's triangle (alpha tested: leaves, railings, grates) is there where its picture is: its alpha, the picture's
-+// (times the vertices' colour's when the draw's stages take that too), passes its test as the draw's did
-+bool Solid(uint geom, uint prim, float2 bary) {
++// a cut-out's alpha at a point of one of its triangles: the picture's (times the vertices' colour's when the draw's
++// stages take that too)
++float CutoutAlpha(uint geom, uint prim, float2 bary) {
 +    uint4 g = geo[geom].a;
 +    uint3 i = Corners(g, prim);
 +    float4 a = asfloat(verts.Load4(i.x * 32 + 16)), b = asfloat(verts.Load4(i.y * 32 + 16)),
@@ -9065,7 +10014,13 @@ index 0000000..af08efe
 +    float3 w = float3(1 - bary.x - bary.y, bary.x, bary.y);
 +    float2 uv = a.xy * w.x + b.xy * w.y + c.xy * w.z;
 +    float va = dot(float3(asuint(a.z) >> 24, asuint(b.z) >> 24, asuint(c.z) >> 24), w) / 255;
-+    float alpha = pictures[NonUniformResourceIndex(g.z)].SampleLevel(wrap, uv, 0).a * ((g.w & 0x20000) ? va : 1.0f);
++    return pictures[NonUniformResourceIndex(g.z)].SampleLevel(wrap, uv, 0).a * ((g.w & 0x20000) ? va : 1.0f);
++}
++// a cut-out's triangle (alpha tested: leaves, railings, grates; or blended, d3d12.cpp's AlphaKind) is there where its
++// alpha passes its test as the draw's did (a faint one's test never passes: rays see through it all)
++bool Solid(uint geom, uint prim, float2 bary) {
++    uint4 g = geo[geom].a;
++    float alpha = CutoutAlpha(geom, prim, bary);
 +    int v = (int)round(alpha * 255), r = (int)(g.w & 255), f = (int)((g.w >> 8) & 7);
 +    return f == 0 ? false : f == 1 ? v < r : f == 2 ? v == r : f == 3 ? v <= r : f == 4 ? v > r : f == 5 ? v != r
 +         : f == 6 ? v >= r : true;
@@ -9075,16 +10030,17 @@ index 0000000..af08efe
 +// where on it (barycentrics of its second and third corners). Cut-outs are tested up to budget times a ray, then the
 +// ray ends with what it met so far: a room's thousand leaves or a long run of railings cost a ray no more than that
 +// (unbounded, a frame's long reflections through them took the GPU past Windows' two seconds)
-+float TraceScene(float3 o, float3 d, float tmin, float tmax, int budget, out uint geom, out uint prim, out float2 bary) {
++float TraceSceneMasked(float3 o, float3 d, float tmin, float tmax, int budget, uint mask, out uint geom, out uint prim,
++                       out float2 bary) {
 +    RayDesc r;
 +    r.Origin = o;
 +    r.Direction = d;
 +    r.TMin = tmin;
 +    r.TMax = tmax;
 +    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
-+    // the world's instance and the characters' (their draws after the world's in the table: a hit's draw is its
-+    // instance's ID and its geometry index), not the water's
-+    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x05, r);
++    // the instances mask picks (1 the world's, 4 the characters': their draws after the world's in the table, a hit's
++    // draw is its instance's ID and its geometry index; 2 the water's)
++    q.TraceRayInline(scene, RAY_FLAG_NONE, mask, r);
 +    while (q.Proceed()) {
 +        if (q.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
 +        uint cg = q.CandidateInstanceID() + q.CandidateGeometryIndex();
@@ -9102,6 +10058,66 @@ index 0000000..af08efe
 +    prim = q.CommittedPrimitiveIndex();
 +    bary = q.CommittedTriangleBarycentrics();
 +    return q.CommittedRayT();
++}
++// whether one of the scene's lights lies along d from o between t0 and t1: a glow that wrote the depth (this title's
++// light beams by its lamps, drawn adding light and writing depth), which rays pass through
++bool LightAlong(float3 o, float3 d, float t0, float t1) {
++    RayDesc r;
++    r.Origin = o;
++    r.Direction = d;
++    r.TMin = t0;
++    r.TMax = t1;
++    RayQuery<RAY_FLAG_CULL_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
++    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x05, r);
++    int budget = 8;
++    while (q.Proceed()) {
++        if (budget-- <= 0) break;
++        if (geo[q.CandidateInstanceID() + q.CandidateGeometryIndex()].c.w != 0) {
++            q.Abort();
++            return true;
++        }
++    }
++    return false;
++}
++// The draw the frame shows along d from o, where the depth it holds there is at: of the scene's hits within 2% of it,
++// the one nearest the depth (it wrote it last), the latest draw of those at one distance (a decal over its wall), a
++// cut-out where it is solid. The nearest hit is not always it: the save room door's moving glow lies in front of its
++// ironwork and the game draws the ironwork after it, over it (the guides' colour had the glow, and the bounce
++// lighting lit the door as a bright glowing panel). t: the nearest hit's distance in, the one taken's out
++void TopDraw(float3 o, float3 d, float at, inout float t, inout uint geom, inout uint prim, inout float2 bary) {
++    float tie = 1e-4f * at;
++    float best = abs(t - at);
++    RayDesc r;
++    r.Origin = o;
++    r.Direction = d;
++    r.TMin = 0.98f * at;
++    r.TMax = 1.02f * at;
++    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_FORCE_NON_OPAQUE> q;
++    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x05, r);
++    int budget = 12;
++    while (q.Proceed()) {
++        uint cg = q.CandidateInstanceID() + q.CandidateGeometryIndex();
++        if (geo[cg].c.w != 0) continue;  // a light
++        float ct = q.CandidateTriangleRayT();
++        float err = abs(ct - at);
++        if (err > best + tie || (err >= best - tie && cg <= geom)) continue;  // farther from the depth, or earlier
++        if (budget-- <= 0) {
++            q.Abort();
++            break;
++        }
++        uint cp = q.CandidatePrimitiveIndex();
++        float2 cb = q.CandidateTriangleBarycentrics();
++        if ((geo[cg].a.w & 0x10000) != 0 && !Solid(cg, cp, cb)) continue;  // a cut-out's clear part
++        geom = cg;
++        prim = cp;
++        bary = cb;
++        t = ct;
++        best = min(best, err);
++    }
++}
++// the world's instance and the characters', not the water's
++float TraceScene(float3 o, float3 d, float tmin, float tmax, int budget, out uint geom, out uint prim, out float2 bary) {
++    return TraceSceneMasked(o, d, tmin, tmax, budget, 0x05, geom, prim, bary);
 +}
 +float TraceScene(float3 o, float3 d, float tmin, float tmax, int budget, out uint geom, out uint prim) {
 +    float2 bary;
@@ -9238,6 +10254,37 @@ index 0000000..af08efe
 +    s.tint = s.col[0] * w.x + s.col[1] * w.y + s.col[2] * w.z;
 +    return s;
 +}
++// The glows a ray passes through on its way (the scene's lights: the save room's water glowing on the stone around its
++// pools, a haze, a lamp's beam, a flame), each adding its colour as the game drew it onto the frame: for the bounce
++// lighting (rt_gi.hlsl) the light of all of them, where the list LightAt samples holds a few draws of each picture;
++// for ambient occlusion (rt_ao.hlsl) how much of a pixel is their light
++float3 GlowsAlong(float3 o, float3 d, float tmax) {
++    RayDesc r;
++    r.Origin = o;
++    r.Direction = d;
++    r.TMin = 0;
++    r.TMax = tmax;
++    RayQuery<RAY_FLAG_CULL_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
++    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x01, r);
++    float3 sum = 0;
++    int budget = 12;
++    while (q.Proceed()) {
++        if (budget-- <= 0) {
++            q.Abort();
++            break;
++        }
++        uint cg = q.CandidateInstanceID() + q.CandidateGeometryIndex();
++        float kind = geo[cg].c.w;
++        if (kind == 0 || kind > 2.5f) continue;  // a cut-out; a light drawn flat (in no instance: none here)
++        Spot s = SpotOf(cg, q.CandidatePrimitiveIndex(), q.CandidateTriangleBarycentrics());
++        float4 c = s.tint;
++        uint pic = geo[cg].a.z;
++        if (pic != kNone) c *= pictures[NonUniformResourceIndex(pic)].SampleLevel(wrap, s.at, 2);
++        sum += c.rgb * (kind < 1.5f ? c.a : 1.0f);  // by its alpha (1) or as it is (2)
++    }
++    return sum;
++}
++
 +// the level of detail to read a picture at over a triangle, for a footprint this wide in view units
 +float LevelOf(Texture2D<float4> t, Spot s, float footprint) {
 +    float w, h;

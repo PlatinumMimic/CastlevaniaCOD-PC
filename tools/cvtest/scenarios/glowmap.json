@@ -1,0 +1,82 @@
+{
+  "name": "glowmap",
+  "save": "julian",
+  "perf": false,
+  "note": "Rooms with glows drawn in 3D (water's caustics, mist, beams, flames): each warped to and stood in a second, for CV_WATER_LIST=2's list of every 3D draw's texture by name (with CV_TEXPACK_CENSUS, the pack's name too)",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "sweep": {
+        "rooms": [
+          "5.27",
+          "2.29",
+          "2.2",
+          "5.15",
+          "6.12",
+          "5.12",
+          "9.7",
+          "8.9",
+          "8.0",
+          "5.8",
+          "10.1",
+          "11.12",
+          "5.16",
+          "2.4",
+          "4.2",
+          "3.5",
+          "13.4",
+          "13.6",
+          "5.14",
+          "10.6",
+          "2.8",
+          "7.1",
+          "5.25",
+          "2.14",
+          "8.13",
+          "2.3",
+          "6.6",
+          "5.3",
+          "6.14",
+          "2.6",
+          "2.21",
+          "2.23",
+          "2.5",
+          "5.1",
+          "6.32",
+          "5.6",
+          "5.19"
+        ],
+        "hold": 60
+      }
+    }
+  ]
+}

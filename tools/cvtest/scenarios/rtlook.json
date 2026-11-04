@@ -1,0 +1,254 @@
+{
+  "name": "rtlook",
+  "save": "julian",
+  "perf": true,
+  "note": "Ray traced lighting's look room by room (contrast, torchlight): eight rooms, a shot standing and one with the camera turned.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=10.5,10f:wait:20f"
+    },
+    {
+      "until": "map == 10 and room == 5 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "10-5-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "10-5-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.2,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 2 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "5-2-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "5-2-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=2.1,10f:wait:20f"
+    },
+    {
+      "until": "map == 2 and room == 1 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "2-1-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "2-1-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=3.20,10f:wait:20f"
+    },
+    {
+      "until": "map == 3 and room == 20 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "3-20-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "3-20-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=6.2,10f:wait:20f"
+    },
+    {
+      "until": "map == 6 and room == 2 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "6-2-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "6-2-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.25,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 25 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "5-25-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "5-25-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=8.2,10f:wait:20f"
+    },
+    {
+      "until": "map == 8 and room == 2 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "8-2-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "8-2-b",
+      "judge": false
+    },
+    {
+      "press": "0:warp=2.17,10f:wait:20f"
+    },
+    {
+      "until": "map == 2 and room == 17 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "2-17-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:45f,60f:wait:1f",
+      "shot": "2-17-b",
+      "judge": false
+    }
+  ]
+}

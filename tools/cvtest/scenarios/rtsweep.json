@@ -1,0 +1,49 @@
+{
+  "name": "rtsweep",
+  "save": "julian",
+  "note": "Ray tracing room by room: every room of maps 2 to 4 (the ones a light shafts haze whited out), a screenshot of each.",
+  "settings": {
+    "width": 960,
+    "height": 540,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 1,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "sweep": {
+        "hold": 20,
+        "skip_inactive": true,
+        "maps": [
+          2,
+          3,
+          4
+        ]
+      },
+      "judge": false
+    }
+  ]
+}

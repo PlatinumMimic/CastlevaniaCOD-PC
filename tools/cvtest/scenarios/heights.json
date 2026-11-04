@@ -1,0 +1,30 @@
+{
+  "name": "heights",
+  "save": "julian",
+  "perf": true,
+  "note": "Surface depth on the texture pack's walls: the play folder's save loaded from the title (Continue), then rooms with masonry, plaster and rock (5.1, 2.1, 4.0, 10.5, 9.7, 5.7) shot after standing 4 s. Run with another build (--build) or --set surface_depth=0 for the same shots to compare; CV_TEXTURES names the pack.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "texture_pack_size": 0, "frame_generation": 0, "surface_depth": 2},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "expect": ["not player.active"], "judge": false},
+    {"until": "player.active and not cutscene and not loading and not menu", "timeout": 90,
+     "poll": "0:a,90f:wait", "poll_by": [["cutscene", "0:start,45f:wait"]], "shot": "loaded", "judge": false},
+    {"press": "0:warp=5.1,10f:wait:20f"},
+    {"until": "map == 5 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r5-1", "judge": false},
+    {"press": "0:warp=2.1,10f:wait:20f"},
+    {"until": "map == 2 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r2-1", "judge": false},
+    {"press": "0:warp=4.0,10f:wait:20f"},
+    {"until": "map == 4 and room == 0 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r4-0", "judge": false},
+    {"press": "0:warp=10.5,10f:wait:20f"},
+    {"until": "map == 10 and room == 5 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r10-5", "judge": false},
+    {"press": "0:warp=9.7,10f:wait:20f"},
+    {"until": "map == 9 and room == 7 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r9-7", "judge": false},
+    {"press": "0:warp=5.7,10f:wait:20f"},
+    {"until": "map == 5 and room == 7 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r5-7", "judge": false}
+  ]
+}
