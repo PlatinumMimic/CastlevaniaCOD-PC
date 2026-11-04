@@ -14,7 +14,9 @@
 // pieces at the frame's left and right edges have those edges pulled out to the screen's, so the backdrop reaches
 // the sides, its outer pieces that much wider. Only for a backdrop of its own, drawn before the 3D world and any 4:3
 // picture of the frame: the world's effects touch the edges too, and the title's logo is in pieces at the edges over
-// its castle.
+// its castle. And for a window over the world while one is up (ModalUp: naming an Innocent Devil, a tip picked up),
+// before the HUD: drawn over the 3D world as four or six pieces each half the frame wide, its dark edges stood as a
+// 4:3 box in the middle of the screen.
 //
 // HUD at the edges (hud_edges): the HUD's draws, from the first of the frame that takes one of its textures (kHud: the
 // sheet of the health bar's frame, digits and icons, the bar's fill, the icon at the bottom left) to the frame pass, go
@@ -24,7 +26,8 @@
 // taken from the frame before: a piece at least twice as far from one side of the frame as from the other goes to
 // that side's screen edge, one about the middle stays, and so does one with none of the HUD's textures. Before the
 // HUD in the frame are the world's 2D effects (glows, sparks), drawn at the points they light, which stay; nothing
-// moves while the pause menu or a message box is up, or in a story scene.
+// moves while the pause menu is up, or in a story scene. While a window is up (ModalUp) the HUD stays at the edges:
+// it went back to the 4:3 middle, over the window, as one came up.
 //
 // The pause menu across the screen (menu_spread): its pages are a left column (Hector's stats, a list), a middle one
 // (the page buttons and their cursor) and a right one (status, equipment), all in the 4:3 middle, under a title bar
@@ -283,7 +286,8 @@ public:
             hud_ = false;
             ui_ = false;
             menu_ = PauseMenuUp();
-            card_free_ = g_hud_edges && !menu_ && !ModalUp();
+            modal_ = ModalUp();
+            card_free_ = g_hud_edges && !menu_ && !modal_;
             trace_now_ = g_wide_trace_frame.exchange(false) || (kTrace && frame_ % kTrace == 0);
             if (trace_now_) LOGR("wide %llu: the frame's draws (menu %d, modal %d, scene %08x)", (unsigned long long)frame_,
                                  int(menu_), int(ModalUp()), SceneWord());
@@ -295,7 +299,7 @@ public:
             card_before_ = card_now_;
             card_before_seen_ = card_now_seen_;
             card_now_seen_ = false;
-            hud_free_ = card_free_ && !(SceneWord() & 0x20000);
+            hud_free_ = g_hud_edges && !menu_ && !(SceneWord() & 0x20000);
             HudPieces();
             if (TexturePackCensus() && frame_ % 300 == 0) TexturePackCensusFlush();
             MoviesFrame(frame_);
@@ -422,7 +426,7 @@ public:
         // a backdrop's edge pieces reach the screen's edges on a screen of their own: not over the 3D world or a
         // 4:3 picture drawn before them in the frame. In the pause menu the world is not drawn, and the 3D there is
         // the menu's own (an Innocent Devil's model on its page, 1600 vertices before the backdrop)
-        bool edges = squeeze && d_.edge && !d_.target && (world_ < kWorld || menu_) && !picture_;
+        bool edges = squeeze && d_.edge && !d_.target && (world_ < kWorld || menu_ || (modal_ && !hud_)) && !picture_;
         if (back_buffer_) {
             world_ += d_.world ? d_.count : 0;
             picture_ |= squeeze && d_.whole && d_.textured && !d_.target;
@@ -1108,6 +1112,7 @@ private:
     bool picture_ = false;
     bool hud_ = false;       // the frame's HUD has begun
     bool hud_free_ = false;  // the HUD may go to the edges this frame
+    bool modal_ = false;     // a window is up over the world this frame (ModalUp)
     bool card_free_ = false;  // an area's name card may
     bool menu_ = false;       // the pause menu is up this frame
     std::vector<MenuRect> menu_rects_, menu_before_;  // the pause menu's draws, this frame's and the frame before's
