@@ -152,18 +152,23 @@ public:
     // ext.z 3: a strip across the pause menu (its title bar): each vertex moves by ext.y left of the frame's middle
     // tenth (kStripRamp) and by ext.w right of it, in between by as far as it lies across, so its tiles stay joined
     // as it stretches; its height as drawn
+    // ext.z 4: a fade or tint over the whole frame (a loading screen's black, a door's): a vertex at any of the console
+    // frame's edges goes exactly to the screen's, top and bottom too (the PS2's grid puts it under a pixel in, which
+    // left a line of the picture under it at the left and top of the screen)
     std::string Position() const override {
         // a vertex at the console frame's edge (within a few pixels: the PS2's grid puts a backdrop's left edge a pixel
         // in) goes exactly to the screen's, or the screen's first columns stay as they were under it (a bright line at
         // the left edge of the pause menu)
         return "    bool sides = ext.z > 1.5 && ext.z < 2.5;\n"
-               "    bool strip = ext.z > 2.5;\n"
+               "    bool strip = ext.z > 2.5 && ext.z < 3.5;\n"
+               "    bool fill = ext.z > 3.5;\n"
                "    if (sides) oT0.x = ext.w + (oT0.x - ext.w) / ext.x;\n"
-               "    bool at_edge = ext.z > 0.5 && ext.z < 2.5 && abs(abs(o.pos.x / o.pos.w) - 1) < 0.008;\n"
+               "    bool at_edge = (ext.z > 0.5 && ext.z < 2.5 || fill) && abs(abs(o.pos.x / o.pos.w) - 1) < 0.008;\n"
+               "    bool at_top = fill && abs(abs(o.pos.y / o.pos.w) - 1) < 0.008;\n"
                "    float across = saturate((o.pos.x / o.pos.w + 0.1) * 5);\n"
                "    o.pos.x = at_edge ? sign(o.pos.x) * o.pos.w : o.pos.x * ext.x;\n"
                "    o.pos.x += (sides ? 0 : strip ? lerp(ext.y, ext.w, across) : ext.w) * o.pos.w;\n"
-               "    o.pos.y *= strip ? 1 : ext.y;\n";
+               "    o.pos.y = at_top ? sign(o.pos.y) * o.pos.w : o.pos.y * (strip ? 1 : ext.y);\n";
     }
 };
 
@@ -468,7 +473,10 @@ public:
                      std::find(std::begin(kSides), std::end(kSides), d_.name) != std::end(kSides);
         ext[0] = squeeze ? Squeeze() : 1.0f;
         ext[1] = menu.strip ? menu.left : back_buffer_ && d_.target ? d_.stretch : 1.0f;
-        ext[2] = sides ? 2.0f : edges ? 1.0f : menu.strip ? 3.0f : 0.0f;
+        // a fade or tint over the whole frame, the whole height too: to the screen's edges exactly
+        bool fill = back_buffer_ && d_.whole && flat && !d_.target && !d_.y.Empty() && d_.y.lo <= 1 &&
+                    d_.y.hi >= d_.gh - 1;
+        ext[2] = sides ? 2.0f : edges ? 1.0f : menu.strip ? 3.0f : fill ? 4.0f : 0.0f;
         ext[3] = sides ? (d_.u.lo + d_.u.hi) * 0.5f : menu.strip ? menu.right : shift;
         // a movie's frame (movies.cpp), its picture larger about the screen's middle at its own shape, its bars off
         // the screen. The quad's pixels a texel across and down: the game reads its frame's rows -17 to 497 over the
