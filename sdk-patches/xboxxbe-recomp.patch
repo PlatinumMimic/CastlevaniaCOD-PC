@@ -264,7 +264,7 @@ index 4570d3b..cd1e6f9 100644
              kernel::MountDisc(std::move(disc));
              return true;
 diff --git a/runtime/app/main.cpp b/runtime/app/main.cpp
-index e36f7ac..17b8a3f 100644
+index e36f7ac..82dadbf 100644
 --- a/runtime/app/main.cpp
 +++ b/runtime/app/main.cpp
 @@ -12,6 +12,7 @@
@@ -275,7 +275,15 @@ index e36f7ac..17b8a3f 100644
  #include <cwchar>
  #include <thread>
  
-@@ -29,6 +30,11 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
+@@ -22,6 +23,7 @@
+ #include "core/input.h"
+ #include "core/log.h"
+ #include "gpu/backend.h"
++#include "gpu/pipeline_cache.h"
+ #include "image_symbols.h"
+ #include "kernel/kernel.h"
+ 
+@@ -29,6 +31,11 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
  
  namespace app {
  
@@ -287,7 +295,7 @@ index e36f7ac..17b8a3f 100644
  namespace {
  
  HWND g_hwnd = nullptr;
-@@ -110,12 +116,13 @@ void ApplyNow() {
+@@ -110,12 +117,13 @@ void ApplyNow() {
          int w = r.right - r.left, h = r.bottom - r.top;
          const RECT& a = mi.rcWork;
          SetWindowLongPtrW(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | visible);
@@ -304,7 +312,7 @@ index e36f7ac..17b8a3f 100644
      }
  }
  
-@@ -158,8 +165,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -158,8 +166,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
          case kOpenWindow:
              CloseSplash();
              if (wp) ApplyNow();
@@ -320,7 +328,24 @@ index e36f7ac..17b8a3f 100644
              return 0;
          case WM_CLOSE:
              DestroyWindow(hwnd);
-@@ -275,7 +287,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+@@ -246,10 +259,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+     // one log a session: a relaunch into another image carries on its predecessor's
+     bool relaunched = std::wcsstr(GetCommandLineW(), L"--relaunched") != nullptr;
++    // the launcher's: the pipelines made ahead for this card and driver, then no game (gpu/pipeline_cache.h)
++    bool prepare = std::wcsstr(GetCommandLineW(), L"--prepare-shaders") != nullptr;
+     std::string log = app::kGame.log;
+-    if (app::Instance() > 1) log += "-" + std::to_string(app::Instance());
++    if (prepare) log += "-prepare";
++    else if (app::Instance() > 1) log += "-" + std::to_string(app::Instance());
+     logx::Init((app::ExeDir() / "logs").string(), log, relaunched);
+     app::Load();
++    // before the game's own start (which may ask for its files): only the settings, for the card to prepare them on
++    if (prepare) return gpu::PrepareShaders() ? 0 : 1;
+     if (app::kGame.init) app::kGame.init();
+     if (relaunched && !logx::kVerbose) LOGR("Relaunched: %s", IMAGE_XBE);
+     else app::LogSystem();
+@@ -275,7 +293,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
          app::ApplyNow();
      } else if (!splash) {
          app::ApplyNow();
@@ -630,7 +655,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..3c43d01 100644
+index fe65837..0e66226 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,13 +17,16 @@
@@ -1379,7 +1404,7 @@ index fe65837..3c43d01 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -814,11 +1343,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -814,11 +1343,23 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      HWND hwnd = static_cast<HWND>(app::Window());
      if (!CreateDevice()) return false;
      if (!CreateSwapChain(hwnd)) return false;
@@ -1398,10 +1423,12 @@ index fe65837..3c43d01 100644
 +                                      IID_PPV_ARGS(&rt_dummy_));
 +    }
 +    rt_.Begin(uint32_t(frame_ % kFrames));
++    // the pipelines listed made ahead, now the root signatures they are made with exist
++    StartPipelinePrebuild(dev_.Get());
      ImGui_ImplDX12_Init(dev_.Get(), kFrames, DXGI_FORMAT_B8G8R8A8_UNORM, ui_heap_.Get(),
                          ui_heap_->GetCPUDescriptorHandleForHeapStart(), ui_heap_->GetGPUDescriptorHandleForHeapStart());
      LoadSettings();
-@@ -827,19 +1366,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -827,19 +1368,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      return true;
  }
  
@@ -1465,7 +1492,7 @@ index fe65837..3c43d01 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -847,9 +1426,17 @@ bool D3D12Backend::CreateDevice() {
+@@ -847,9 +1428,17 @@ bool D3D12Backend::CreateDevice() {
      DXGI_ADAPTER_DESC1 ad{};
      if (adapter) adapter->GetDesc1(&ad);
      LOGR("D3D12 adapter: %ls", adapter ? ad.Description : L"default");
@@ -1483,7 +1510,7 @@ index fe65837..3c43d01 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -871,6 +1458,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1460,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -1495,7 +1522,7 @@ index fe65837..3c43d01 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -899,9 +1491,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1493,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -1508,7 +1535,7 @@ index fe65837..3c43d01 100644
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,10 +1504,10 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,10 +1506,10 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -1521,7 +1548,7 @@ index fe65837..3c43d01 100644
      params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
      params[0].Descriptor.ShaderRegister = 0;
      params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-@@ -925,14 +1518,22 @@ bool D3D12Backend::CreateRootSignature() {
+@@ -925,14 +1520,22 @@ bool D3D12Backend::CreateRootSignature() {
          params[2 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
          params[2 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
      }
@@ -1545,7 +1572,7 @@ index fe65837..3c43d01 100644
      return true;
  }
  
-@@ -958,8 +1559,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1561,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -1558,7 +1585,7 @@ index fe65837..3c43d01 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -972,10 +1577,21 @@ void D3D12Backend::Begin() {
+@@ -972,10 +1579,21 @@ void D3D12Backend::Begin() {
      ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get(), smp_heap_.Get()};
      cl_->SetDescriptorHeaps(2, heaps);
      cl_->SetGraphicsRootSignature(root_.Get());
@@ -1580,7 +1607,7 @@ index fe65837..3c43d01 100644
  void D3D12Backend::Submit(bool wait) {
      last_vsc_gpu_ = 0;
      last_dc_gpu_ = 0;
-@@ -1063,12 +1679,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1681,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
      b.Transition.StateBefore = cur;
      b.Transition.StateAfter = want;
      cl_->ResourceBarrier(1, &b);
@@ -1596,7 +1623,7 @@ index fe65837..3c43d01 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1698,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1700,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -1605,7 +1632,7 @@ index fe65837..3c43d01 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,6 +1816,13 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,6 +1818,13 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -1619,7 +1646,7 @@ index fe65837..3c43d01 100644
      if (rt) {
          if (LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
          Transition(rt->res.Get(), rt->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-@@ -1205,17 +1831,151 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1205,17 +1833,151 @@ bool D3D12Backend::BindTargets(const State& s) {
      if (ds) {
          Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          ds->drawn = true;
@@ -1774,7 +1801,7 @@ index fe65837..3c43d01 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1240,7 +2000,7 @@ ID3D12PipelineState* D3D12Backend::EnsureDepthCopyPipeline() {
+@@ -1240,7 +2002,7 @@ ID3D12PipelineState* D3D12Backend::EnsureDepthCopyPipeline() {
      p.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
      p.DSVFormat = kDepthFormat;
      p.SampleDesc.Count = 1;
@@ -1783,7 +1810,7 @@ index fe65837..3c43d01 100644
      return pso.Get();
  }
  
-@@ -1260,6 +2020,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,6 +2022,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -1792,7 +1819,7 @@ index fe65837..3c43d01 100644
      DrawFullScreen(pso, cb.gpu, slot);
      dst.drawn = true;
      bound_rt_ = bound_ds_ = nullptr;
-@@ -1282,6 +2044,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +2046,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -1800,7 +1827,7 @@ index fe65837..3c43d01 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +2090,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +2092,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -1808,7 +1835,7 @@ index fe65837..3c43d01 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1397,21 +2161,256 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,21 +2163,718 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -1885,7 +1912,8 @@ index fe65837..3c43d01 100644
 +void SaveShader(uint64_t key, ID3DBlob* blob) {
 +    if (ShaderCacheDir().empty()) return;
 +    std::filesystem::path file = ShaderFile(key), tmp = file;
-+    tmp += "." + std::to_string(GetCurrentProcessId()) + ".tmp";
++    // the thread's too: the pipelines made ahead put shaders in the cache beside the renderer's
++    tmp += "." + std::to_string(GetCurrentProcessId()) + "." + std::to_string(GetCurrentThreadId()) + ".tmp";
 +    FILE* f = _wfopen(tmp.c_str(), L"wb");
 +    if (!f) return;
 +    uint64_t head[2] = {blob->GetBufferSize(), Hash(blob->GetBufferPointer(), blob->GetBufferSize())};
@@ -1913,6 +1941,17 @@ index fe65837..3c43d01 100644
 +    bool dirty = false;
 +    std::chrono::steady_clock::time_point last_store{}, last_save{};
 +    uint32_t writes = 0;
++    // the pipelines this player's game made, listed (pipelines.list): their names, their shaders' by hash, the
++    // compiled shaders' keys and the root signatures' hashes; list_mu over these and the file (taken inside mu)
++    std::mutex list_mu;
++    bool listed_read = false;
++    std::unordered_set<uint64_t> listed, blobs_listed, keys_listed, roots_listed;
++    // what the card and driver are (vendor, device, driver version) and the release's list's size: the stamp written
++    // beside the library once the listed are all made (pipelines.stamp)
++    std::string stamp;
++    // the pipelines listed made ahead (StartPipelinePrebuild): how many, how many done, whether all are
++    std::atomic<uint32_t> pre_total{0}, pre_done{0}, pre_made{0};
++    std::atomic<bool> pre_started{false}, pre_finished{false};
 +};
 +PipelineCache& Pipes() {
 +    static PipelineCache c;
@@ -1999,8 +2038,272 @@ index fe65837..3c43d01 100644
 +    return h;
 +}
 +
++// The pipelines a game made, listed (pipelines.list beside the library; the release's own, pipelines.list beside the
++// game), with everything to make them again without the game: each one's whole desc, its shaders' and root signature's
++// bytes, and which compiled shader each shader source's key is. On a first run, another card or a new driver they are
++// all made ahead (PipePrebuild), and the compiled shaders the release lists are put in the shader cache, so neither a
++// shader nor a pipeline is made as a room is first drawn. Records, each a tag and what follows:
++//  1: a shader or root signature's bytes (their hash, size, bytes), before the first record that names them
++//  2: a pipeline (its size, ListedPipe, its input elements)
++//  3: a compiled shader (its key in the shader cache, its bytes' hash)
++//  4: a root signature (its bytes' hash: their record is a 1)
++constexpr uint64_t kListMagic = 0x3154534c4c505858ull;  // "XXPLLST1"
++struct ListedPipe {
++    uint64_t name = 0, root = 0;
++    uint64_t sh[5] = {};  // VS, PS, DS, HS, GS by their bytes' hash, 0 none
++    D3D12_BLEND_DESC blend{};
++    UINT sample_mask = 0;
++    D3D12_RASTERIZER_DESC rast{};
++    D3D12_DEPTH_STENCIL_DESC ds{};
++    UINT strip = 0, topo = 0, nrt = 0;
++    DXGI_FORMAT rtv[8] = {};
++    DXGI_FORMAT dsv{};
++    DXGI_SAMPLE_DESC sample{};
++    UINT node = 0, flags = 0, nel = 0;
++};
++struct ListedElem {
++    char sem[32] = {};
++    UINT index = 0, format = 0, slot = 0, offset = 0, cls = 0, step = 0;
++};
++std::filesystem::path ListFile() {
++    const std::filesystem::path& d = ShaderCacheDir();
++    return d.empty() ? std::filesystem::path() : d / "pipelines.list";
++}
++std::filesystem::path ShippedListFile() { return app::ExeDir() / "pipelines.list"; }
++
++struct Listed {
++    ListedPipe p;
++    std::vector<ListedElem> el;
++};
++struct ListContents {
++    std::vector<Listed> pipes;
++    std::unordered_map<uint64_t, std::vector<uint8_t>> blobs;  // by hash (with bytes; else only their hashes)
++    std::unordered_set<uint64_t> blob_hashes;
++    std::vector<std::pair<uint64_t, uint64_t>> keys;  // shader cache key, bytes' hash
++    std::vector<uint64_t> roots;
++};
++// a list's records as far as it is whole (bytes: the shaders' bytes read, else skipped); where the whole part ends
++uint64_t ReadList(const std::filesystem::path& file, ListContents& out, bool bytes) {
++    FILE* f = _wfopen(file.c_str(), L"rb");
++    if (!f) return 0;
++    _fseeki64(f, 0, SEEK_END);
++    int64_t size = _ftelli64(f);
++    _fseeki64(f, 0, SEEK_SET);
++    uint64_t magic = 0, whole = 0;
++    if (std::fread(&magic, sizeof(magic), 1, f) == 1 && magic == kListMagic) {
++        whole = sizeof(magic);
++        for (;;) {
++            uint32_t tag = 0;
++            if (std::fread(&tag, sizeof(tag), 1, f) != 1) break;
++            if (tag == 1) {
++                uint64_t h = 0;
++                uint32_t n = 0;
++                if (std::fread(&h, sizeof(h), 1, f) != 1 || std::fread(&n, sizeof(n), 1, f) != 1 || n > (16u << 20))
++                    break;
++                if (bytes) {
++                    std::vector<uint8_t> b(n);
++                    if (std::fread(b.data(), 1, n, f) != n || Hash(b.data(), n) != h) break;
++                    out.blobs.emplace(h, std::move(b));
++                } else if (_fseeki64(f, n, SEEK_CUR) != 0) {
++                    break;
++                }
++                out.blob_hashes.insert(h);
++            } else if (tag == 2) {
++                uint32_t n = 0;
++                if (std::fread(&n, sizeof(n), 1, f) != 1 || n < sizeof(ListedPipe) || n > (1u << 16)) break;
++                Listed l;
++                if (std::fread(&l.p, sizeof(l.p), 1, f) != 1 || l.p.nel > 32 ||
++                    n != sizeof(ListedPipe) + l.p.nel * sizeof(ListedElem))
++                    break;
++                l.el.resize(l.p.nel);
++                if (l.p.nel && std::fread(l.el.data(), sizeof(ListedElem), l.p.nel, f) != l.p.nel) break;
++                for (ListedElem& e : l.el) e.sem[sizeof(e.sem) - 1] = 0;
++                out.pipes.push_back(std::move(l));
++            } else if (tag == 3) {
++                uint64_t kh[2];
++                if (std::fread(kh, sizeof(kh), 1, f) != 1) break;
++                out.keys.emplace_back(kh[0], kh[1]);
++            } else if (tag == 4) {
++                uint64_t h = 0;
++                if (std::fread(&h, sizeof(h), 1, f) != 1) break;
++                out.roots.push_back(h);
++            } else {
++                break;
++            }
++            // with bytes unread (sought past), a file cut short in a blob's bytes is found here
++            int64_t at = _ftelli64(f);
++            if (at < 0 || at > size) break;
++            whole = uint64_t(at);
++        }
++    }
++    std::fclose(f);
++    return whole;
++}
++
++// this player's list read once (its names and hashes, not its bytes): what it holds is not written again, and a
++// record cut short (the game closed as it was written) cut off, so the records after it are read
++void ReadOwnList(PipelineCache& c) {
++    if (c.listed_read) return;
++    c.listed_read = true;
++    ListContents l;
++    uint64_t whole = ReadList(ListFile(), l, false);
++    std::error_code ec;
++    uint64_t size = std::filesystem::file_size(ListFile(), ec);
++    if (!ec && size > whole) {
++        if (whole) std::filesystem::resize_file(ListFile(), whole, ec);
++        else std::filesystem::remove(ListFile(), ec);
++    }
++    for (const Listed& p : l.pipes) c.listed.insert(p.p.name);
++    c.blobs_listed = std::move(l.blob_hashes);
++    for (const auto& k : l.keys) c.keys_listed.insert(k.first);
++    for (uint64_t r : l.roots) c.roots_listed.insert(r);
++}
++
++bool ListOn() {
++    static const bool kOn = !(std::getenv("XBE_PIPELINE_CACHE") && std::atoi(std::getenv("XBE_PIPELINE_CACHE")) == 0);
++    return kOn && !ListFile().empty();
++}
++// the list, open to add to (its magic first when new)
++FILE* OpenListFile() {
++    bool fresh = !std::filesystem::exists(ListFile());
++    FILE* f = _wfopen(ListFile().c_str(), L"ab");
++    if (f && fresh) std::fwrite(&kListMagic, sizeof(kListMagic), 1, f);
++    return f;
++}
++// bytes onto the list unless they are on it; their hash
++uint64_t ListBytes(PipelineCache& c, FILE* f, const void* p, size_t n) {
++    uint64_t h = Hash(p, n);
++    if (c.blobs_listed.insert(h).second) {
++        uint32_t tag = 1, size = uint32_t(n);
++        std::fwrite(&tag, sizeof(tag), 1, f);
++        std::fwrite(&h, sizeof(h), 1, f);
++        std::fwrite(&size, sizeof(size), 1, f);
++        std::fwrite(p, 1, n, f);
++    }
++    return h;
++}
++
++// a root signature onto the list
++void ListRoot(PipelineCache& c, const void* blob, size_t size) {
++    if (!ListOn() || !blob || !size) return;
++    std::lock_guard<std::mutex> lock(c.list_mu);
++    ReadOwnList(c);
++    uint64_t h = Hash(blob, size);
++    if (c.roots_listed.count(h)) return;
++    FILE* f = OpenListFile();
++    if (!f) return;
++    c.roots_listed.insert(h);
++    ListBytes(c, f, blob, size);
++    uint32_t tag = 4;
++    std::fwrite(&tag, sizeof(tag), 1, f);
++    std::fwrite(&h, sizeof(h), 1, f);
++    std::fclose(f);
++}
++
++// a compiled shader onto the list: its key in the shader cache and its bytes
++void ListShader(uint64_t key, ID3DBlob* blob) {
++    PipelineCache& c = Pipes();
++    if (!ListOn() || !blob) return;
++    std::lock_guard<std::mutex> lock(c.list_mu);
++    ReadOwnList(c);
++    if (c.keys_listed.count(key)) return;
++    FILE* f = OpenListFile();
++    if (!f) return;
++    c.keys_listed.insert(key);
++    uint64_t kh[2] = {key, ListBytes(c, f, blob->GetBufferPointer(), blob->GetBufferSize())};
++    uint32_t tag = 3;
++    std::fwrite(&tag, sizeof(tag), 1, f);
++    std::fwrite(kh, sizeof(kh), 1, f);
++    std::fclose(f);
++}
++
++// a pipeline onto the list (one with stream output is left off: none is drawn so)
++void ListPipeline(PipelineCache& c, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, uint64_t name, uint64_t root) {
++    if (!ListOn() || !root || d.StreamOutput.NumEntries || d.InputLayout.NumElements > 32) return;
++    std::lock_guard<std::mutex> lock(c.list_mu);
++    ReadOwnList(c);
++    if (c.listed.count(name)) return;
++    FILE* f = OpenListFile();
++    if (!f) return;
++    c.listed.insert(name);
++    ListedPipe p;
++    p.name = name;
++    p.root = root;
++    const D3D12_SHADER_BYTECODE* sh[5] = {&d.VS, &d.PS, &d.DS, &d.HS, &d.GS};
++    for (int i = 0; i < 5; i++)
++        if (sh[i]->pShaderBytecode && sh[i]->BytecodeLength)
++            p.sh[i] = ListBytes(c, f, sh[i]->pShaderBytecode, sh[i]->BytecodeLength);
++    p.blend = d.BlendState;
++    p.sample_mask = d.SampleMask;
++    p.rast = d.RasterizerState;
++    p.ds = d.DepthStencilState;
++    p.strip = UINT(d.IBStripCutValue);
++    p.topo = UINT(d.PrimitiveTopologyType);
++    p.nrt = d.NumRenderTargets;
++    std::copy(std::begin(d.RTVFormats), std::end(d.RTVFormats), p.rtv);
++    p.dsv = d.DSVFormat;
++    p.sample = d.SampleDesc;
++    p.node = d.NodeMask;
++    p.flags = UINT(d.Flags);
++    p.nel = d.InputLayout.NumElements;
++    std::vector<ListedElem> el(p.nel);
++    for (UINT i = 0; i < p.nel; i++) {
++        const D3D12_INPUT_ELEMENT_DESC& e = d.InputLayout.pInputElementDescs[i];
++        if (e.SemanticName) std::snprintf(el[i].sem, sizeof(el[i].sem), "%s", e.SemanticName);
++        el[i].index = e.SemanticIndex;
++        el[i].format = UINT(e.Format);
++        el[i].slot = e.InputSlot;
++        el[i].offset = e.AlignedByteOffset;
++        el[i].cls = UINT(e.InputSlotClass);
++        el[i].step = e.InstanceDataStepRate;
++    }
++    uint32_t tag = 2, n = uint32_t(sizeof(ListedPipe) + p.nel * sizeof(ListedElem));
++    std::fwrite(&tag, sizeof(tag), 1, f);
++    std::fwrite(&n, sizeof(n), 1, f);
++    std::fwrite(&p, sizeof(p), 1, f);
++    if (p.nel) std::fwrite(el.data(), sizeof(ListedElem), p.nel, f);
++    std::fclose(f);
++}
++
++// the card and driver a device was made on: "vendor:device:driver" (the launcher works the same out for the card it
++// starts the game on, and makes the pipelines ahead when it differs from the stamp's)
++std::string DeviceIdentity(ID3D12Device* dev) {
++    Microsoft::WRL::ComPtr<IDXGIFactory4> f;
++    Microsoft::WRL::ComPtr<IDXGIAdapter1> a;
++    DXGI_ADAPTER_DESC1 d{};
++    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) || FAILED(f->EnumAdapterByLuid(dev->GetAdapterLuid(), IID_PPV_ARGS(&a))) ||
++        FAILED(a->GetDesc1(&d)))
++        return {};
++    LARGE_INTEGER umd{};
++    a->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd);
++    char s[96];
++    std::snprintf(s, sizeof(s), "%04x:%04x:%u.%u.%u.%u", d.VendorId, d.DeviceId, unsigned(umd.HighPart >> 16),
++                  unsigned(umd.HighPart & 0xFFFF), unsigned(umd.LowPart >> 16), unsigned(umd.LowPart & 0xFFFF));
++    return s;
++}
++// the stamp: the card and driver, and the release's list by its size
++std::string StampFor(ID3D12Device* dev) {
++    std::string id = DeviceIdentity(dev);
++    if (id.empty()) return {};
++    std::error_code ec;
++    uint64_t n = std::filesystem::file_size(ShippedListFile(), ec);
++    return id + "\nlist " + std::to_string(ec ? 0 : n) + "\n";
++}
++void WriteStamp(const std::string& stamp) {
++    if (stamp.empty() || ShaderCacheDir().empty()) return;
++    std::filesystem::path file = ShaderCacheDir() / "pipelines.stamp", tmp = file;
++    tmp += "." + std::to_string(GetCurrentProcessId()) + ".tmp";
++    FILE* f = _wfopen(tmp.c_str(), L"wb");
++    if (!f) return;
++    bool ok = std::fwrite(stamp.data(), 1, stamp.size(), f) == stamp.size();
++    ok = std::fclose(f) == 0 && ok;
++    std::error_code ec;
++    if (ok) std::filesystem::rename(tmp, file, ec);
++    if (!ok || ec) std::filesystem::remove(tmp, ec);
++}
++
 +// the library's bytes into its file, beside it and renamed (a file is whole or not there)
-+void WritePipelines(std::filesystem::path file, std::vector<uint8_t> data, uint32_t n) {
++void WritePipelines(std::filesystem::path file, std::vector<uint8_t> data, uint32_t n, std::string stamp) {
 +    std::filesystem::path tmp = file;
 +    tmp += "." + std::to_string(GetCurrentProcessId()) + "." + std::to_string(n) + ".tmp";
 +    FILE* f = _wfopen(tmp.c_str(), L"wb");
@@ -2011,6 +2314,8 @@ index fe65837..3c43d01 100644
 +    std::error_code ec;
 +    if (ok) std::filesystem::rename(tmp, file, ec);
 +    if (!ok || ec) std::filesystem::remove(tmp, ec);
++    // the stamp once the library it vouches for is whole
++    if (ok && !ec) WriteStamp(stamp);
 +}
 +
 +}  // namespace
@@ -2020,6 +2325,7 @@ index fe65837..3c43d01 100644
 +    PipelineCache& c = Pipes();
 +    std::lock_guard<std::mutex> lock(c.mu);
 +    c.roots[rs] = Hash(blob, size);
++    ListRoot(c, blob, size);
 +}
 +
 +HRESULT PipeCreate(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, REFIID riid, void** out) {
@@ -2030,13 +2336,16 @@ index fe65837..3c43d01 100644
 +    auto r = c.roots.find(d.pRootSignature);
 +    wchar_t name[24];
 +    std::swprintf(name, 24, L"%016llx", (unsigned long long)PipelineName(d, r != c.roots.end() ? r->second : 0));
++    uint64_t root = r != c.roots.end() ? r->second : 0;
 +    if (SUCCEEDED(c.lib->LoadGraphicsPipeline(name, &d, riid, out))) {
 +        c.loaded++;
++        ListPipeline(c, d, PipelineName(d, root), root);
 +        return S_OK;
 +    }
 +    HRESULT hr = dev->CreateGraphicsPipelineState(&d, riid, out);
 +    if (FAILED(hr)) return hr;
 +    c.made++;
++    ListPipeline(c, d, PipelineName(d, root), root);
 +    // stored under its name (one the library already holds is left as it is)
 +    Microsoft::WRL::ComPtr<ID3D12PipelineState> pso;
 +    if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&pso))) &&
@@ -2061,15 +2370,195 @@ index fe65837..3c43d01 100644
 +    LOGR("pipelines: %llu made, %llu read from the kept ones; %.1f MB kept", (unsigned long long)c.made,
 +         (unsigned long long)c.loaded, double(n) / 1048576.0);
 +    // written off this thread: a few megabytes would hitch the frame they were written in
++    // the stamp with it once the listed are all made
++    std::string stamp = c.pre_finished ? c.stamp : std::string();
 +    if (now) {
-+        WritePipelines(PipelineFile(), std::move(data), ++c.writes);
++        WritePipelines(PipelineFile(), std::move(data), ++c.writes, std::move(stamp));
 +    } else {
-+        std::thread(WritePipelines, PipelineFile(), std::move(data), ++c.writes).detach();
++        std::thread(WritePipelines, PipelineFile(), std::move(data), ++c.writes, std::move(stamp)).detach();
 +    }
++}
++
++// The pipelines listed (the release's and this player's own) made ahead on threads of their own, those the library
++// does not hold already, with root signatures of their own made from the listed bytes (a library's pipeline is found
++// by its root signature's bytes, not the object): on a first run, another card or a new driver, every pipeline the game
++// has drawn with is ready before it is drawn again (a room's first frame made two to four, 10-25 ms each). The
++// compiled shaders listed that the shader cache lacks are put in it first (each took some 25 ms to compile)
++void PipePrebuild(ID3D12Device* dev) {
++    PipelineCache& c = Pipes();
++    if (c.pre_started.exchange(true)) return;
++    {
++        std::lock_guard<std::mutex> lock(c.mu);
++        OpenPipelines(c, dev);
++        c.stamp = StampFor(dev);
++        if (!c.lib) {
++            c.pre_finished = true;
++            return;
++        }
++    }
++    dev->AddRef();
++    std::thread([dev] {
++        PipelineCache& c = Pipes();
++        auto start = std::chrono::steady_clock::now();
++        ListContents l;
++        ReadList(ShippedListFile(), l, true);
++        ReadList(ListFile(), l, true);
++        // the compiled shaders into the shader cache
++        uint32_t seeded = 0;
++        for (const auto& k : l.keys) {
++            auto b = l.blobs.find(k.second);
++            if (b == l.blobs.end() || std::filesystem::exists(ShaderFile(k.first))) continue;
++            ComPtr<ID3DBlob> blob;
++            if (FAILED(D3DCreateBlob(b->second.size(), &blob))) continue;
++            std::memcpy(blob->GetBufferPointer(), b->second.data(), b->second.size());
++            SaveShader(k.first, blob.Get());
++            seeded++;
++        }
++        // the root signatures
++        std::unordered_map<uint64_t, ComPtr<ID3D12RootSignature>> roots;
++        for (uint64_t h : l.roots) {
++            auto b = l.blobs.find(h);
++            ComPtr<ID3D12RootSignature> rs;
++            if (b != l.blobs.end() && !roots.count(h) &&
++                SUCCEEDED(dev->CreateRootSignature(0, b->second.data(), b->second.size(), IID_PPV_ARGS(&rs))))
++                roots[h] = rs;
++        }
++        // each name once, with its root signature and shaders whole
++        std::unordered_set<uint64_t> seen;
++        std::vector<const Listed*> todo;
++        for (const Listed& p : l.pipes) {
++            bool whole = roots.count(p.p.root) > 0;
++            for (uint64_t h : p.p.sh) whole = whole && (!h || l.blobs.count(h));
++            if (whole && seen.insert(p.p.name).second) todo.push_back(&p);
++        }
++        c.pre_total = uint32_t(todo.size());
++        std::atomic<size_t> next{0};
++        auto work = [&] {
++            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
++            for (size_t i; (i = next.fetch_add(1)) < todo.size();) {
++                const Listed& p = *todo[i];
++                D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
++                d.pRootSignature = roots[p.p.root].Get();
++                D3D12_SHADER_BYTECODE* sh[5] = {&d.VS, &d.PS, &d.DS, &d.HS, &d.GS};
++                for (int k = 0; k < 5; k++) {
++                    if (!p.p.sh[k]) continue;
++                    const std::vector<uint8_t>& b = l.blobs.find(p.p.sh[k])->second;
++                    *sh[k] = {b.data(), b.size()};
++                }
++                std::vector<D3D12_INPUT_ELEMENT_DESC> el(p.el.size());
++                for (size_t k = 0; k < el.size(); k++)
++                    el[k] = {p.el[k].sem, p.el[k].index, DXGI_FORMAT(p.el[k].format), p.el[k].slot, p.el[k].offset,
++                             D3D12_INPUT_CLASSIFICATION(p.el[k].cls), p.el[k].step};
++                d.InputLayout = {el.empty() ? nullptr : el.data(), UINT(el.size())};
++                d.BlendState = p.p.blend;
++                d.SampleMask = p.p.sample_mask;
++                d.RasterizerState = p.p.rast;
++                d.DepthStencilState = p.p.ds;
++                d.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE(p.p.strip);
++                d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE(p.p.topo);
++                d.NumRenderTargets = p.p.nrt;
++                std::copy(std::begin(p.p.rtv), std::end(p.p.rtv), d.RTVFormats);
++                d.DSVFormat = p.p.dsv;
++                d.SampleDesc = p.p.sample;
++                d.NodeMask = p.p.node;
++                d.Flags = D3D12_PIPELINE_STATE_FLAGS(p.p.flags);
++                wchar_t name[24];
++                std::swprintf(name, 24, L"%016llx", (unsigned long long)p.p.name);
++                ComPtr<ID3D12PipelineState> pso;
++                bool held;
++                {
++                    std::lock_guard<std::mutex> lock(c.mu);
++                    held = SUCCEEDED(c.lib->LoadGraphicsPipeline(name, &d, IID_PPV_ARGS(&pso)));
++                }
++                if (!held && SUCCEEDED(dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) {
++                    std::lock_guard<std::mutex> lock(c.mu);
++                    if (SUCCEEDED(c.lib->StorePipeline(name, pso.Get()))) {
++                        c.dirty = true;
++                        c.last_store = std::chrono::steady_clock::now();
++                        c.pre_made++;
++                    }
++                }
++                c.pre_done++;
++            }
++        };
++        unsigned n = std::max(1u, std::min(8u, std::thread::hardware_concurrency() / 2));
++        std::vector<std::thread> threads;
++        for (unsigned k = 0; k < n; k++) threads.emplace_back(work);
++        for (std::thread& t : threads) t.join();
++        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
++        LOGR("pipelines: %u listed made ahead in %.1f s on %u threads (%u made, the rest kept already); %u compiled "
++             "shaders put in the cache",
++             c.pre_total.load(), secs, n, c.pre_made.load(), seeded);
++        {
++            std::lock_guard<std::mutex> lock(c.mu);
++            c.pre_finished = true;
++            // none made: the library's file holds them all already, and the stamp says so now
++            if (!c.dirty) WriteStamp(c.stamp);
++        }
++        dev->Release();
++    }).detach();
++}
++
++void PipePrebuildProgress(uint32_t& done, uint32_t& total, bool& finished) {
++    PipelineCache& c = Pipes();
++    done = c.pre_done;
++    total = c.pre_total;
++    finished = c.pre_finished;
++}
++
++// --prepare-shaders (the launcher's, before the game starts on a card or driver the stamp is not for): a device on the
++// card the game will use (the settings' card, else the fastest, as the renderer picks), the listed made, the library
++// written. Its progress in cache/shaders/prepare.txt ("done total", "finished" at the end) for the launcher's bar
++bool PipePrepare() {
++    PipelineCache& c = Pipes();
++    if (ShaderCacheDir().empty()) return false;
++    std::filesystem::path progress = ShaderCacheDir() / "prepare.txt";
++    auto say = [&](const std::string& text) {
++        std::filesystem::path tmp = progress;
++        tmp += ".tmp";
++        if (FILE* f = _wfopen(tmp.c_str(), L"wb")) {
++            std::fwrite(text.data(), 1, text.size(), f);
++            std::fclose(f);
++            std::error_code ec;
++            std::filesystem::rename(tmp, progress, ec);
++        }
++    };
++    say("0 0\n");
++    ComPtr<IDXGIFactory6> f;
++    if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f)))) return false;
++    ComPtr<IDXGIAdapter1> adapter;
++    if (const std::string& want = app::Get().gpu; !want.empty()) {
++        ComPtr<IDXGIAdapter1> a;
++        for (UINT i = 0; !adapter && f->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
++            DXGI_ADAPTER_DESC1 d{};
++            a->GetDesc1(&d);
++            char name[sizeof(d.Description)];
++            WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, name, sizeof(name), nullptr, nullptr);
++            if (want == name && SUCCEEDED(D3D12CreateDevice(a.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
++                adapter = a;
++        }
++    }
++    if (!adapter) f->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter));
++    ComPtr<ID3D12Device> dev;
++    if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) return false;
++    DXGI_ADAPTER_DESC1 ad{};
++    if (adapter) adapter->GetDesc1(&ad);
++    LOGR("pipelines: made ahead for %ls", adapter ? ad.Description : L"the default card");
++    PipePrebuild(dev.Get());
++    for (;;) {
++        uint32_t done = c.pre_done, total = c.pre_total;
++        bool finished = c.pre_finished;
++        say(std::to_string(done) + " " + std::to_string(total) + "\n");
++        if (finished) break;
++        Sleep(100);
++    }
++    PipeSave(true);
++    say("finished\n");
++    return true;
  }
  
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
-@@ -1421,12 +2420,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +2884,19 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -2078,6 +2567,7 @@ index fe65837..3c43d01 100644
 +    if (ComPtr<ID3DBlob> kept = LoadShader(key)) {
 +        g_perf.shaders_kept++;
 +        blobs_[hash] = kept;
++        ListShader(key, kept.Get());
 +        return kept.Get();
 +    }
      ComPtr<ID3DBlob> code;
@@ -2091,15 +2581,16 @@ index fe65837..3c43d01 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +2439,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +2904,8 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
 +    SaveShader(key, code.Get());
++    ListShader(key, code.Get());
      return code.Get();
  }
  
-@@ -1473,7 +2479,30 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1473,7 +2945,30 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
          blend.DestBlendAlpha = D3D12_BLEND_ONE;
          blend.BlendOp = blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
      }
@@ -2131,7 +2622,7 @@ index fe65837..3c43d01 100644
      return pso.Get();
  }
  
-@@ -1496,7 +2525,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const ch
+@@ -1496,7 +2991,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const ch
          b.DestBlend = b.DestBlendAlpha = D3D12_BLEND_INV_BLEND_FACTOR;
          b.BlendOp = b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
      }
@@ -2140,7 +2631,7 @@ index fe65837..3c43d01 100644
      return pso.Get();
  }
  
-@@ -1610,8 +2639,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +3105,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -2175,7 +2666,7 @@ index fe65837..3c43d01 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2705,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +3171,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -2187,7 +2678,7 @@ index fe65837..3c43d01 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,7 +2729,8 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,7 +3195,8 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -2197,7 +2688,7 @@ index fe65837..3c43d01 100644
      psos_[h] = pso;
      return pso.Get();
  }
-@@ -1692,6 +2748,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +3214,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -2207,7 +2698,7 @@ index fe65837..3c43d01 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2762,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +3228,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -2222,7 +2713,7 @@ index fe65837..3c43d01 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2792,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +3258,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -2233,7 +2724,7 @@ index fe65837..3c43d01 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1802,6 +2871,11 @@ void D3D12Backend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo
+@@ -1802,6 +3337,11 @@ void D3D12Backend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo
              uint32_t pitch;
              DecodeLevel(d, l, f, p, colours, px, pitch);
              if (ext_) ext_->Decoded(d, fi, f, l, px, pitch, tx.flags);
@@ -2245,7 +2736,7 @@ index fe65837..3c43d01 100644
              UploadTextureLevel(tx, f, l, px, pitch);
          }
      }
-@@ -1843,6 +2917,72 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +3383,72 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -2318,7 +2809,7 @@ index fe65837..3c43d01 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,13 +3010,60 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,13 +3476,60 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -2379,7 +2870,7 @@ index fe65837..3c43d01 100644
      if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
      return drawn.res.Get();
  }
-@@ -1904,6 +3091,8 @@ void D3D12Backend::LatchPackImage(Tex& tx) {
+@@ -1904,6 +3557,8 @@ void D3D12Backend::LatchPackImage(Tex& tx) {
              return;
          }
          it = pack_textures_.emplace(tx.pack_key, Tex{}).first;
@@ -2388,7 +2879,7 @@ index fe65837..3c43d01 100644
          CreatePackTexture(it->second, img);
      }
      if (it->second.res) tx.swap = &it->second;
-@@ -1969,7 +3158,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+@@ -1969,7 +3624,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
  constexpr uint32_t kTaddressWrap = 1;
  constexpr uint32_t kTaddressClamp = 3;
  
@@ -2400,7 +2891,7 @@ index fe65837..3c43d01 100644
      D3D12_SAMPLER_DESC sd = {};
      const auto& t = s.tss[size_t(i)];
      uint32_t mag = t[kTssMagFilter];
-@@ -1982,8 +3174,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +3640,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -2418,7 +2909,7 @@ index fe65837..3c43d01 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +3192,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +3658,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -2429,7 +2920,7 @@ index fe65837..3c43d01 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2009,7 +3210,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -2009,7 +3676,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
  uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
      D3D12_SAMPLER_DESC sd[4];
      uint32_t aniso = app::Get().aniso;
@@ -2439,7 +2930,7 @@ index fe65837..3c43d01 100644
      uint64_t key = Hash(sd, sizeof(sd));
      auto it = samplers_.find(key);
      if (it != samplers_.end()) return it->second;
-@@ -2144,9 +3346,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2144,9 +3812,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -2452,7 +2943,7 @@ index fe65837..3c43d01 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +3367,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +3833,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -2461,7 +2952,7 @@ index fe65837..3c43d01 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +3420,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +3886,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -2484,7 +2975,7 @@ index fe65837..3c43d01 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +3458,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +3924,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -2495,7 +2986,7 @@ index fe65837..3c43d01 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2433,28 +3655,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +4121,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
      c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
@@ -2574,7 +3065,7 @@ index fe65837..3c43d01 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2469,6 +3732,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+@@ -2469,6 +4198,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
      if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
      binds_.vsc = last_vsc_gpu_;
      binds_.dc = last_dc_gpu_;
@@ -2582,7 +3073,7 @@ index fe65837..3c43d01 100644
  }
  
  void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
-@@ -2577,6 +3841,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +4307,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -2606,7 +3097,7 @@ index fe65837..3c43d01 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3875,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +4341,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -2617,7 +3108,7 @@ index fe65837..3c43d01 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3890,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +4356,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -2674,7 +3165,7 @@ index fe65837..3c43d01 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2676,21 +3973,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
+@@ -2676,21 +4439,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
      cl_->IASetVertexBuffers(0, a.buffer_count, vbv);
  }
  
@@ -2704,7 +3195,7 @@ index fe65837..3c43d01 100644
  }
  
  // calls the extension's EndDraw on every return from Draw once made
-@@ -2808,6 +4106,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +4572,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -2712,7 +3203,7 @@ index fe65837..3c43d01 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +4114,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +4580,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -2725,7 +3216,7 @@ index fe65837..3c43d01 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +4132,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +4598,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -2814,7 +3305,7 @@ index fe65837..3c43d01 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +4221,233 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +4687,233 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -3053,7 +3544,7 @@ index fe65837..3c43d01 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +4463,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +4929,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -3069,7 +3560,7 @@ index fe65837..3c43d01 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2925,7 +4508,7 @@ ID3D12PipelineState* D3D12Backend::EnsureClearPipeline(DXGI_FORMAT rtv, uint8_t
+@@ -2925,7 +4974,7 @@ ID3D12PipelineState* D3D12Backend::EnsureClearPipeline(DXGI_FORMAT rtv, uint8_t
      if (!vs || !ps) return nullptr;
      D3D12_GRAPHICS_PIPELINE_STATE_DESC d = FullScreenPipelineDesc(vs, ps, rtv);
      d.BlendState.RenderTarget[0].RenderTargetWriteMask = mask;
@@ -3078,7 +3569,7 @@ index fe65837..3c43d01 100644
      return pso.Get();
  }
  
-@@ -2961,7 +4544,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +5010,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -3089,7 +3580,7 @@ index fe65837..3c43d01 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +4628,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +5094,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -3109,7 +3600,7 @@ index fe65837..3c43d01 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +4646,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +5112,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -3118,7 +3609,7 @@ index fe65837..3c43d01 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,7 +4655,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,7 +5121,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -3128,7 +3619,7 @@ index fe65837..3c43d01 100644
          uint32_t taps = uint32_t(std::ceil(std::max(src_scale / dst_scale, 1.0f) - kTapsSlack));
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
-@@ -3084,7 +4673,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +5139,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -3137,7 +3628,7 @@ index fe65837..3c43d01 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +4683,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +5149,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -3156,7 +3647,7 @@ index fe65837..3c43d01 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3136,6 +4725,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +5191,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -3172,7 +3663,7 @@ index fe65837..3c43d01 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3155,16 +4753,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -3155,16 +5219,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -3263,7 +3754,7 @@ index fe65837..3c43d01 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +4849,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +5315,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -3273,7 +3764,7 @@ index fe65837..3c43d01 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +4859,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +5325,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -3283,7 +3774,7 @@ index fe65837..3c43d01 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,60 +4895,2411 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,49 +5361,2400 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3313,6 +3804,17 @@ index fe65837..3c43d01 100644
      binds_ = {};
      Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 -    Blit(t.res.Get(), t.fmt, uv, {.gamma = gamma_});
+-}
+-
+-void D3D12Backend::RenderUi() {
+-    std::lock_guard lock(app::UiLock());
+-    ImGui_ImplDX12_NewFrame();
+-    ImGui_ImplWin32_NewFrame();
+-    ImGui::NewFrame();
+-    if (app::kGame.ui) app::kGame.ui(fps_);
+-    ImGui::Render();
+-    ID3D12DescriptorHeap* uh[] = {ui_heap_.Get()};
+-    cl_->SetDescriptorHeaps(1, uh);
 +    hdr_before_ = nullptr;
 +    if (hdr_ && ui_snap_ && ui_snap_frame_ == presents_ && ui_snap_data_ == t.data) {
 +        Transition(ui_snap_.Get(), ui_snap_state_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -3368,18 +3870,7 @@ index fe65837..3c43d01 100644
 +    o.p = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
 +    o.uv = t;
 +    return o;
- }
--
--void D3D12Backend::RenderUi() {
--    std::lock_guard lock(app::UiLock());
--    ImGui_ImplDX12_NewFrame();
--    ImGui_ImplWin32_NewFrame();
--    ImGui::NewFrame();
--    if (app::kGame.ui) app::kGame.ui(fps_);
--    ImGui::Render();
--    ID3D12DescriptorHeap* uh[] = {ui_heap_.Get()};
--    cl_->SetDescriptorHeaps(1, uh);
--    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
++}
 +// to where the pixel was a frame before, in UV units: as its draw moved (a character, a door, the world with the
 +// camera), else for the world as it held still
 +float4 motion(O i) : SV_Target {
@@ -3403,20 +3894,9 @@ index fe65837..3c43d01 100644
 +float4 showmotion(O i) : SV_Target {
 +    float2 m = mv.SampleLevel(ps, i.uv, 0) * 20;
 +    return float4(saturate(0.5 + m.x), saturate(0.5 + m.y), 0.5, 1);
- }
++}
 +)";
- 
--void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
--    D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
--    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
--    D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
--    float black[4] = {0, 0, 0, 1};
--    cl_->ClearRenderTargetView(rh, black, 0, nullptr);
--    cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
--    bound_rt_ = bound_ds_ = nullptr;
--    if (t) BlitFrame(*t);
--    RenderUi();
--    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_PRESENT);
++
 +// anti-aliasing's depth and motion at the frame's size (drawn as frame generation's are), and AMD's output in the
 +// frame's format when the card can write it so, then copied back; else RGBA and drawn back
 +bool D3D12Backend::EnsureAaTargets(uint32_t w, uint32_t h, DXGI_FORMAT fmt) {
@@ -3456,19 +3936,8 @@ index fe65837..3c43d01 100644
 +    aa_h_ = h;
 +    aa_fmt_ = fmt;
 +    return true;
- }
- 
--void D3D12Backend::ReleaseOldTextures() {
--    constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
--    constexpr size_t kTexturesKept = 2048;  // no sweep below this many
--    constexpr uint64_t kIdleFrames = 600;
--    // textures unused for ten seconds go, levels stream theirs in and out
--    if (presents_ % kSweepEvery != 0 || textures_.size() <= kTexturesKept) return;
--    for (auto it = textures_.begin(); it != textures_.end();) {
--        if (it->second.frame + kIdleFrames < presents_) {
--            CurrentFrame().garbage.push_back(it->second.res);
--            it = textures_.erase(it);
--        } else {
++}
++
 +// Ambient occlusion (AmbientOcclusion): how much of the sky above each point of the frame's 3D its surroundings hide,
 +// from the depth alone. Each pixel's place in the view and its surface's normal come from the depth buffer (the view's
 +// near_w at its 0 and far_w at its 1, FrameView: this title's has the near plane at 0); samples on a spiral within a radius in the view, turned per pixel and per frame (the
@@ -4407,11 +4876,15 @@ index fe65837..3c43d01 100644
 +        Transition(aa_rx_.Get(), aa_rx_state_, kRead);
 +        TextureSrv(aa_rx_.Get(), DXGI_FORMAT_R8_UNORM, slot + 9 + kDn);
 +    }
-+    float ap[20] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
++    // XBE_RT_GI_LIFT_MOST: the most a surface's light is raised (0.7: its own and 70% more), eased toward from
++    // XBE_RT_GI_LIFT_KNEE (0.3) on; cut at 1 before, the walls by the purple lamps doubled to a flat purple
++    static const float kLiftMost = env("XBE_RT_GI_LIFT_MOST", 0.7f), kLiftKnee = env("XBE_RT_GI_LIFT_KNEE", 0.3f);
++    float ap[24] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
 +                    float(rw), float(rh), float(gw), float(gh),
 +                    float(slot), float(light), std::max(1.0f, kStep), float(kView),
 +                    float(slot + 2), float(slot + 3), mean, fill,
-+                    kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f};
++                    kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f,
++                    kLiftMost, kLiftKnee, 0, 0};
 +    Alloc acb = Upload(256, 256);
 +    std::memcpy(acb.cpu, ap, sizeof(ap));
 +    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -5515,9 +5988,9 @@ index fe65837..3c43d01 100644
 +    ImGui::Render();
 +    ID3D12DescriptorHeap* uh[] = {ui_heap_.Get()};
 +    cl_->SetDescriptorHeaps(1, uh);
-+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
-+}
-+
+     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
+ }
+ 
 +// HDR: ImGui draws in SDR into a layer of its own, which goes over the frame at scene brightness, so the menus never
 +// take the highlights' brightness; nothing at all when ImGui draws nothing
 +void D3D12Backend::RenderUiHdr(D3D12_CPU_DESCRIPTOR_HANDLE rh) {
@@ -5563,23 +6036,24 @@ index fe65837..3c43d01 100644
 +    ui_h_ = bb_h_;
 +}
 +
-+void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
+ void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
 +    // a frame whose 3D took anti-aliasing's offset with no UI drawn after it: anti-aliased here, its scene closed
 +    if (scene_) {
 +        CloseScene(nullptr);
 +    } else if (t && aa_on_ && aa_jitter_frame_ == presents_ && aa_done_frame_ != presents_ && AntiAliasFrame(*t)) {
 +        Begin();
 +    }
-+    D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
-+    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
-+    D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
+     D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
+     Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
+     D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
 +    if (hdr_ && t) MeasureFrame(*t);
-+    float black[4] = {0, 0, 0, 1};
-+    cl_->ClearRenderTargetView(rh, black, 0, nullptr);
-+    cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
-+    bound_rt_ = bound_ds_ = nullptr;
+     float black[4] = {0, 0, 0, 1};
+     cl_->ClearRenderTargetView(rh, black, 0, nullptr);
+     cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
+     bound_rt_ = bound_ds_ = nullptr;
 +    if (hdr_) HdrConstants();
-+    if (t) BlitFrame(*t);
+     if (t) BlitFrame(*t);
+-    RenderUi();
 +    if (fg_) FrameGenInputs(t, bi, rh);
 +    if (hdr_) {
 +        RenderUiHdr(rh);
@@ -5587,9 +6061,9 @@ index fe65837..3c43d01 100644
 +    } else {
 +        RenderUi();
 +    }
-+    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_PRESENT);
-+}
-+
+     Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_PRESENT);
+ }
+ 
 +namespace {
 +
 +// a half float's value, from a table of all of them
@@ -5715,25 +6189,21 @@ index fe65837..3c43d01 100644
 +         (unsigned long long)bad, (unsigned long long)below, ui_snaps_shown_);
 +}
 +
-+void D3D12Backend::ReleaseOldTextures() {
-+    constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
-+    constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-+    constexpr uint64_t kIdleFrames = 600;
-+    // textures unused for ten seconds go, levels stream theirs in and out
-+    if (presents_ % kSweepEvery != 0 || textures_.size() <= kTexturesKept) return;
-+    for (auto it = textures_.begin(); it != textures_.end();) {
-+        if (it->second.frame + kIdleFrames < presents_) {
-+            CurrentFrame().garbage.push_back(it->second.res);
+ void D3D12Backend::ReleaseOldTextures() {
+     constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
+     constexpr size_t kTexturesKept = 2048;  // no sweep below this many
+@@ -3275,6 +7764,10 @@ void D3D12Backend::ReleaseOldTextures() {
+     for (auto it = textures_.begin(); it != textures_.end();) {
+         if (it->second.frame + kIdleFrames < presents_) {
+             CurrentFrame().garbage.push_back(it->second.res);
 +            if (it->second.repl) CurrentFrame().garbage.push_back(it->second.repl);
 +            if (it->second.spare) CurrentFrame().garbage.push_back(it->second.spare);
 +            for (auto& m : it->second.mat)
 +                if (m) CurrentFrame().garbage.push_back(m);
-+            it = textures_.erase(it);
-+        } else {
+             it = textures_.erase(it);
+         } else {
              ++it;
-         }
-     }
-@@ -3291,10 +7314,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +7784,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -5754,7 +6224,7 @@ index fe65837..3c43d01 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +7338,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +7808,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -5787,7 +6257,7 @@ index fe65837..3c43d01 100644
      }
  }
  
-@@ -3312,17 +7371,45 @@ void LogPerf() {
+@@ -3312,17 +7841,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -5837,7 +6307,7 @@ index fe65837..3c43d01 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +7418,121 @@ void LogPerf() {
+@@ -3331,25 +7888,121 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -5964,7 +6434,7 @@ index fe65837..3c43d01 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +7543,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +8013,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -5995,7 +6465,7 @@ index fe65837..3c43d01 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +7573,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +8043,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -6003,7 +6473,7 @@ index fe65837..3c43d01 100644
      ApplySettings();
  }
  
-@@ -3386,13 +7585,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +8055,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -6049,7 +6519,7 @@ index fe65837..3c43d01 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +7629,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +8099,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6057,7 +6527,7 @@ index fe65837..3c43d01 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +7919,14 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +8389,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
@@ -6068,6 +6538,11 @@ index fe65837..3c43d01 100644
 +    return PipeCreate(dev, d, riid, out);
 +}
 +void SavePipelineCache(bool now) { PipeSave(now); }
++void StartPipelinePrebuild(ID3D12Device* dev) { PipePrebuild(dev); }
++void PipelinePrebuildProgress(uint32_t& done, uint32_t& total, bool& finished) {
++    PipePrebuildProgress(done, total, finished);
++}
++bool PrepareShaders() { return PipePrepare(); }
 +
  std::unique_ptr<Backend> CreateBackend() { return std::make_unique<D3D12Backend>(); }
  
@@ -7484,10 +7959,10 @@ index 0000000..2c20ca0
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/pipeline_cache.h b/runtime/gpu/pipeline_cache.h
 new file mode 100644
-index 0000000..2e910ad
+index 0000000..6a5202a
 --- /dev/null
 +++ b/runtime/gpu/pipeline_cache.h
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,34 @@
 +#pragma once
 +// Pipelines kept between sessions (d3d12.cpp): every graphics pipeline the renderer and ray tracing make goes into a
 +// D3D12 pipeline library saved beside the shader cache (cache/shaders/pipelines.bin), and is loaded from it the next
@@ -7497,6 +7972,7 @@ index 0000000..2e910ad
 +#include <d3d12.h>
 +
 +#include <cstddef>
++#include <cstdint>
 +
 +namespace gpu {
 +
@@ -7506,8 +7982,19 @@ index 0000000..2e910ad
 +// a graphics pipeline, from the library when it holds one made from the same desc, else made and stored there
 +HRESULT CreateGraphicsPipelineCached(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, REFIID riid,
 +                                     void** out);
-+// written to its file when pipelines were stored since and none for a few seconds (now: whatever was stored)
++// written to its file when pipelines were stored since and none for a few seconds (now: whatever was stored), and
++// pipelines.stamp beside it: the card and driver it was made with
 +void SavePipelineCache(bool now);
++// Every pipeline the game makes is listed (cache/shaders/pipelines.list: its desc and its shaders' bytes); those the
++// list holds (and the release's own, pipelines.list beside the game) that the library lacks are made ahead on threads
++// of their own once the root signatures exist (a first run, another card, a new driver): no room's first frame waits
++// for one. Its progress: done of total, and whether all are
++void StartPipelinePrebuild(ID3D12Device* dev);
++void PipelinePrebuildProgress(uint32_t& done, uint32_t& total, bool& finished);
++// the game started with --prepare-shaders (by the launcher, when the card or driver differs from the one the pipelines
++// were made for, cache/shaders/pipelines.stamp): the listed made on the card the game will use, then the game ends.
++// Its progress in cache/shaders/prepare.txt ("done total", then "finished")
++bool PrepareShaders();
 +
 +}  // namespace gpu
 diff --git a/runtime/gpu/raytrace.cpp b/runtime/gpu/raytrace.cpp
@@ -9064,10 +9551,10 @@ index 0000000..83c542c
 +}
 diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
 new file mode 100644
-index 0000000..3251f12
+index 0000000..c361218
 --- /dev/null
 +++ b/runtime/gpu/rt_giapply.hlsl
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,94 @@
 +// Ray traced bounce lighting's second step (rt_gi.hlsl): the light arriving at each surface, gathered by a few rays a
 +// pixel at a part of the frame's size, smoothed across a 5x5 of its texels that lie on the same surface as the pixel
 +// (by their depth and their normal, rt_guide.hlsl's), then put into the frame's 3D at its full size as a gain on the
@@ -9087,6 +9574,8 @@ index 0000000..3251f12
 +                  // the game's light a character gives up as it gets less (XBE_RT_GI_CHAR_FILL); how much of what a
 +                  // character gets above it is added (XBE_RT_GI_CHAR_BOOST); the reactive mask's SRV heap index + 1
 +                  // (0: none)
++    float4 gy;    // the most a surface's light is raised (XBE_RT_GI_LIFT_MOST), and up to where it is raised as it
++                  // gets more, then eased toward that most (XBE_RT_GI_LIFT_KNEE)
 +};
 +#include "rt_scene.hlsli"
 +
@@ -9145,7 +9634,11 @@ index 0000000..3251f12
 +    float dim = share * saturate(1 - Luma(light) / lm);
 +    // and a character gains none (XBE_RT_GI_CHAR_BOOST, 0) of what it gets above the average: the game's own lights
 +    // light it already, and added to theirs it stood out brighter than the floor beside it. Twice its own at most
-+    float3 lift = saturate((person ? gx.z : gx.x) * share * max(light / lm - 1, 0));
++    float3 x = (person ? gx.z : gx.x) * share * max(light / lm - 1, 0);
++    // raised as it gets more up to the knee, then eased toward the most rather than cut there: the stone right by
++    // a purple lamp, doubled, lost its carving to a flat purple
++    float most = max(gy.x, 1e-3f), knee = clamp(gy.y, 0, most);
++    float3 lift = select(x < knee, x, knee + (most - knee) * (1 - exp(-(x - knee) / max(most - knee, 1e-3f))));
 +    // under the frame's effects (the anti-aliasing's reactive mask, gx.w its SRV heap index + 1: a glow, a beam of
 +    // light, fire, drawn into the frame before this) their share of the pixel is left as the game drew it: the gain
 +    // is the surface's behind them, not theirs (10.5's purple beam lost half its light to the dark corner behind it)
@@ -11641,7 +12134,7 @@ index 6ee0fa3..e128ff1 100644
  constexpr uint32_t kVolume = 32 * kSector;
  constexpr char kMagic[] = "MICROSOFT*XBOX*MEDIA";
 diff --git a/runtime/kernel/files.cpp b/runtime/kernel/files.cpp
-index 5644ea7..964e1f8 100644
+index 5644ea7..55bfdf1 100644
 --- a/runtime/kernel/files.cpp
 +++ b/runtime/kernel/files.cpp
 @@ -299,6 +299,7 @@ uint32_t OpenOnDisc(const Disc::Entry* e, const std::string& name, uint32_t hand
@@ -11660,16 +12153,27 @@ index 5644ea7..964e1f8 100644
      return kSuccess;
  }
  
+@@ -484,6 +486,7 @@ static uint32_t Transfer(const Args& a, bool write, uint32_t pages) {
+         size_t done = f->entry ? MountedDisc()->Read(*f->entry, pos + n, HostPtr(at), chunk)
+                       : write  ? std::fwrite(HostPtr(at), 1, chunk, f->fp)
+                                : std::fread(HostPtr(at), 1, chunk, f->fp);
++        if (!write && done && g_file_read) g_file_read(f->xbox, pos + n, static_cast<uint8_t*>(HostPtr(at)), done);
+         n += uint32_t(done);
+         if (done < chunk) break;
+     }
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
-index 163ea09..ed25550 100644
+index 163ea09..6c33632 100644
 --- a/runtime/kernel/kernel.h
 +++ b/runtime/kernel/kernel.h
-@@ -188,6 +188,8 @@ bool DeleteSymbolicLink(const std::string& link);
+@@ -188,6 +188,11 @@ bool DeleteSymbolicLink(const std::string& link);
  std::string QuerySymbolicLink(const std::string& link);
  std::string ResolvePath(const std::string& xbox_path, uint32_t root_handle);  // host path or empty
  bool ReadGameFile(const std::string& xbox_path, std::vector<uint8_t>& out);  // from a host folder or the disc image
 +// a game's hook: each file the title opens (NtCreateFile, NtOpenFile), by its Xbox path, on the title's thread
 +inline std::function<void(const std::string&)> g_file_opened;
++// a game's hook: each read's bytes as they arrive in the title's buffer, by the file's Xbox path and their offset in
++// it, to change what a file says (Castlevania's own messages that named the Xbox); NtReadFile's thread
++inline std::function<void(const std::string& path, uint64_t offset, uint8_t* data, size_t size)> g_file_read;
  
  // boot
  bool Boot(std::vector<uint8_t> xbe, const std::string& xbe_name, const std::string& game_dir, const std::string& data_dir);

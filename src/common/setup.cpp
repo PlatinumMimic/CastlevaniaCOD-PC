@@ -71,6 +71,7 @@ void AskForGame() {
 void WidescreenInit();    // widescreen.cpp
 void TexturePackInit();   // texpack.cpp
 void MoviesInit();        // movies.cpp
+void PcTextInit();        // pc_text.cpp
 
 // GameInfo::init: settings loaded, nothing of the game touched yet
 void MenuToRenderer();  // menu.cpp
@@ -80,5 +81,6 @@ void GameInit() {
     AskForGame();
     TexturePackInit();
     MoviesInit();
+    PcTextInit();
     WidescreenInit();
 }

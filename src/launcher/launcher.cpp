@@ -27,6 +27,7 @@
 #include <cmath>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -244,6 +245,9 @@ struct Gpu {
     std::string name;
     bool d3d12 = false;
     bool software = false;  // Windows' own renderer on the CPU, no graphics driver installed
+    // the card and its driver as the game's pipeline cache names them (vendor:device:driver version), which its
+    // shaders were last prepared for when cache/shaders/pipelines.stamp says so
+    std::string identity;
 };
 
 // a null device: only whether one would be made; a null adapter is the default one
@@ -258,6 +262,13 @@ Gpu Describe(IDXGIAdapter1* a, bool d3d12) {
     if (a && SUCCEEDED(a->GetDesc1(&d))) {
         g.name = Utf8(d.Description);
         g.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        // as the SDK's runtime/gpu/d3d12.cpp writes it (DeviceIdentity)
+        LARGE_INTEGER umd{};
+        a->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd);
+        char id[96];
+        std::snprintf(id, sizeof(id), "%04x:%04x:%u.%u.%u.%u", d.VendorId, d.DeviceId, unsigned(umd.HighPart >> 16),
+                      unsigned(umd.HighPart & 0xFFFF), unsigned(umd.LowPart >> 16), unsigned(umd.LowPart & 0xFFFF));
+        g.identity = id;
     }
     return g;
 }
@@ -487,6 +498,85 @@ struct Import {
         });
     }
     ~Import() {
+        if (worker.joinable()) worker.join();
+    }
+};
+
+// The game's shaders prepared for this PC's graphics card before it starts (the SDK's runtime/gpu/pipeline_cache.h):
+// every pipeline the game draws with is listed (the release's pipelines.list, and the player's own in cache/shaders),
+// and made for a card and driver once; the stamp beside them says which. On a first run, another card or a new
+// driver, Play runs the game with --prepare-shaders first, which makes them all on every core and ends, so no room's
+// first frame waits for one (each took 10-25 ms, a hitch). Its progress is in cache/shaders/prepare.txt
+struct Prepare {
+    std::atomic<bool> running{false};
+    std::atomic<uint32_t> done{0}, total{0};
+    std::atomic<bool> skip{false};
+    std::thread worker;
+
+    static fs::path CacheDir() {
+        if (const wchar_t* v = _wgetenv(L"XBE_SHADER_CACHE"); v && *v) return v;
+        return ExeDir() / "cache" / "shaders";
+    }
+    // whether the card's pipelines need making: the stamp missing or for another card, driver or release list
+    static bool Needed(const Gpu& gpu) {
+        if (gpu.identity.empty() || GetEnvironmentVariableW(L"CV_NO_PREPARE", nullptr, 0)) return false;
+        std::error_code ec;
+        fs::path shipped = ExeDir() / "pipelines.list", own = CacheDir() / "pipelines.list";
+        bool any = fs::exists(shipped, ec) || fs::exists(own, ec);
+        if (!any) return false;  // nothing listed yet: the game lists them as it draws
+        uint64_t n = fs::file_size(shipped, ec);
+        std::string want = gpu.identity + "\nlist " + std::to_string(ec ? 0 : n) + "\n", have;
+        if (FILE* f = _wfopen((CacheDir() / "pipelines.stamp").c_str(), L"rb")) {
+            char buf[256];
+            size_t got = std::fread(buf, 1, sizeof(buf), f);
+            have.assign(buf, got);
+            std::fclose(f);
+        }
+        return have != want;
+    }
+
+    void Start(const fs::path& exe) {
+        if (running) return;
+        if (worker.joinable()) worker.join();
+        running = true;
+        skip = false;
+        done = total = 0;
+        worker = std::thread([this, exe] {
+            std::wstring cmd = L"\"" + exe.wstring() + L"\" --prepare-shaders";
+            STARTUPINFOW si{sizeof(si)};
+            PROCESS_INFORMATION pi{};
+            if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+                                nullptr, exe.parent_path().c_str(), &si, &pi)) {
+                running = false;
+                return;
+            }
+            CloseHandle(pi.hThread);
+            fs::path progress = CacheDir() / "prepare.txt";
+            for (;;) {
+                DWORD w = WaitForSingleObject(pi.hProcess, 100);
+                if (FILE* f = _wfopen(progress.c_str(), L"rb")) {
+                    unsigned d = 0, t = 0;
+                    if (std::fscanf(f, "%u %u", &d, &t) == 2) {
+                        done = d;
+                        total = t;
+                    }
+                    std::fclose(f);
+                }
+                if (w == WAIT_OBJECT_0) break;
+                // skipped: the game makes the rest as it runs (in the background, before most are drawn)
+                if (skip) {
+                    TerminateProcess(pi.hProcess, 1);
+                    WaitForSingleObject(pi.hProcess, 2000);
+                    break;
+                }
+            }
+            CloseHandle(pi.hProcess);
+            running = false;
+        });
+    }
+    float Fraction() const { return total ? std::min(1.0f, float(done) / float(total)) : 0.0f; }
+    ~Prepare() {
+        skip = true;
         if (worker.joinable()) worker.join();
     }
 };
@@ -1880,9 +1970,24 @@ private:
 
         ImGui::SetCursorScreenPos(a + ImVec2(S(30), h - S(26) - S(54)));
         bool keep = true, ready = files_.Playable();
-        ImGui::BeginDisabled(!ready || import_.running);
-        if (Button(T("Play"), {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
-        ImGui::EndDisabled();
+        if (prepare_.running) {
+            // the shaders being prepared, then the game: the bar where Play was, and a way past it
+            uint32_t done = prepare_.done, total = prepare_.total;
+            std::string bar = total ? F("Preparing shaders for your graphics card...  {} / {}",
+                                        {std::to_string(done), std::to_string(total)})
+                                    : T("Preparing shaders for your graphics card...");
+            ImGui::ProgressBar(prepare_.Fraction(), {S(460), S(54)}, bar.c_str());
+            ImGui::SameLine(0, S(14));
+            if (Button(T("Skip"), {0, S(54)}, Kind::Secondary)) prepare_.skip = true;
+        } else {
+            if (play_after_prepare_) {
+                play_after_prepare_ = false;
+                keep = Launch();
+            }
+            ImGui::BeginDisabled(!ready || import_.running);
+            if (Button(T("Play"), {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
+            ImGui::EndDisabled();
+        }
         if (!ready) {
             ImGui::SameLine(0, S(22));
             if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = kFiles;
@@ -1891,6 +1996,7 @@ private:
         ImVec2 end = ImGui::GetItemRectMax();
         ImGui::SetCursorScreenPos({end.x + S(20), end.y - S(54) * 0.5f - g_semi->FontSize * 0.5f});
         if (!UsedGpu().d3d12) Status(kIconWarn, kRed, T("No Direct3D 12"));
+        else if (prepare_.running) Status(kIconCheck, kGreen, T("Once, for this card and driver"));
         else if (ready) Status(kIconCheck, kGreen, T("Ready to play"));
         else if (!files_.exe) Status(kIconWarn, kRed, T("Castlevania.exe is missing"));
         else Status(kIconWarn, kAmber, T("Game files needed"));
@@ -2558,6 +2664,17 @@ private:
             Note(T("Could not write the settings file"));
             return true;
         }
+        // a first run, another card or a new driver: the shaders prepared first, then the game (HomePage)
+        if (Prepare::Needed(UsedGpu())) {
+            prepare_.Start(ExeDir() / kGameExe);
+            play_after_prepare_ = true;
+            return true;
+        }
+        return Launch();
+    }
+
+    // the game started; false: the launcher closes (unless kept open)
+    bool Launch() {
         fs::path exe = ExeDir() / kGameExe;
         std::wstring cmd = L"\"" + exe.wstring() + L"\"";
         STARTUPINFOW si{sizeof(si)};
@@ -2617,6 +2734,8 @@ private:
     Picture logo_, crest_;
     fs::path logo_file_;
     Import import_;
+    Prepare prepare_;
+    bool play_after_prepare_ = false;
     std::vector<Res> modes_;
     FrameGenDownload fg_download_;
     std::string status_, saved_, shown_language_;
