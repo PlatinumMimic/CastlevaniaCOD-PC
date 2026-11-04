@@ -1,0 +1,147 @@
+{
+  "name": "sprint",
+  "after": "newgame.json",
+  "env": {
+    "XBE_VIRTUAL_PAD": "1"
+  },
+  "note": "Hector's sprint (keyboard.cpp, game/hooks.cpp), by a controller as SDL reads one (the virtual controller, so the PS2 layout's swaps apply too: --set button_layout=1): his walk at its 18.519 a frame (telemetry player.speed), L3 clicked while he walks makes it 1.5 times that, a turn of the stick keeps it, letting go of the stick ends it, 2x, set off; L3 with R3 is the settings menu and no sprint. Then at the Executioner of 5.2: L3 locks on to nothing (the game has no use of its own for it), Lock-On ON/OFF does (Black and the right trigger both, which is it in either layout).",
+  "steps": [
+    {
+      "press": "0:set=sprint=150,0f:wait:10f",
+      "expect": [
+        "sprint.setting == 150",
+        "not sprint.active"
+      ]
+    },
+    {
+      "press": "0f:lsd:20f",
+      "note": "his walk",
+      "expect": [
+        "abs(player.speed - 18.519) < 0.05",
+        "not sprint.active"
+      ]
+    },
+    {
+      "press": "0f:lsd:30f,3f:l3:4f",
+      "shot": "sprint",
+      "note": "L3 clicked while walking",
+      "expect": [
+        "sprint.active",
+        "abs(player.speed - 27.778) < 0.05"
+      ]
+    },
+    {
+      "press": "0f:lsu:30f",
+      "note": "turned round, still sprinting",
+      "expect": [
+        "sprint.active",
+        "abs(player.speed - 27.778) < 0.05"
+      ]
+    },
+    {
+      "press": "0f:wait:20f",
+      "note": "the stick let go",
+      "expect": [
+        "not sprint.active"
+      ]
+    },
+    {
+      "press": "0f:lsd:20f",
+      "note": "a walk again",
+      "expect": [
+        "abs(player.speed - 18.519) < 0.05",
+        "not sprint.active"
+      ]
+    },
+    {
+      "press": "0:set=sprint=200,0f:lsu:30f,3f:l3:4f",
+      "note": "2x",
+      "expect": [
+        "sprint.active",
+        "abs(player.speed - 37.038) < 0.05"
+      ]
+    },
+    {
+      "press": "0f:wait:20f"
+    },
+    {
+      "press": "0:set=sprint=0,0f:lsd:30f,3f:l3:4f",
+      "note": "off: L3 does nothing",
+      "expect": [
+        "not sprint.active",
+        "abs(player.speed - 18.519) < 0.05"
+      ]
+    },
+    {
+      "press": "0:set=sprint=150,0f:wait:20f"
+    },
+    {
+      "press": "0f:lsu:20f,3f:l3+r3:5f,25f:wait:20f",
+      "note": "both sticks: the settings menu, no sprint",
+      "expect": [
+        "settings_menu",
+        "not sprint.active"
+      ]
+    },
+    {
+      "press": "0f:l3+r3:5f,10f:wait:20f",
+      "expect": [
+        "not settings_menu"
+      ]
+    },
+    {
+      "press": "0:warp=5.2,10f:wait:20f",
+      "note": "the corridor of the first enemy, the Executioner"
+    },
+    {
+      "until": "room == 2 and player.active and not loading and not cutscene",
+      "timeout": 30,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0:walk=-17000/-20300/150:8000",
+      "note": "near him: he breaks through the wall"
+    },
+    {
+      "until": "not modal and not cutscene and player.active",
+      "poll": "30f:wait",
+      "timeout": 30
+    },
+    {
+      "press": "0f:rsl:90f",
+      "shot": "turned",
+      "note": "the camera turned: the Executioner to the left"
+    },
+    {
+      "press": "0f:l3:5f,5f:wait:20f",
+      "shot": "l3",
+      "note": "L3 at him: no lock-on",
+      "expect": [
+        "not wide.marker or wide.marker.ago > 3"
+      ]
+    },
+    {
+      "press": "0f:black+rt:5f,5f:wait:10f",
+      "shot": "locked",
+      "note": "Lock-On ON/OFF (Black, or in the PS2 layout the right trigger): locked on",
+      "expect": [
+        "wide.marker.ago < 3"
+      ]
+    },
+    {
+      "press": "0f:black+rt:5f,5f:wait:10f",
+      "expect": [
+        "wide.marker.ago > 3"
+      ]
+    }
+  ]
+}

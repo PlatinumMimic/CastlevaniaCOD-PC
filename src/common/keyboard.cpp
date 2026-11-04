@@ -82,6 +82,9 @@ bool BotBusy();
 void BotStop();
 void BotPad(input::Pad& p);
 
+// Hector's sprint speed, in percent of his walk: 0 off, 125, 150, 200 (the settings file's sprint; game/hooks.cpp)
+uint32_t g_sprint = 0;
+
 namespace {
 
 HWND g_hwnd = nullptr;
@@ -499,6 +502,42 @@ extern bool g_invert_camera_y;       // menu.cpp
 extern uint32_t g_button_layout;     // texpack.cpp
 std::atomic<bool> g_closing{false};  // the window is closing: a paused game lets go
 
+// Hector's sprint (game/hooks.cpp): a click of L3, the left stick pressed in, or of Left Shift starts it; the move
+// stick let go for a moment (10 frames, a sixth of a second, so a turn through the middle keeps it) ends it, as do the
+// settings menu and the sprint set off. L3 with R3 is the settings menu's, not a sprint's. The game has no use of its own for
+// either stick's click, in either button layout
+std::atomic<bool> g_sprinting{false};
+
+// the move stick pushed past the game's own dead zone (16 of the PS2's 128)
+bool Moving(const input::Pad& p) {
+    constexpr float kMove = 4500;
+    return float(p.lx) * float(p.lx) + float(p.ly) * float(p.ly) > kMove * kMove;
+}
+
+void Sprint(const input::Pad& p, bool menu) {
+    static std::atomic<bool> l3_was{false}, shift_was{false};
+    static std::atomic<int64_t> idle_since{-1};  // the frame the stick has been at rest since, -1 moving
+    bool l3 = (p.buttons & kL3) != 0, r3 = (p.buttons & kR3) != 0;
+    bool shift = Focused() && Down(VK_LSHIFT);
+    bool clicked = (!l3_was.exchange(l3) && l3 && !r3) | (!shift_was.exchange(shift) && shift);
+    if (!g_sprint || menu || (l3 && r3)) {
+        g_sprinting = false;
+        return;
+    }
+    int64_t now = int64_t(d3d::Swaps());
+    if (clicked) {
+        g_sprinting = true;
+        idle_since = -1;
+    }
+    if (Moving(p)) {
+        idle_since = -1;
+    } else {
+        int64_t was = -1;
+        idle_since.compare_exchange_strong(was, now);
+        if (was >= 0 && now - was > 10) g_sprinting = false;
+    }
+}
+
 // the game's rumble, a frame at a time (KeyboardRumble)
 struct Motors {
     uint16_t want[2] = {}, sent[2] = {};  // as the game asks for them, as the controller has them
@@ -569,6 +608,7 @@ void KeyboardPad(int port, input::Pad& p) {
         if (l.running && l.goals && !MenuOpen()) BotPad(to);
     }
     if (input::VirtualOn()) input::VirtualSet(scripted);
+    Sprint(p, MenuOpen());
     // both sticks clicked in together: the menu, from a controller or a test's script; once a press, of the threads the
     // game reads the pad on (each sees it, one turns it)
     static std::atomic<bool> sticks{false};
@@ -622,3 +662,7 @@ void KeyboardRumble(int port, uint16_t& left, uint16_t& right) {
     left = m.sent[0];  // the controller's as it is: an unchanged rumble is not sent again
     right = m.sent[1];
 }
+
+// Hector sprinting now (game/hooks.cpp, telemetry.cpp), and how much faster than his walk
+bool SprintOn() { return g_sprint && g_sprinting.load(std::memory_order_relaxed); }
+float SprintFactor() { return float(std::min<uint32_t>(g_sprint, 300)) / 100.0f; }

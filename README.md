@@ -83,6 +83,8 @@ On top of Pazzi7054's port:
 - **HDR** (Windows) - fire, magic and light brighter than the rest on an HDR display. By Calm-Consideration41.
 - **16:10 widescreen** - for the Steam Deck and 16:10 monitors, beside 16:9. By Calm-Consideration41.
 - **The settings menu by controller** - LB and RB turn its pages, B and Start close it. By Calm-Consideration41.
+- **Sprint** - a click of L3 (the left stick pressed in) or of Left Shift while Hector walks, and he sprints until the
+  stick is let go: 1.25, 1.5 or 2 times his walk, off by default. Only his walk speeds up.
 - **Crazy mode and Trevor from the start** - the name codes `@CRAZY` and `@TREVOR` work without beating the game first.
 - **Launcher** - in the game's own look, with the title logo from your HD pack. It chooses the graphics card and says
   whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
@@ -373,6 +375,11 @@ Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
   motor's "on" (1 of 255) that the game sends right after the large one's speed left nearly nothing; on the console
   the large one's still got out first, as its requests were slower. Here the large motor drives the left (heavy)
   motor and the small one the right, and the controller gets the motors as each frame leaves them.
+- **Sprint** - Click the left stick in (L3), or press Left Shift, while Hector walks: he sprints until you let go of
+  the stick, at 1.25, 1.5 or 2 times his walk (off by default; the launcher's or the in-game menu's Controls page;
+  `sprint = 150`). Only his walk speeds up: his guarded walk, the dodge, jumps and attacks, every enemy and the game's
+  clock keep theirs, and his walk's animation plays at its own pace. The game has no use of its own for the stick's
+  click, in either button layout; L3 with R3 is still the settings menu.
 
 ### Keyboard
 The keyboard plays as player 1 while the window is in front:
@@ -389,6 +396,7 @@ The keyboard plays as player 1 while the window is in front:
 | Z / C | white / black |
 | Enter / Backspace | Start / Back |
 | numpad 8 2 4 6 | d-pad |
+| Left Shift | sprint (L3 on a controller) |
 | F10 (changeable) | settings menu (L3 + R3 on a controller) |
 
 ### Miscellaneous

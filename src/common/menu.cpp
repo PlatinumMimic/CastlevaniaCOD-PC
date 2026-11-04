@@ -54,6 +54,7 @@ extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns tow
 extern bool g_hd_movies;         // movies.cpp: a movie pack's HD movies drawn
 extern uint32_t g_movie_view;    // movies.cpp: 0 the game's 4:3, 1 the picture whole as large as it goes, 2 filled
 extern uint32_t g_button_layout;    // texpack.cpp
+extern uint32_t g_sprint;           // keyboard.cpp: Hector's sprint, percent of his walk (0 off)
 extern bool g_texture_pack;         // texpack.cpp: an HD texture pack's pictures drawn
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
 extern std::atomic<bool> g_wide_trace_frame;  // widescreen.cpp: log the next frame's draws
@@ -466,6 +467,10 @@ void ControlsTab(bool& save) {
         save |= Check("##invx", &g_invert_camera_x);
         Row("Invert camera up / down", "The right stick (and the arrow keys) move the camera the other way up and down.");
         save |= Check("##invy", &g_invert_camera_y);
+        Row("Sprint", "Click the left stick in (L3), or press Left Shift, while Hector walks: he sprints at this speed "
+                      "until you let go of the stick. Only his walk is faster: enemies, his dodge, jumps and attacks "
+                      "keep their speed.");
+        save |= Choice<uint32_t>("##sprint", g_sprint, {0, 125, 150, 200}, {"Off", "1.25x", "1.5x", "2x"});
         ImGui::EndTable();
     }
     ImGui::Spacing();
@@ -476,7 +481,7 @@ void ControlsTab(bool& save) {
         {"J", "X (attack)"},           {"L", "B"},                 {"I", "Y"},
         {"Q / E", "Left / right trigger"}, {"Z / C", "White / black"}, {"Enter", "Start"},
         {"Backspace", "Back"},         {"Numpad 8 2 4 6", "D-pad"},
-        {"L3 + R3 (controller)", "This menu"},
+        {"Left Shift", "Sprint (L3 on a controller)"}, {"L3 + R3 (controller)", "This menu"},
     };
     if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
         ImGui::TableNextRow();
@@ -540,6 +545,7 @@ void Defaults() {
     g_fov = 100;
     g_draw_distance = g_fog_distance = 100;
     g_hud_edges = true;
+    g_sprint = 0;
     g_menu_spread = true;
     g_hd_movies = true;
     g_texture_pack = true;

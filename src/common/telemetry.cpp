@@ -137,6 +137,8 @@ void Player(Json& j) {
         Read(cv::kRecords + record * 0x1210 + 0x2C, yaw) && std::isfinite(yaw)) {
         j.Vec("pos", pos);
         j.Num("yaw", yaw);
+        float speed = 0;  // a frame, as his move set it (game/hooks.cpp)
+        if (Read(cv::kRecords + record * 0x1210 + 0x4C, speed) && std::isfinite(speed)) j.Num("speed", speed);
     }
     struct Stat {
         const char* name;
@@ -183,6 +185,8 @@ std::string WideJson();  // widescreen.cpp
 std::string ViewJson();  // game/view.cpp
 std::string TexturePackJson();  // texpack.cpp
 std::string MoviesJson();       // movies.cpp
+bool SprintOn();                // keyboard.cpp
+extern uint32_t g_sprint;       // keyboard.cpp
 bool MenuOpen();         // menu.cpp
 
 // for the bot (bot.cpp), each frame: Hector's position and facing, the camera's heading (the direction stick up
@@ -325,6 +329,8 @@ std::string GameStateJson() {
         out += b;
     }
     out += MenuOpen() ? ",\"settings_menu\":true" : ",\"settings_menu\":false";
+    // Hector's sprint: the setting (percent of his walk, 0 off) and whether he sprints (keyboard.cpp)
+    out += ",\"sprint\":{\"setting\":" + std::to_string(g_sprint) + ",\"active\":" + (SprintOn() ? "true" : "false") + "}";
     // the virtual controller (XBE_VIRTUAL_PAD): plugged in, taken by a port, the motors the game drove it with
     if (input::VirtualOn()) {
         input::VirtualReport v = input::VirtualState();

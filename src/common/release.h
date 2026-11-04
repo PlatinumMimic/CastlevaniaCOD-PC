@@ -28,6 +28,8 @@
 #define CV_NAME_CODE CV_PICK(002F7030, 002F87E0)        // a new game's name looked up in the name codes (hooks.cpp)
 #define CV_MAX_HP CV_PICK(00060010, 000601E0)           // an actor's max HP (enemies.cpp)
 #define CV_CAMERA_UPDATE CV_PICK(003623B0, 00364330)    // the camera update each frame, where a warp is sent (warp.cpp)
+#define CV_WALK_STICK CV_PICK(0032FB80, 003316E0)       // an actor's walk command by its stick (hooks.cpp, sprint)
+#define CV_WALK CV_PICK(0032FAC0, 00331620)             // an actor's walk command, its course set (hooks.cpp, sprint)
 #define CV_SCENE_FREE CV_PICK(002F6AB0, 002F8130)       // no scene change locked or waiting
 #define CV_SET_ROOM CV_PICK(002F6950, 002F7FD0)         // the room a change goes to
 #define CV_SET_FLAG CV_PICK(002F62E0, 002F7960)         // a game flag

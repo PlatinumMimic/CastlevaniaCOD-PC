@@ -196,6 +196,11 @@ def tests():
         scenario("vpad", "--set", "button_layout=1", test="vpad-ps2"),
         scenario("menu", quick=True),
         scenario("menu-pad"),
+        # Hector's sprint, by a controller in both button layouts and both releases, and by the keyboard (Linux)
+        scenario("sprint", quick=True),
+        scenario("sprint", "--set", "button_layout=1", test="sprint-ps2"),
+        scenario("sprint", *eu, test="sprint-eu"),
+        scenario("sprint-keys", platforms=["linux"]),
         # 1.8.0: ambient occlusion with no anti-aliasing, the renderer's own TAA, 16:10 at the Steam Deck's size, an HD
         # movie pack, a texture pack's material maps; anti-aliasing, upscaling and frame generation with AMD's and
         # NVIDIA's files (Windows)

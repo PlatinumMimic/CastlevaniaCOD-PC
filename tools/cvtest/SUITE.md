@@ -42,6 +42,7 @@ his wall). After a test fails the next plays a fresh game. `--alone` plays every
 | Field of view, draw distance, fog, the rampart's sky | `qol` | the field of view drawn wider at 150%, far plane and fog 4x with far view and back (telemetry `view`), the sky's cards in the room's own fog |
 | Inverted camera | `qol` | the right stick turns the camera the other way |
 | Rumble on both motors | `qol`, `vpad` | the game's requests in a fight (`CV_RUMBLE_TRACE`), and both motors reaching an SDL controller |
+| Hector's sprint | `sprint`, `sprint-ps2`, `sprint-eu`, `sprint-keys` (*Linux*) | his walk at 18.519 a frame (telemetry `player.speed`); L3 clicked while walking: 1.5 times it, kept through a turn, ended by letting go of the stick; 2x; off; L3 + R3 the menu and no sprint; at the Executioner of 5.2, L3 locks on to nothing while Lock-On ON/OFF does; by a controller as SDL reads one, in both button layouts and both releases; Left Shift on the keyboard |
 | PS2 stick response | `stick` | a small tilt walks on PS2 and not on Xbox; a tilt near right walks straight right on Xbox only |
 | PS2 button layout | `buttons-xbox`, `buttons-ps2`, `vpad-ps2` | the icons (asked of the judge); a controller's shoulders and triggers swapped |
 | Controllers (SDL) | `vpad`, `vpad-ps2` | a virtual controller read as a real one: buttons, sticks, the settings menu by both sticks, unplugged and plugged in again, rumble |

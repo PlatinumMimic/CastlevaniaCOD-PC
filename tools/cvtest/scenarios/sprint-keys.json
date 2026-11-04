@@ -1,0 +1,37 @@
+{
+  "name": "sprint-keys",
+  "after": "newgame.json",
+  "platforms": [
+    "linux"
+  ],
+  "note": "Hector's sprint by the keyboard: Left Shift pressed while he walks (W A S D) makes his walk 1.5 times its speed, until he stops. Linux only: on Windows the test would take the PC's own keyboard.",
+  "steps": [
+    {
+      "press": "0:set=sprint=150,0f:wait:10f"
+    },
+    {
+      "keys": "s",
+      "press": "0f:wait:20f",
+      "note": "S: his walk",
+      "expect": [
+        "abs(player.speed - 18.519) < 0.05",
+        "not sprint.active"
+      ]
+    },
+    {
+      "keys": "s+Shift_L",
+      "press": "0f:wait:30f",
+      "note": "S with Left Shift: a sprint",
+      "expect": [
+        "sprint.active",
+        "abs(player.speed - 27.778) < 0.05"
+      ]
+    },
+    {
+      "press": "0f:wait:20f",
+      "expect": [
+        "not sprint.active"
+      ]
+    }
+  ]
+}

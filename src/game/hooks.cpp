@@ -19,6 +19,8 @@
 
 extern bool g_lament_save;  // menu.cpp
 extern bool g_ps2_stick;    // menu.cpp
+bool SprintOn();            // keyboard.cpp
+float SprintFactor();       // keyboard.cpp
 
 namespace {
 
@@ -88,6 +90,48 @@ X86_FUNC(CV_HOOK(CV_PS2_MOTOR)) {
     std::memcpy(base + ctx.esp + 8, &left, 4);  // the arguments made over, as the original makes them
     std::memcpy(base + ctx.esp + 12, &right, 4);
     x86_icall(ctx, base, cv::kPadRumble);  // and its jump there
+}
+
+// Hector's sprint (keyboard.cpp: sprint, L3 or Left Shift). His walk is one of the game's actor commands: its handler
+// takes the command's data (its second argument), whose float at +0x14 is the speed, made a speed a frame through three
+// constants (18.519 at full tilt), and sets it as the actor's (the record's +0x4C, sub_0032DD50) through the move that
+// goes by the game's collision (sub_0032E770). Two handlers walk: by the stick, and on a course set. Called for
+// Hector's handle (the actor's +0x2C, cv::kPlayer's) while he sprints, they take that speed times the sprint's, the
+// data put back after. His guarded walk, the dodge, jumps and attacks have handlers and moves of their own, and every
+// other actor's walk is its own: none of them changes, nor does the game's clock
+struct SprintWalk {
+    uint8_t* base;
+    uint32_t at = 0;
+    float was = 0;
+    SprintWalk(const X86Context& ctx, uint8_t* b) : base(b) {
+        if (!SprintOn()) return;
+        uint32_t actor, data, handle, player;
+        std::memcpy(&actor, base + ctx.esp + 4, 4);
+        std::memcpy(&data, base + ctx.esp + 8, 4);
+        std::memcpy(&player, base + cv::kPlayer, 4);
+        if (!actor || !data || !player) return;
+        std::memcpy(&handle, base + actor + 0x2C, 4);
+        if (handle != player) return;
+        at = data + 0x14;
+        std::memcpy(&was, base + at, 4);
+        float faster = was * SprintFactor();
+        std::memcpy(base + at, &faster, 4);
+    }
+    ~SprintWalk() {
+        if (at) std::memcpy(base + at, &was, 4);
+    }
+};
+
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_WALK_STICK));
+X86_FUNC(CV_HOOK(CV_WALK_STICK)) {
+    SprintWalk sprint(ctx, base);
+    CV_ORIGINAL(CV_WALK_STICK)(ctx, base);
+}
+
+X86_EXTERN_FUNC(CV_ORIGINAL(CV_WALK));
+X86_FUNC(CV_HOOK(CV_WALK)) {
+    SprintWalk sprint(ctx, base);
+    CV_ORIGINAL(CV_WALK)(ctx, base);
 }
 
 // The Lament of Innocence bonus. The PS2 game looked on the memory card for a Lament of Innocence save (BASLUS-20733,
