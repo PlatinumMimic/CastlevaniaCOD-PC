@@ -4,7 +4,7 @@
   "platforms": [
     "linux"
   ],
-  "note": "Hector's sprint by the keyboard: Left Shift pressed while he walks (W A S D) makes his walk 1.5 times its speed, until he stops. Linux only: on Windows the test would take the PC's own keyboard.",
+  "note": "Hector's sprint by the keyboard: Left Shift pressed while he walks (W A S D) makes his walk 1.5 times its speed, its motion too, until he stops. Linux only: on Windows the test would take the PC's own keyboard.",
   "steps": [
     {
       "press": "0:set=sprint=150,0f:wait:10f"
@@ -24,7 +24,8 @@
       "note": "S with Left Shift: a sprint",
       "expect": [
         "sprint.active",
-        "abs(player.speed - 27.778) < 0.05"
+        "abs(player.speed - 27.778) < 0.05",
+        "384 in [player.pace0, player.pace1, player.pace2]"
       ]
     },
     {

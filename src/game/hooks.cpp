@@ -92,19 +92,78 @@ X86_FUNC(CV_HOOK(CV_PS2_MOTOR)) {
     x86_icall(ctx, base, cv::kPadRumble);  // and its jump there
 }
 
+// Hector's motions keep step with his sprint. His handle's object has his motion controller at +0x104, whose three
+// slots (0x4C each from its +0x28; his own when their +0x0C is his object's +0x80) play the motions he blends between:
+// +0x2C a motion's clock in 1/256 of its frames, +0x30 how far it goes a frame (256, the motion's own pace). While he
+// sprint-walks, the slot playing (its clock moved since his last walking frame) goes at the sprint's pace; it is put
+// back at once when he walks without sprinting, and by SprintFrame on a frame he does not walk at all, so no other
+// motion of his (an attack, the dodge) plays faster
+namespace {
+
+struct SprintPace {
+    uint32_t at = 0, was = 0, set = 0;  // a slot's pace changed: where, its value before, the one set
+};
+SprintPace g_paces[3];
+uint32_t g_clocks[3] = {};
+bool g_walked = false;  // Hector walked (a walk handler ran for him) since the last SprintFrame
+
+void PaceBack(uint8_t* base, SprintPace& p) {
+    if (!p.at) return;
+    uint32_t now;
+    std::memcpy(&now, base + p.at, 4);
+    if (now == p.set) std::memcpy(base + p.at, &p.was, 4);  // else the game has set it since
+    p = {};
+}
+
+void SprintMotions(uint8_t* base, uint32_t handle, bool sprint) {
+    g_walked = true;
+    uint32_t ctrl;
+    std::memcpy(&ctrl, base + handle + 0x104, 4);
+    for (int i = 0; i < 3; i++) {
+        SprintPace& p = g_paces[i];
+        uint32_t slot = ctrl + 0x28 + uint32_t(i) * 0x4C, owner = 0, clock = 0, pace = 0;
+        if (ctrl) std::memcpy(&owner, base + slot + 0x0C, 4);
+        if (!ctrl || owner != handle + 0x80 || !sprint) {
+            PaceBack(base, p);
+            if (ctrl && owner == handle + 0x80) std::memcpy(&g_clocks[i], base + slot + 0x2C, 4);
+            continue;
+        }
+        std::memcpy(&clock, base + slot + 0x2C, 4);
+        std::memcpy(&pace, base + slot + 0x30, 4);
+        bool playing = clock != g_clocks[i];
+        g_clocks[i] = clock;
+        if (p.at && pace != p.set) p = {};  // the game set the slot's pace again (a motion started): taken as its own
+        if (!playing) continue;
+        uint32_t want = uint32_t(float(p.at ? p.was : pace) * SprintFactor() + 0.5f);
+        if (p.at && p.set == want) continue;
+        if (!p.at) p = {slot + 0x30, pace, 0};
+        p.set = want;
+        std::memcpy(base + p.at, &want, 4);
+    }
+}
+
+}  // namespace
+
+// once a frame (warp.cpp's camera update): Hector's motions at their own pace again on a frame he did not walk
+void SprintFrame(uint8_t* base) {
+    if (!g_walked)
+        for (SprintPace& p : g_paces) PaceBack(base, p);
+    g_walked = false;
+}
+
 // Hector's sprint (keyboard.cpp: sprint, L3 or Left Shift). His walk is one of the game's actor commands: its handler
 // takes the command's data (its second argument), whose float at +0x14 is the speed, made a speed a frame through three
 // constants (18.519 at full tilt), and sets it as the actor's (the record's +0x4C, sub_0032DD50) through the move that
 // goes by the game's collision (sub_0032E770). Two handlers walk: by the stick, and on a course set. Called for
 // Hector's handle (the actor's +0x2C, cv::kPlayer's) while he sprints, they take that speed times the sprint's, the
-// data put back after. His guarded walk, the dodge, jumps and attacks have handlers and moves of their own, and every
-// other actor's walk is its own: none of them changes, nor does the game's clock
+// data put back after, and his walk's motion goes at that pace too (SprintMotions). His guarded walk, the dodge, jumps
+// and attacks have handlers and moves of their own, and every other actor's walk is its own: none of them changes, nor
+// does the game's clock
 struct SprintWalk {
     uint8_t* base;
     uint32_t at = 0;
     float was = 0;
     SprintWalk(const X86Context& ctx, uint8_t* b) : base(b) {
-        if (!SprintOn()) return;
         uint32_t actor, data, handle, player;
         std::memcpy(&actor, base + ctx.esp + 4, 4);
         std::memcpy(&data, base + ctx.esp + 8, 4);
@@ -112,6 +171,9 @@ struct SprintWalk {
         if (!actor || !data || !player) return;
         std::memcpy(&handle, base + actor + 0x2C, 4);
         if (handle != player) return;
+        bool sprint = SprintOn();
+        SprintMotions(base, handle, sprint);
+        if (!sprint) return;
         at = data + 0x14;
         std::memcpy(&was, base + at, 4);
         float faster = was * SprintFactor();

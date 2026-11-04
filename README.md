@@ -377,9 +377,9 @@ Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
   motor and the small one the right, and the controller gets the motors as each frame leaves them.
 - **Sprint** - Click the left stick in (L3), or press Left Shift, while Hector walks: he sprints until you let go of
   the stick, at 1.25, 1.5 or 2 times his walk (off by default; the launcher's or the in-game menu's Controls page;
-  `sprint = 150`). Only his walk speeds up: his guarded walk, the dodge, jumps and attacks, every enemy and the game's
-  clock keep theirs, and his walk's animation plays at its own pace. The game has no use of its own for the stick's
-  click, in either button layout; L3 with R3 is still the settings menu.
+  `sprint = 150`). Only his walk speeds up, its animation with it, so his steps keep up with the ground: his guarded
+  walk, the dodge, jumps and attacks, every enemy and the game's clock keep their pace. The game has no use of its own
+  for the stick's click, in either button layout; L3 with R3 is still the settings menu.
 
 ### Keyboard
 The keyboard plays as player 1 while the window is in front:

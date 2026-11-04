@@ -4,7 +4,7 @@
   "env": {
     "XBE_VIRTUAL_PAD": "1"
   },
-  "note": "Hector's sprint (keyboard.cpp, game/hooks.cpp), by a controller as SDL reads one (the virtual controller, so the PS2 layout's swaps apply too: --set button_layout=1): his walk at its 18.519 a frame (telemetry player.speed), L3 clicked while he walks makes it 1.5 times that, a turn of the stick keeps it, letting go of the stick ends it, 2x, set off; L3 with R3 is the settings menu and no sprint. Then at the Executioner of 5.2: L3 locks on to nothing (the game has no use of its own for it), Lock-On ON/OFF does (Black and the right trigger both, which is it in either layout).",
+  "note": "Hector's sprint (keyboard.cpp, game/hooks.cpp), by a controller as SDL reads one (the virtual controller, so the PS2 layout's swaps apply too: --set button_layout=1): his walk at its 18.519 a frame (telemetry player.speed), L3 clicked while he walks makes it 1.5 times that and his walk's motion plays at that pace too (his motion slot's 256 a frame made 384, player.pace0 to 2), an attack meanwhile at its own (the game sets other paces of its own: 25 in its recovery, 512 walking out of it), a turn of the stick keeps it, letting go of the stick ends it, 2x, set off; L3 with R3 is the settings menu and no sprint. Then at the Executioner of 5.2: L3 locks on to nothing (the game has no use of its own for it), Lock-On ON/OFF does (Black and the right trigger both, which is it in either layout).",
   "steps": [
     {
       "press": "0:set=sprint=150,0f:wait:10f",
@@ -18,7 +18,9 @@
       "note": "his walk",
       "expect": [
         "abs(player.speed - 18.519) < 0.05",
-        "not sprint.active"
+        "not sprint.active",
+        "256 in [player.pace0, player.pace1, player.pace2]",
+        "384 not in [player.pace0, player.pace1, player.pace2]"
       ]
     },
     {
@@ -27,7 +29,8 @@
       "note": "L3 clicked while walking",
       "expect": [
         "sprint.active",
-        "abs(player.speed - 27.778) < 0.05"
+        "abs(player.speed - 27.778) < 0.05",
+        "384 in [player.pace0, player.pace1, player.pace2]"
       ]
     },
     {
@@ -35,15 +38,28 @@
       "note": "turned round, still sprinting",
       "expect": [
         "sprint.active",
-        "abs(player.speed - 27.778) < 0.05"
+        "abs(player.speed - 27.778) < 0.05",
+        "384 in [player.pace0, player.pace1, player.pace2]"
+      ]
+    },
+    {
+      "press": "0f:lsd:8f,0f:x:4f",
+      "note": "an attack while sprinting: at its own pace",
+      "expect": [
+        "384 not in [player.pace0, player.pace1, player.pace2]"
       ]
     },
     {
       "press": "0f:wait:20f",
       "note": "the stick let go",
       "expect": [
-        "not sprint.active"
+        "not sprint.active",
+        "384 not in [player.pace0, player.pace1, player.pace2]"
       ]
+    },
+    {
+      "press": "0f:wait:60f",
+      "note": "the attack's recovery over (60 frames, as without the sprint)"
     },
     {
       "press": "0f:lsd:20f",
@@ -58,7 +74,8 @@
       "note": "2x",
       "expect": [
         "sprint.active",
-        "abs(player.speed - 37.038) < 0.05"
+        "abs(player.speed - 37.038) < 0.05",
+        "512 in [player.pace0, player.pace1, player.pace2]"
       ]
     },
     {
@@ -69,7 +86,8 @@
       "note": "off: L3 does nothing",
       "expect": [
         "not sprint.active",
-        "abs(player.speed - 18.519) < 0.05"
+        "abs(player.speed - 18.519) < 0.05",
+        "384 not in [player.pace0, player.pace1, player.pace2]"
       ]
     },
     {

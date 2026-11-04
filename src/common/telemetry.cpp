@@ -140,6 +140,16 @@ void Player(Json& j) {
         float speed = 0;  // a frame, as his move set it (game/hooks.cpp)
         if (Read(cv::kRecords + record * 0x1210 + 0x4C, speed) && std::isfinite(speed)) j.Num("speed", speed);
     }
+    // his motion controller's three slots: each one's pace, 256 a motion's own (game/hooks.cpp, the sprint); 0 for a
+    // slot that is not his
+    uint32_t ctrl = 0;
+    if (h && Read(h + 0x104, ctrl) && ctrl) {
+        for (int i = 0; i < 3; i++) {
+            uint32_t slot = ctrl + 0x28 + uint32_t(i) * 0x4C, owner = 0, pace = 0;
+            bool his = Read(slot + 0x0C, owner) && owner == h + 0x80 && Read(slot + 0x30, pace);
+            j.Int(i == 0 ? "pace0" : i == 1 ? "pace1" : "pace2", his ? int32_t(pace) : 0);
+        }
+    }
     struct Stat {
         const char* name;
         uint32_t va;
