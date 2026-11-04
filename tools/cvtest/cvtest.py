@@ -651,8 +651,10 @@ class Game:
                     press_enter(h)
                 elif kind == "#32770":
                     self.dialog = dialog_text(h) or "a message box"
-                else:
+                elif kind in ("game", "Castlevania"):  # the game's own (app::kGame.name; not its Splash)
                     self.hwnd = h
+                # another window its processes show (one of the first start's build tools) is not the game's: an
+                # EU install once took one for it, 24 s into the build, and Start was never pressed
             time.sleep(0.5 if self.first_start is not None else 0.1)
 
     def alive(self):
