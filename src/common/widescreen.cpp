@@ -17,7 +17,9 @@
 // its castle. And for a window over the world while one is up (ModalUp: naming an Innocent Devil), before the HUD:
 // drawn over the 3D world as six pieces each half the frame wide, its dark edges stood as a 4:3 box in the middle of
 // the screen. A tip is one picture over the whole frame instead, its words in it: it goes to the sides as kSides do,
-// its middle as it was and its edges' black reaching the screen's (its texture clamped past them).
+// its middle as it was and its edges' black reaching the screen's: its texture read clamped past them (Clamp), as
+// wrapped (the program makes its coordinates, so the renderer cannot tell they stay in it) its far side showed at
+// each edge, the "Tip" heading again at the right.
 //
 // HUD at the edges (hud_edges): the HUD's draws, from the first of the frame that takes one of its textures (kHud: the
 // sheet of the health bar's frame, digits and icons, the bar's fill, the icon at the bottom left) to the frame pass, go
@@ -187,6 +189,7 @@ public:
 
     void BeginDraw(const gpu::State& s) override {
         d_ = {};
+        clamp_ = false;
         // adds to what is there (a glow, a spark): blending on, the target's colour kept whole
         d_.additive = s.simple[gpu::kMBlendEnable >> 2] && s.simple[gpu::kMDestBlend >> 2] == 1;
         // for the trace (CV_WIDE_TRACE): how it blends, whether it writes depth
@@ -335,6 +338,8 @@ public:
     // the 3D world drawn into the frame takes anti-aliasing's sub-pixel offset (the SDK's Jitter); its 2D, the HUD,
     // menus and the frame pass, never
     bool Jitter() override { return back_buffer_ && d_.world; }
+    // a tip's page to the screen's sides (Constants): its texture read clamped, its edges' black past them
+    bool Clamp() override { return clamp_; }
 
     // ray tracing's lights drawn flat (the SDK's ScreenLight): a flame, a torch's fire, a glow the game draws as a 2D
     // sprite adding its light over the 3D world (before its UI), which ray tracing puts back into the room by its depth
@@ -487,6 +492,7 @@ public:
             for (int i = 0; i < d_.ntex; i++) TexturePackUsed(d_.texs[i], d_.world, d_.skinned, d_.additive);
         bool sides = squeeze && d_.whole && d_.textured && !d_.target && d_.sampled && !d_.u.Empty() &&
                      (page || std::find(std::begin(kSides), std::end(kSides), d_.name) != std::end(kSides));
+        clamp_ = page && sides;
         ext[0] = squeeze ? Squeeze() : 1.0f;
         ext[1] = menu.strip ? menu.left : back_buffer_ && d_.target ? d_.stretch : 1.0f;
         // a fade or tint over the whole frame, the whole height too: to the screen's edges exactly
@@ -1120,6 +1126,7 @@ private:
     bool hud_ = false;       // the frame's HUD has begun
     bool hud_free_ = false;  // the HUD may go to the edges this frame
     bool modal_ = false;     // a window is up over the world this frame (ModalUp)
+    bool clamp_ = false;     // the draw at hand reads its texture clamped (Clamp)
     bool card_free_ = false;  // an area's name card may
     bool menu_ = false;       // the pause menu is up this frame
     std::vector<MenuRect> menu_rects_, menu_before_;  // the pause menu's draws, this frame's and the frame before's
