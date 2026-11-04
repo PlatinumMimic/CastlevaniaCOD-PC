@@ -655,7 +655,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..e9be537 100644
+index fe65837..a1f4ab4 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,13 +17,16 @@
@@ -3128,7 +3128,7 @@ index fe65837..e9be537 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +4369,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +4369,46 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -3145,7 +3145,8 @@ index fe65837..e9be537 100644
      if (views != binds_.views) cl_->SetGraphicsRootDescriptorTable(2, Gpu(srv_heap_.Get(), views, srv_inc_));
      binds_.views = views;
 -    uint32_t samplers = EnsureStageSamplers(s, stages, AnyStageWraps(s) && UnitTexcoords(a));
-+    uint32_t samplers = EnsureStageSamplers(s, stages, AnyStageWraps(s) && UnitTexcoords(a) && TexcoordsAsGiven(s, a));
++    bool clamp = AnyStageWraps(s) && ((ext_ && ext_->Clamp()) || (UnitTexcoords(a) && TexcoordsAsGiven(s, a)));
++    uint32_t samplers = EnsureStageSamplers(s, stages, clamp);
      if (samplers != binds_.samplers) cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), samplers, smp_inc_));
      binds_.samplers = samplers;
  }
@@ -3185,7 +3186,7 @@ index fe65837..e9be537 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2676,21 +4452,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
+@@ -2676,21 +4453,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
      cl_->IASetVertexBuffers(0, a.buffer_count, vbv);
  }
  
@@ -3215,7 +3216,7 @@ index fe65837..e9be537 100644
  }
  
  // calls the extension's EndDraw on every return from Draw once made
-@@ -2808,6 +4585,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +4586,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -3223,7 +3224,7 @@ index fe65837..e9be537 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +4593,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +4594,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -3236,7 +3237,7 @@ index fe65837..e9be537 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +4611,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +4612,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -3325,7 +3326,7 @@ index fe65837..e9be537 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +4700,233 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +4701,233 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -3564,7 +3565,7 @@ index fe65837..e9be537 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +4942,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +4943,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -3580,7 +3581,7 @@ index fe65837..e9be537 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2925,7 +4987,7 @@ ID3D12PipelineState* D3D12Backend::EnsureClearPipeline(DXGI_FORMAT rtv, uint8_t
+@@ -2925,7 +4988,7 @@ ID3D12PipelineState* D3D12Backend::EnsureClearPipeline(DXGI_FORMAT rtv, uint8_t
      if (!vs || !ps) return nullptr;
      D3D12_GRAPHICS_PIPELINE_STATE_DESC d = FullScreenPipelineDesc(vs, ps, rtv);
      d.BlendState.RenderTarget[0].RenderTargetWriteMask = mask;
@@ -3589,7 +3590,7 @@ index fe65837..e9be537 100644
      return pso.Get();
  }
  
-@@ -2961,7 +5023,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +5024,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -3600,7 +3601,7 @@ index fe65837..e9be537 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +5107,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +5108,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -3620,7 +3621,7 @@ index fe65837..e9be537 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +5125,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +5126,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -3629,7 +3630,7 @@ index fe65837..e9be537 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,7 +5134,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,7 +5135,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -3639,7 +3640,7 @@ index fe65837..e9be537 100644
          uint32_t taps = uint32_t(std::ceil(std::max(src_scale / dst_scale, 1.0f) - kTapsSlack));
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
-@@ -3084,7 +5152,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +5153,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -3648,7 +3649,7 @@ index fe65837..e9be537 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +5162,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +5163,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -3667,7 +3668,7 @@ index fe65837..e9be537 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3136,6 +5204,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +5205,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -3683,7 +3684,7 @@ index fe65837..e9be537 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3155,16 +5232,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -3155,16 +5233,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -3774,7 +3775,7 @@ index fe65837..e9be537 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +5328,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +5329,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -3784,7 +3785,7 @@ index fe65837..e9be537 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +5338,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +5339,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -3794,7 +3795,7 @@ index fe65837..e9be537 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,49 +5374,2533 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,49 +5375,2533 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -6345,7 +6346,7 @@ index fe65837..e9be537 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +7910,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +7911,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -6356,7 +6357,7 @@ index fe65837..e9be537 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +7930,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +7931,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -6377,7 +6378,7 @@ index fe65837..e9be537 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +7954,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +7955,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -6410,7 +6411,7 @@ index fe65837..e9be537 100644
      }
  }
  
-@@ -3312,17 +7987,45 @@ void LogPerf() {
+@@ -3312,17 +7988,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -6460,7 +6461,7 @@ index fe65837..e9be537 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +8034,122 @@ void LogPerf() {
+@@ -3331,25 +8035,122 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -6588,7 +6589,7 @@ index fe65837..e9be537 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +8160,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +8161,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -6619,7 +6620,7 @@ index fe65837..e9be537 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +8190,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +8191,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -6627,7 +6628,7 @@ index fe65837..e9be537 100644
      ApplySettings();
  }
  
-@@ -3386,13 +8202,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +8203,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -6673,7 +6674,7 @@ index fe65837..e9be537 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +8246,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +8247,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6681,7 +6682,7 @@ index fe65837..e9be537 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +8536,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +8537,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
@@ -6702,7 +6703,7 @@ index fe65837..e9be537 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
-index ce6acda..f6b73a0 100644
+index ce6acda..74f4ba9 100644
 --- a/runtime/gpu/ext.h
 +++ b/runtime/gpu/ext.h
 @@ -17,6 +17,7 @@
@@ -6757,7 +6758,7 @@ index ce6acda..f6b73a0 100644
  class Extension {
  public:
      virtual ~Extension() = default;
-@@ -74,19 +112,54 @@ public:
+@@ -74,19 +112,58 @@ public:
      virtual void MakeTarget(const Surface&, bool /*depth*/, uint32_t /*gw*/, uint32_t /*gh*/, float& /*scale*/, DXGI_FORMAT& /*fmt*/) {}
      virtual void BeginDraw(const State&) {}
      virtual void EndDraw() {}
@@ -6782,6 +6783,10 @@ index ce6acda..f6b73a0 100644
 +    // sheet's next picture (a faint line under a row of figures). Asked only when the program, if any, passes the
 +    // coordinates on as given (TexcoordsAsGiven)
 +    virtual bool TexelBox(float* /*box*/) { return false; }
++    // the draw at hand reads its textures clamped past their edges where they wrap: a picture the extension draws
++    // wider than its coordinates reached (Constants, asked first), which the renderer cannot see from its vertices when
++    // a program makes them (UnitTexcoords)
++    virtual bool Clamp() { return false; }
 +    // the draw at hand is the 3D world drawn into the frame: true moves it by anti-aliasing's sub-pixel offset
 +    // (framegen.h, AntiAlias), which only the frame's 3D may take
 +    virtual bool Jitter() { return false; }

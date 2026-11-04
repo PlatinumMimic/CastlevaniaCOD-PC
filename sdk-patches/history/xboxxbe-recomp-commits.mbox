@@ -1,7 +1,7 @@
 From 6ea6ea9ef4200d78c1f9a22c001a91d2865939fb Mon Sep 17 00:00:00 2001
 From: x <x@x>
 Date: Mon, 2 Nov 2026 19:13:27 -0500
-Subject: [PATCH 01/41] base: 91146ff + port patch
+Subject: [PATCH 01/42] base: 91146ff + port patch
 
 ---
  THIRD_PARTY.txt                               |   41 +
@@ -6863,7 +6863,7 @@ index 0000000..0e4abd8
 From 09e03ab59480f459691be93453305435a4d48a5b Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 21:54:02 -0500
-Subject: [PATCH 02/41] Frame generation motion, 2D texel box, menu strip mode,
+Subject: [PATCH 02/42] Frame generation motion, 2D texel box, menu strip mode,
  parallax, minimise fix
 
 - Frame generation: each 3D draw writes its own motion (second render target, previous
@@ -7810,7 +7810,7 @@ index a5ce65e..530d7c7 100644
 From d02db318efa43b0aaa92a902ff26760d43365574 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 22:16:03 -0500
-Subject: [PATCH 03/41] Full-width widescreen targets, FSR anti-aliasing before
+Subject: [PATCH 03/42] Full-width widescreen targets, FSR anti-aliasing before
  the UI
 
 - Targets are wider by the screen's shape over 4:3 in widescreen (aspect_), so 100%
@@ -8836,7 +8836,7 @@ index 0000000..021ac23
 From 86fdbbf9fede3d27472b913c91468c90b7c1991f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 03:42:50 -0500
-Subject: [PATCH 04/41] FSR and DLSS upscaling of the frame's 3D, DLSS
+Subject: [PATCH 04/42] FSR and DLSS upscaling of the frame's 3D, DLSS
  anti-aliasing
 
 Upscaling (g_upscale): from the frame's first draw into the back buffer
@@ -10740,7 +10740,7 @@ index 0000000..3aac47b
 From 5816483743c3d121086fe497d40530e6c2162920 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 06:47:00 -0500
-Subject: [PATCH 05/41] Reactive mask, texture bias, ambient occlusion;
+Subject: [PATCH 05/42] Reactive mask, texture bias, ambient occlusion;
  constants edited off the upload heap
 
 - Upscaling's texture bias by preset: Quality as sharp as the output size, Balanced half, Performance
@@ -11752,7 +11752,7 @@ index 6b358ed..2796d19 100644
 From cf0d0e529944e192812f4b2762181fa1dacd4ae4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 07:32:21 -0500
-Subject: [PATCH 06/41] Depth convention from the view: ambient occlusion, FSR
+Subject: [PATCH 06/42] Depth convention from the view: ambient occlusion, FSR
  and DLSS read near at 0
 
 The renderer turns the title's depth round, and this title's own has the near plane at its top, so the
@@ -12041,7 +12041,7 @@ index 4a3d203..24d3f74 100644
 From c666237234004033205a5c52f754579611d473a9 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 09:30:13 -0500
-Subject: [PATCH 07/41] DLSS frame generation: Reflex's limit at twice the
+Subject: [PATCH 07/42] DLSS frame generation: Reflex's limit at twice the
  game's rate; controllers for ImGui through SDL
 
 The NVIDIA app's DLSS override turns DLSS-G into dynamic multi frame generation aimed at the display's refresh (138
@@ -12238,7 +12238,7 @@ index 4551c08..1ddf311 100644
 From 94b2abadaccea201e5c3c7a06f24e6f187fabc83 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 09:58:58 -0500
-Subject: [PATCH 08/41] Surface depth reads a material's height map, carried in
+Subject: [PATCH 08/42] Surface depth reads a material's height map, carried in
  its ORM map's alpha, where it has one
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -12315,7 +12315,7 @@ index 04be33a..33398c9 100644
 From 119800e2b66705458413faae1813e84828246faf Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 14:57:42 -0500
-Subject: [PATCH 09/41] A game's hook on each file the title opens; a
+Subject: [PATCH 09/42] A game's hook on each file the title opens; a
  replacement uploaded into the one before it when it has its size (a movie's
  frames)
 
@@ -12442,7 +12442,7 @@ index 163ea09..ed25550 100644
 From c796ac415c220202297a66b60cae094c41b164fc Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:04:32 -0500
-Subject: [PATCH 10/41] XBE_MUTE and XBE_BACKGROUND for tests: the game silent,
+Subject: [PATCH 10/42] XBE_MUTE and XBE_BACKGROUND for tests: the game silent,
  and opened behind other windows without the focus
 
 XBE_MUTE=1 sets XAudio2's master voice to silence. XBE_BACKGROUND=1 opens the window without activating it, at
@@ -12587,7 +12587,7 @@ index f95ebf5..6fd4f0b 100644
 From 8b92b57605303217a33aaf432757c7d886360bfe Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:04:32 -0500
-Subject: [PATCH 11/41] Ray tracing: the frame's 3D gathered into an
+Subject: [PATCH 11/42] Ray tracing: the frame's 3D gathered into an
  acceleration structure, and ambient occlusion traced through it
 
 DXR 1.1 inline ray queries (raytrace.h), on a card that has them, in a runtime built with the Windows SDK's dxc
@@ -13893,7 +13893,7 @@ index 33398c9..e3cbfcb 100644
 From 88fc4cf572f741a6beb48207cbe0cede3c96f8f7 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:51:05 -0500
-Subject: [PATCH 12/41] Ray traced reflections through the frame's scene;
+Subject: [PATCH 12/42] Ray traced reflections through the frame's scene;
  device-lost diagnostics (XBE_D3D12_DRED, XBE_D3D12_DEBUG)
 
 Reflections (gpu::kRtReflections, rt_refl.hlsl): a pixel shader over the frame's 3D before its anti-aliasing. Where
@@ -14781,7 +14781,7 @@ index bb18227..52518f6 100644
 From c32067df5bfe9a7881f941b76efdf7cfcc102e8d Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 20:18:06 -0500
-Subject: [PATCH 13/41] Ray traced bounce lighting, smoothed by full-size
+Subject: [PATCH 13/42] Ray traced bounce lighting, smoothed by full-size
  guides; the passes share one pipeline maker
 
 Bounce lighting (gpu::kRtLighting, rt_gi.hlsl): at half the 3D's size (XBE_RT_GI_SCALE), each pixel finds its
@@ -15567,7 +15567,7 @@ index 0000000..6de6059
 From 451bb2881e4734f62f7117414769be6c8236928d Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 20:50:14 -0500
-Subject: [PATCH 14/41] DLSS Ray Reconstruction: ray tracing's light denoised
+Subject: [PATCH 14/42] DLSS Ray Reconstruction: ray tracing's light denoised
  by DLSS with the guides
 
 With anti-aliasing on NVIDIA DLSS and Streamline's DLSS-RR files there (sl.dlss_d.dll,
@@ -16624,7 +16624,7 @@ index 0000000..e5ec8ec
 From 02f1da857ebfbc5ebc455c46d6bd554880b1ed81 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 21:05:27 -0500
-Subject: [PATCH 15/41] The bounce lighting's own denoiser, for cards whose
+Subject: [PATCH 15/42] The bounce lighting's own denoiser, for cards whose
  anti-aliasing does not denoise
 
 When no vendor's denoiser takes the frame (AMD FSR; DLSS without Ray Reconstruction's
@@ -17116,7 +17116,7 @@ index 0000000..f964668
 From 6c6bbd2392908bddc4414b2eb307140c3134d068 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 21:20:22 -0500
-Subject: [PATCH 16/41] The port's own denoiser takes the reflections and
+Subject: [PATCH 16/42] The port's own denoiser takes the reflections and
  ambient occlusion too
 
 When no vendor's denoiser takes the frame, ray traced ambient occlusion is gathered over the
@@ -17894,7 +17894,7 @@ index 0000000..aa89638
 From f298962a91bea475831791482cdaf1e0da4e9774 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 06:59:49 -0500
-Subject: [PATCH 17/41] Ray tracing: brightness-neutral lighting, water,
+Subject: [PATCH 17/42] Ray tracing: brightness-neutral lighting, water,
  lights, shadows, sky, shafts, quality
 
 - Bounce lighting takes the place of the game's flat fill: the room's average
@@ -20155,7 +20155,7 @@ index 0000000..94b3b9f
 From 159b084a04d7cd9a3ecb68d3bdfe92385e50fe25 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 07:49:59 -0500
-Subject: [PATCH 18/41] Ray tracing: steady lights, no sky haze in the light
+Subject: [PATCH 18/42] Ray tracing: steady lights, no sky haze in the light
  shafts
 
 - The lights sampled are the same every frame, up to 128 (the scene's own
@@ -20407,7 +20407,7 @@ index 944fbbb..842997c 100644
 From d5079c328aa8a90e146c274b18dffecf593b40ce Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 08:23:03 -0500
-Subject: [PATCH 19/41] Ray tracing: light shafts steady and subtle (the
+Subject: [PATCH 19/42] Ray tracing: light shafts steady and subtle (the
  flicker in rooms past the courtyard)
 
 The shafts were what sparkled: lights drawn flat (a fountain's spray, motes, a
@@ -20575,7 +20575,7 @@ index 842997c..25f0e59 100644
 From f8213ca4da69baa4bb4ffb3d9c53396fb2842870 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 09:30:52 -0500
-Subject: [PATCH 20/41] Ray tracing: only steady glows are lights, none bigger
+Subject: [PATCH 20/42] Ray tracing: only steady glows are lights, none bigger
  than a torch's flame; a gain on the lit side
 
 A sword's swing, a hit's sparks and a spell's burst were lights for the few
@@ -20774,7 +20774,7 @@ index 25f0e59..0b52482 100644
 From 8f9e441ae51a5b9480a19cb0ac0df68997bad0fb Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 09:40:02 -0500
-Subject: [PATCH 21/41] Ray tracing: the stronger contrast by default;
+Subject: [PATCH 21/42] Ray tracing: the stronger contrast by default;
  XBE_RT_VIEW 17, the lights' light alone
 
 Julian picked the stronger of the looks compared room by room: a surface
@@ -20871,7 +20871,7 @@ index 524bb6f..7305652 100644
 From 18f86cf3abfade7d07250990d6d411f82beee565 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 10:09:44 -0500
-Subject: [PATCH 22/41] Ray tracing: a light up to a torch's flame counts whole
+Subject: [PATCH 22/42] Ray tracing: a light up to a torch's flame counts whole
  (XBE_RT_LIGHTS_AREA 30000); XBE_RT_LIGHTS_LOG
 
 At 4000 a torch's flame, two triangles of some 15000, threw a sixth of its
@@ -20942,7 +20942,7 @@ index 9c410c6..9a30b80 100644
 From f7dab6e5d45fe6ca22ed9e27a35a47eb2d6c2951 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 10:45:47 -0500
-Subject: [PATCH 23/41] Ray tracing: realism fixes (untested): see-through
+Subject: [PATCH 23/42] Ray tracing: realism fixes (untested): see-through
  leaves and ivy, characters lit as the room, steady room light
 
 - Blended pictures with clear parts (ivy, fallen leaves) are cut-outs to rays (XBE_RT_CUTOUT_BLEND 16), so the
@@ -21303,7 +21303,7 @@ index af08efe..9035b31 100644
 From ef6ff50614d9553542672f20a45710a4656ad6d9 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:17:37 -0500
-Subject: [PATCH 24/41] Ray tracing: characters gain none of the bounce above
+Subject: [PATCH 24/42] Ray tracing: characters gain none of the bounce above
  the room's average (XBE_RT_GI_CHAR_BOOST 0)
 
 The game lights Hector and the enemies with lights of their own; added to theirs, what the rays found above the
@@ -21379,7 +21379,7 @@ index 5a17af6..b46d6a7 100644
 From b003f73b601f0801cfeaf28bc9f4fbeab71f0197 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:29:58 -0500
-Subject: [PATCH 25/41] Ray tracing: see-through layers to ambient occlusion;
+Subject: [PATCH 25/42] Ray tracing: see-through layers to ambient occlusion;
  the water's glow gathered by bounce rays
 
 - Every picture's alpha is looked at as it is uploaded (AlphaKind), the game's own as well as a pack's: one with
@@ -21834,7 +21834,7 @@ index 9035b31..c3ffcca 100644
 From 915959e6c915ed1089b33bca89f0bda45f168094 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:39:02 -0500
-Subject: [PATCH 26/41] Ray tracing: this title's leaves and ivy are cut-outs
+Subject: [PATCH 26/42] Ray tracing: this title's leaves and ivy are cut-outs
  (its alpha read through a stage with no texture)
 
 The title draws its world with stage 0 MODULATE(TEXTURE, DIFFUSE) and a MODULATE left at stage 1 over no texture,
@@ -21992,7 +21992,7 @@ index ccf8b2d..1f8270d 100644
 From 5f0492a7c84d750d7340efd29f64dee00ec61d1c Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:54:35 -0500
-Subject: [PATCH 27/41] Ray tracing: ambient occlusion spares the glows drawn
+Subject: [PATCH 27/42] Ray tracing: ambient occlusion spares the glows drawn
  over a pixel
 
 The lamps' light beams are glows that write the depth; ambient occlusion, multiplied into the frame after them,
@@ -22146,7 +22146,7 @@ index c3ffcca..bffff2d 100644
 From 88508749b37de46688e44781bf27ca016f453494 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:59:06 -0500
-Subject: [PATCH 28/41] Ray tracing: GlowsAlong after Spot (rt_scene.hlsli)
+Subject: [PATCH 28/42] Ray tracing: GlowsAlong after Spot (rt_scene.hlsli)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
@@ -22241,7 +22241,7 @@ index bffff2d..728b01d 100644
 From aff34dd589be099404a97a3b739810ed216c2831 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 12:37:56 -0500
-Subject: [PATCH 29/41] Ray tracing: the save room marker lights no floor; the
+Subject: [PATCH 29/42] Ray tracing: the save room marker lights no floor; the
  top draw found by the depth (untested)
 
 - A glow drawn by a pixel shader program is no light (the marker's swirl, masked to a ring by a second picture,
@@ -22390,7 +22390,7 @@ index 728b01d..e3d02f4 100644
 From dd240b2974ac611498530a03e9e99cc6f37a3066 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 12:48:58 -0500
-Subject: [PATCH 30/41] Ray tracing: the bounce lighting as a gain on the
+Subject: [PATCH 30/42] Ray tracing: the bounce lighting as a gain on the
  game's own light; the frame's draw by its depth
 
 The bounce lighting's lit side was added in the surface's picture's colour: the save room door's panel, a bright
@@ -22610,7 +22610,7 @@ index e3d02f4..4852371 100644
 From 53f6f5924da6e026d87469f52d5a39312b6d767a Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 13:10:30 -0500
-Subject: [PATCH 31/41] Ray tracing: the lights' light bounced a second time;
+Subject: [PATCH 31/42] Ray tracing: the lights' light bounced a second time;
  characters' shadows from the lamps near them
 
 rt_lights.hlsli holds the lights' sampling (PickLight, LightAt) for rt_gi and rt_ao.
@@ -22981,7 +22981,7 @@ index 0000000..13d5855
 From 18c37434ee9619de9f0174bf65999e3fe435df90 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:00:55 -0500
-Subject: [PATCH 32/41] Ray tracing: lights' samples kept frame to frame, glows
+Subject: [PATCH 32/42] Ray tracing: lights' samples kept frame to frame, glows
  remembered off screen, flames drawn flat as lights
 
 The bounce pass keeps each texel's light sample (rt_gi.hlsl's second target) and
@@ -24047,7 +24047,7 @@ index 13d5855..25662de 100644
 From 956b5c80c6a596d251070cebd5b4eafedd99a9ab Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:08:52 -0500
-Subject: [PATCH 33/41] Ray tracing: a flame drawn flat lights as one of at
+Subject: [PATCH 33/42] Ray tracing: a flame drawn flat lights as one of at
  least 8000 units' area (XBE_RT_LIGHTS_FLAME)
 
 Torch and candle sprites are small, and lit their walls by their sprite's area
@@ -24140,7 +24140,7 @@ index 25662de..253dec4 100644
 From 5cd0cbc155a3780700c9fee424368bc3bb9f8057 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:45:47 -0500
-Subject: [PATCH 34/41] Pipelines kept between sessions (D3D12 pipeline
+Subject: [PATCH 34/42] Pipelines kept between sessions (D3D12 pipeline
  library); frames that hitch logged (untested)
 
 A pipeline took 10-25 ms to make even with its shaders read from the disk cache:
@@ -24583,7 +24583,7 @@ index 6f3dac5..efc21b1 100644
 From 32a9d57f4268c3a27407d64c1ab4e8d104ffe581 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:56:35 -0500
-Subject: [PATCH 35/41] Pipeline cache's functions outside the file's own
+Subject: [PATCH 35/42] Pipeline cache's functions outside the file's own
  namespace (the link)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -24645,7 +24645,7 @@ index a582900..3c43d01 100644
 From 5ba1a470ae32df46b9cdc7c3dd1c52f327d35161 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:00:32 -0500
-Subject: [PATCH 36/41] Ray tracing: the bounce rays' glow gather leaves out
+Subject: [PATCH 36/42] Ray tracing: the bounce rays' glow gather leaves out
  the lights sampled as lights
 
 A lamp's glow in front of its wall was counted twice: sampled as a light, and
@@ -24729,7 +24729,7 @@ index 4852371..cfed908 100644
 From 30b52505d3d25aea8d2d7a6827ba9b0a79621301 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:14:35 -0500
-Subject: [PATCH 37/41] Ray tracing: a surface's light eased toward a ceiling
+Subject: [PATCH 37/42] Ray tracing: a surface's light eased toward a ceiling
  rather than doubled (XBE_RT_GI_LIFT_MOST 0.7, KNEE 0.3)
 
 Raised linearly up to the knee, then eased toward the most: the stone right by
@@ -24798,7 +24798,7 @@ index 3251f12..c361218 100644
 From 7058b40343af8bfa91a912120fe63c38eff93361 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:52:56 -0500
-Subject: [PATCH 38/41] Shaders prepared ahead: every pipeline listed and made
+Subject: [PATCH 38/42] Shaders prepared ahead: every pipeline listed and made
  before it is drawn; --prepare-shaders; a game's file read hook
 
 The pipeline library (cache/shaders/pipelines.bin) now has a list beside it (pipelines.list): every pipeline the
@@ -25484,7 +25484,7 @@ index ed25550..6c33632 100644
 From 8308d688720145651848ba357de7e505b2f4fffe Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 16:17:09 -0500
-Subject: [PATCH 39/41] Ray tracing: glows in an instance of their own, the
+Subject: [PATCH 39/42] Ray tracing: glows in an instance of their own, the
  lights' light with an end, the sky's light held
 
 - The world's glows (emissive draws) go into a bottom level and instance of their own (mask 8), which only the
@@ -25906,7 +25906,7 @@ index cfed908..78833dc 100644
 From b0f8e7a94817e3cd878e4c362b00dafd5da89280 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 16:51:34 -0500
-Subject: [PATCH 40/41] The F10 menu's frame capture also keeps the screen as
+Subject: [PATCH 40/42] The F10 menu's frame capture also keeps the screen as
  shown (screen.bmp)
 
 A capture kept the console's 640x480 frame (final.bmp), before widescreen, ray tracing and upscaling: what the player
@@ -26067,7 +26067,7 @@ index fc254a2..f1f734f 100644
 From c49995697c2b6b5d2611b0cc79bf892db9019fb3 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 17:03:32 -0500
-Subject: [PATCH 41/41] Ray tracing: the sky's light whole at a twentieth of
+Subject: [PATCH 41/42] Ray tracing: the sky's light whole at a twentieth of
  the frame, risen in a third of a second
 
 On the bridge before the courtyard the light still rose the first time the camera tilted down to the sky (its held
@@ -26117,6 +26117,55 @@ index f1f734f..e9be537 100644
                         kFlat = env("XBE_RT_LIGHTS_FLAT", 0.8f), kLightArea = env("XBE_RT_LIGHTS_AREA", 30000.0f);
      const uint32_t q = RtQuality();
      const float steps = kStepsSet > 0 ? kStepsSet : q == 0 ? 0.0f : q == 1 ? 6.0f : 10.0f;
+-- 
+2.43.0
+
+
+From d28a8b7e5915904b789dc4a4f1cf26c084e9308a Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Wed, 4 Nov 2026 17:33:47 -0500
+Subject: [PATCH 42/42] An extension can have a draw read its textures clamped
+ (Extension::Clamp)
+
+A picture the extension draws wider than its texture coordinates reached, when a program makes them, so
+UnitTexcoords cannot see that they stay in 0..1: wrapped, its far side showed past each edge.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
+---
+ runtime/gpu/d3d12.cpp | 3 ++-
+ runtime/gpu/ext.h     | 4 ++++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index e9be537..a1f4ab4 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -4381,7 +4381,8 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+     uint32_t views = EnsureViewSet(stages);
+     if (views != binds_.views) cl_->SetGraphicsRootDescriptorTable(2, Gpu(srv_heap_.Get(), views, srv_inc_));
+     binds_.views = views;
+-    uint32_t samplers = EnsureStageSamplers(s, stages, AnyStageWraps(s) && UnitTexcoords(a) && TexcoordsAsGiven(s, a));
++    bool clamp = AnyStageWraps(s) && ((ext_ && ext_->Clamp()) || (UnitTexcoords(a) && TexcoordsAsGiven(s, a)));
++    uint32_t samplers = EnsureStageSamplers(s, stages, clamp);
+     if (samplers != binds_.samplers) cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), samplers, smp_inc_));
+     binds_.samplers = samplers;
+ }
+diff --git a/runtime/gpu/ext.h b/runtime/gpu/ext.h
+index f6b73a0..74f4ba9 100644
+--- a/runtime/gpu/ext.h
++++ b/runtime/gpu/ext.h
+@@ -133,6 +133,10 @@ public:
+     // sheet's next picture (a faint line under a row of figures). Asked only when the program, if any, passes the
+     // coordinates on as given (TexcoordsAsGiven)
+     virtual bool TexelBox(float* /*box*/) { return false; }
++    // the draw at hand reads its textures clamped past their edges where they wrap: a picture the extension draws
++    // wider than its coordinates reached (Constants, asked first), which the renderer cannot see from its vertices when
++    // a program makes them (UnitTexcoords)
++    virtual bool Clamp() { return false; }
+     // the draw at hand is the 3D world drawn into the frame: true moves it by anti-aliasing's sub-pixel offset
+     // (framegen.h, AntiAlias), which only the frame's 3D may take
+     virtual bool Jitter() { return false; }
 -- 
 2.43.0
 
