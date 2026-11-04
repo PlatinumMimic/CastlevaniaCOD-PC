@@ -253,8 +253,9 @@ make them; **Play** starts the game, with the executable of the release it found
 other's executable; without it each plays its own release, the USA one by default). Saves and logs are a click away.
 `--page controls` (or home, display, graphics, view, textures, game, files) opens it on that page. It looks like the game's menus: navy with fog
 and a teal band, page names on orange banners, the chosen option on a green bar, boxes framed in light blue, Palatino
-for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold), the crest
-of its icon, and under **Play** the pack's row: how many pictures the `textures` folder has, with the switch for them,
+for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold), the game's
+crest (made from your own copy, as the icon below is: on Linux and in a release, which have no icon, the launcher
+makes it itself), and under **Play** the pack's row: how many pictures the `textures` folder has, with the switch for them,
 or a button that opens the folder when it has none. The files are looked at again whenever the launcher comes back to
 the front, so a pack copied in meanwhile shows.
 
@@ -489,7 +490,9 @@ Run `build.bat`. The first build recompiles the game and takes a while. `Castlev
 `CastlevaniaLauncher.exe` are written to `out\build\release`, with the game code built in. Their icon, made by
 `tools\xbe_icon.cpp`, is the game's crest in white on a black disc. It comes from your HD texture pack's 512x512
 picture of it (the PS2 menu's, with its ring of runes at the larger sizes), or else from the crest on the Xbox
-dashboard, 128x128 in your `default.xbe`. A release has no icon, as it packs nothing of the game.
+dashboard, 128x128 in your `default.xbe`. A release has no icon, as it packs nothing of the game; its launcher makes
+the same crest from your files when it starts (`src/common/crest.h`, which the icon is made with too), from the pack's
+picture or your copy's `default.xbe` (in `assets`, or in a disc image there), as the Linux launcher does.
 
 ### 5. Make a Release
 `release.bat 1.0.0` writes `out\release\CastlevaniaCOD-PC-1.0.0.zip`: `Castlevania.exe`, `CastlevaniaEU.exe` and the

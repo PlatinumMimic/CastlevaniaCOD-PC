@@ -66,6 +66,7 @@ extern char** environ;
 
 #include "app/app.h"
 #include "kernel/disc.h"
+#include "../common/crest.h"
 #include "../common/marks.h"
 #include "words.h"
 
@@ -521,12 +522,17 @@ struct Files {
     bool ps2_buttons = false;  // the PS2's button icons among them (texpack.cpp, the PS2 button layout)
     bool movies = false;       // a movie pack beside the game: movies\movies.toml (movies.cpp)
     fs::path logo;             // the title logo among them, for the home page
+    fs::path crest, runes;     // the crest's picture among them and its ring of runes (src/common/crest.h)
+    fs::path title;            // a copy's xbe, whose title image is the crest without a pack: assets', or a disc image
 
     void Scan() {
         textures = FindTextures();
         pictures = 0;
         ps2_buttons = false;
         logo.clear();
+        crest.clear();
+        runes.clear();
+        title.clear();
         if (!textures.empty()) {
             std::error_code ec;
             for (auto it = fs::recursive_directory_iterator(textures, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
@@ -540,6 +546,8 @@ struct Files {
                 if (logo.empty() && (name.rfind(L"b0f0108366aad095-5623c99b0b0ecf41-", 0) == 0 ||
                                      name.rfind(L"fe15d42446e1b4e5-5623c99b0b0ecf41-", 0) == 0))
                     logo = it->path();
+                if (crest.empty() && name.rfind(L"491259d6fb7d9dfb-76ee38f652e03516-", 0) == 0) crest = it->path();
+                if (runes.empty() && name.rfind(L"491259d6fb7d9dfb-53eede86787ea4c9-", 0) == 0) runes = it->path();
             }
         }
         {
@@ -553,6 +561,7 @@ struct Files {
         if (assets.empty()) return;
         std::error_code ec;
         if (std::ifstream f{assets / kXbe, std::ios::binary}) xbe = Check({std::istreambuf_iterator<char>(f), {}});
+        if (Good(xbe)) title = assets / kXbe;
         for (auto& e : fs::directory_iterator(assets, ec)) {
             std::wstring ext = e.path().extension().wstring();
             std::transform(ext.begin(), ext.end(), ext.begin(), towlower);
@@ -562,6 +571,7 @@ struct Files {
             std::string error;
             std::vector<uint8_t> data;
             if (disc.Open(e.path(), error) && disc.Load(kXbe, data)) image.copy = Check(data);
+            if (title.empty() && Good(image.copy)) title = e.path();
             isos.push_back(image);
         }
         std::sort(isos.begin(), isos.end(), [](const Image& a, const Image& b) { return a.path < b.path; });
@@ -2008,13 +2018,48 @@ std::vector<uint8_t> Shrink(const uint8_t* px, uint32_t pitch, uint32_t w, uint3
 }
 #endif
 
+// a picture's pixels, 8 bit BGRA: PNG, or DDS with BC1 to BC3 blocks, as a texture pack has them; through WIC on
+// Windows, on Linux stb's PNG and the SDK's DDS reader (linux/image.h)
+bool ReadPicture(const fs::path& file, std::vector<uint8_t>& px, uint32_t& w, uint32_t& h) {
+#ifndef _WIN32
+    std::wstring ext = file.extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), towlower);
+    if (ext == L".dds") {
+        std::ifstream in(file, std::ios::binary);
+        if (!in) return false;
+        std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        return linuximage::ReadDds(data, px, w, h);
+    }
+    return linuximage::ReadFile(file, px, w, h);
+#else
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> wic;
+    ComPtr<IWICBitmapDecoder> dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> conv;
+    UINT cw = 0, ch = 0;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) ||
+        FAILED(wic->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) ||
+        FAILED(dec->GetFrame(0, &frame)) || FAILED(wic->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                WICBitmapPaletteTypeCustom)) ||
+        FAILED(conv->GetSize(&cw, &ch)))
+        return false;
+    px.assign(size_t(cw) * ch * 4, 0);
+    if (FAILED(conv->CopyPixels(nullptr, cw * 4, UINT(px.size()), px.data()))) return false;
+    w = cw;
+    h = ch;
+    return true;
+#endif
+}
+
 // the HD texture pack's title logo: cut to its letters (its alpha the PS2's, 128 opaque) and shrunk to at most max_w
 // wide, premultiplied while it is scaled so that its edges keep their colour
 Picture LoadLogo(const fs::path& file, uint32_t max_w) {
 #ifndef _WIN32
     std::vector<uint8_t> px;
     uint32_t w = 0, h = 0;
-    if (!linuximage::ReadFile(file, px, w, h)) return {};
+    if (!ReadPicture(file, px, w, h)) return {};  // a .dds pack's logo too
 #else
     using Microsoft::WRL::ComPtr;
     ComPtr<IWICImagingFactory> wic;
@@ -2066,7 +2111,7 @@ Picture LoadLogo(const fs::path& file, uint32_t max_w) {
     return Upload(out, tw, th);
 }
 
-// the crest the build put in the launcher's icon (resource 1), at its largest; none in a release
+// the crest the build put in the launcher's icon (resource 1), at its largest; none in a release (MakeCrest then)
 Picture LoadCrest() {
 #ifndef _WIN32
     return {};  // Linux: an executable has no icon resource
@@ -2093,6 +2138,45 @@ Picture LoadCrest() {
     DestroyIcon(icon);
     return p;
 #endif
+}
+
+// the crest made from the player's own files, for a launcher without the icon (Linux, a release): as the build makes
+// the icon (src/common/crest.h), the HD pack's picture of it in its ring of runes, else the xbe's title image (assets'
+// default.xbe, or a disc image's); at the icon's largest size, 256. None without either
+Picture MakeCrest(const Files& f) {
+    try {
+        crest::Image art;
+        std::vector<uint8_t> px;
+        uint32_t w = 0, h = 0;
+        if (!f.crest.empty() && ReadPicture(f.crest, px, w, h)) {
+            crest::Image c = crest::FromPicture(px, w, h, f.crest.string());
+            crest::Image r;
+            bool runes = !f.runes.empty() && ReadPicture(f.runes, px, w, h);
+            if (runes) {
+                r = crest::FromPicture(px, w, h, f.runes.string());
+                if (r.w != c.w) r = crest::Resize(r, c.w);
+            }
+            art = crest::FromPack(c, runes ? &r : nullptr);
+        } else if (!f.title.empty()) {
+            std::vector<uint8_t> xbe;
+            if (f.title.filename() == kXbe) {
+                std::ifstream in(f.title, std::ios::binary);
+                xbe.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            } else {
+                kernel::Disc disc;
+                std::string error;
+                if (!disc.Open(f.title, error) || !disc.Load(kXbe, xbe)) return {};
+            }
+            crest::Image t = crest::Decode(crest::TitleImage(xbe));
+            art = crest::FromTitle(t);
+        } else {
+            return {};
+        }
+        if (art.w != 256) art = crest::Resize(art, 256);
+        return Upload(crest::Bgra(art), 256, 256);
+    } catch (const std::string&) {
+        return {};
+    }
 }
 
 // the pages, in the sidebar's order
@@ -3177,9 +3261,20 @@ private:
         rescan_ = true;
     }
 
-    // the player's own pictures: the pack's logo, the crest of the icon
+    // the player's own pictures: the pack's logo; the crest of the icon a Windows dev build has, else the one made
+    // from the player's files (MakeCrest), made again when what it is made from changes
     void LoadArt() {
-        if (!crest_.view) crest_ = LoadCrest();
+        if (!icon_tried_) {
+            icon_tried_ = true;
+            crest_ = LoadCrest();
+            icon_ = crest_.view != nullptr;
+        }
+        fs::path from = files_.crest.empty() ? files_.title : files_.crest;
+        if (!icon_ && from != crest_from_) {
+            crest_.Release();
+            crest_from_ = from;
+            crest_ = MakeCrest(files_);
+        }
         if (files_.logo == logo_file_) return;
         logo_.Release();
         logo_file_ = files_.logo;
@@ -3192,6 +3287,8 @@ private:
     Gpu auto_gpu_;
     Picture logo_, crest_;
     fs::path logo_file_;
+    fs::path crest_from_;                    // what crest_ was made from (MakeCrest)
+    bool icon_tried_ = false, icon_ = false;  // the icon looked for; crest_ is the icon's
     Import import_;
 #ifndef _WIN32
     std::mutex picked_lock_;
