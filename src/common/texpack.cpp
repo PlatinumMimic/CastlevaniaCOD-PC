@@ -300,13 +300,21 @@ public:
     // at the start: the pack's pictures indexed when it is on (else when it is first switched on, Epoch)
     void Init() {
         on_ = g_texture_pack;
+        layout_ = g_button_layout;
         if (on_ && !indexing_.exchange(true)) Index();
     }
 
     // the replacements' epoch (gpu::Extension::ReplaceEpoch), asked once a frame: the pack switched on or off while
     // the game runs moves it on, every texture then asking again; switched on for the first time, its pictures are
-    // indexed on a thread of their own, the epoch moving on again once they are
+    // indexed on a thread of their own, the epoch moving on again once they are. The button layout changed moves it on
+    // too: the button sheet asks again, for the PS2's icons or the Xbox's (Match)
     uint32_t Epoch() {
+        uint32_t layout = g_button_layout;
+        if (layout != layout_) {
+            layout_ = layout;
+            epoch_++;
+            LOGR("texpack: the %s button icons", layout == 1 ? "PS2" : "Xbox");
+        }
         bool on = g_texture_pack;
         if (on != on_) {
             on_ = on;
@@ -889,6 +897,7 @@ private:
     std::atomic<uint64_t> asked_{0}, matched_{0};
     std::atomic<uint64_t> mapped_{0};  // pictures loaded with their material maps
     bool on_ = false;                     // g_texture_pack as Epoch last saw it
+    uint32_t layout_ = 0;                 // g_button_layout as Epoch last saw it
     uint32_t epoch_ = 0;
     std::atomic<bool> indexing_{false};   // Index started, once
     std::atomic<bool> ready_{false};      // and done: index_, files_ and the workers there

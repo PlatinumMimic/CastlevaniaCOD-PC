@@ -487,7 +487,7 @@ void GameTab(bool& save) {
 void ControlsTab(bool& save) {
     if (Section("Controller", "layout")) {
         Row("Button layout", "PS2: the PS2's button icons (from an HD texture pack made from the PS2 game) and its "
-                             "shoulders: L1 resets the camera, R1 guards, L2 and R2 lock on. From the next start.");
+                             "shoulders: L1 resets the camera, R1 guards, L2 and R2 lock on. It changes at once.");
         save |= Choice<uint32_t>("##layout", g_button_layout, {0, 1}, {"Xbox", "PS2"});
         Row("Stick response", "PS2: Hector walks any way the stick points and walks slowly when it is tilted a "
                               "little, as on the PS2. Xbox: the Xbox release's, where a stick near up, down, left or "

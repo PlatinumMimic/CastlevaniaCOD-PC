@@ -364,7 +364,7 @@ background first); the size pictures load at applies from the next start.
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
 - **Button Layout** - Xbox, or PS2: the PS2's button icons (□ △ ○ ×, L1 L2 R1 R2) and its shoulders, L1 resetting
   the camera and R1 guarding, L2 and R2 locking on (the launcher's or the in-game menu's Controls page;
-  `button_layout = 1`; in game, from the next start). The PS2 icons come from an HD texture pack made from the PS2
+  `button_layout = 1`; it changes at once, in game too). The PS2 icons come from an HD texture pack made from the PS2
   game (HD Texture Packs, above), and the launcher says whether yours has them; without one the Xbox icons stay.
 - **Stick Response** - PS2 (the default), or Xbox. The Xbox release cuts each stick axis to 0 by itself under a
   third of its throw, before the game makes the stick a direction, so near up, down, left or right Hector walks

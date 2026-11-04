@@ -141,7 +141,7 @@ def scenario(name, *args, test=None, quick=False, needs=(), before=None, env=Non
 # and once lockon has let him out of his wall that route is stuck in his corridor
 SESSIONS = {
     "usa": ["newgame", "texpack", "texpack-live", "fps", "fps-uncapped", "stick", "widescreen", "route", "moai-off", "moai-on", "bot",
-            "buttons-xbox", "shadow", "warp", "rooms", "keyboard", "menu"],
+            "buttons-xbox", "buttons-live", "shadow", "warp", "rooms", "keyboard", "menu"],
     "wide": ["filters-pack", "qol", "ao", "wide-1610", "lockon"],
     "eu": ["newgame-eu", "widescreen-eu", "rooms-eu"],
     "pack-off": ["filters-nopack", "texpack-off", "texpack-live-on"],
@@ -175,6 +175,7 @@ def tests():
         scenario("moai", test="moai-off"),
         scenario("buttons", test="buttons-xbox"),
         scenario("buttons", "--set", "button_layout=1", test="buttons-ps2", needs=["textures"]),
+        scenario("buttons-live", needs=["textures"]),  # the layout changed while the game runs
         scenario("filters", test="filters-pack", needs=["textures"]),
         scenario("filters", "--set", "texture_pack=false", test="filters-nopack"),
         scenario("widescreen", quick=True),

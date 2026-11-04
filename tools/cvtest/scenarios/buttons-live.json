@@ -1,0 +1,72 @@
+{
+  "name": "buttons-live",
+  "after": "newgame.json",
+  "needs": [
+    "textures"
+  ],
+  "note": "The button layout changed while the game runs (texpack.cpp's epoch: the button sheet asks the pack again), its icons asked of the AI judge on the game's Controller Config page: the Xbox's, the PS2's once the layout is PS2 (from an HD pack made from the PS2 game), the Xbox's again.",
+  "steps": [
+    {
+      "press": "0:start,1500:wait",
+      "expect": [
+        "menu"
+      ]
+    },
+    {
+      "press": "0:up,800:wait"
+    },
+    {
+      "press": "0:a,2000:wait"
+    },
+    {
+      "press": "0:a,2500:wait",
+      "shot": "xbox",
+      "ask": {
+        "question": "Which controller's button icons does the screen show beside the actions?",
+        "choices": {
+          "xbox": "an Xbox button: a coloured ball with a letter (A green, B red, X blue, Y yellow), an L or R trigger box, or a white or black round button",
+          "playstation": "a PlayStation button: a circle, cross, square or triangle symbol, or an L1, L2, R1 or R2 label",
+          "none": "no controller button icon"
+        }
+      },
+      "expect": [
+        "screen.ask.answer == 'xbox'"
+      ]
+    },
+    {
+      "press": "0:set=button_layout=1,0f:wait:20f",
+      "shot": "ps2",
+      "ask": {
+        "question": "Which controller's button icons does the screen show beside the actions?",
+        "choices": {
+          "xbox": "an Xbox button: a coloured ball with a letter (A green, B red, X blue, Y yellow), an L or R trigger box, or a white or black round button",
+          "playstation": "a PlayStation button: a circle, cross, square or triangle symbol, or an L1, L2, R1 or R2 label",
+          "none": "no controller button icon"
+        }
+      },
+      "expect": [
+        "screen.ask.answer == 'playstation'",
+        "found(log, 'texpack: the PS2 button icons')"
+      ]
+    },
+    {
+      "press": "0:set=button_layout=0,0f:wait:20f",
+      "shot": "xbox-again",
+      "ask": {
+        "question": "Which controller's button icons does the screen show beside the actions?",
+        "choices": {
+          "xbox": "an Xbox button: a coloured ball with a letter (A green, B red, X blue, Y yellow), an L or R trigger box, or a white or black round button",
+          "playstation": "a PlayStation button: a circle, cross, square or triangle symbol, or an L1, L2, R1 or R2 label",
+          "none": "no controller button icon"
+        }
+      },
+      "expect": [
+        "screen.ask.answer == 'xbox'"
+      ]
+    },
+    {
+      "press": "0:b,1500:wait,1500:b,3000:wait,3000:b,4500:wait",
+      "note": "the menus closed"
+    }
+  ]
+}

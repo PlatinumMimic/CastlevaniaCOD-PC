@@ -242,13 +242,12 @@ void ApplySetting(const std::string& entry) {
     size_t eq = entry.find('=');
     if (eq == std::string::npos) return;
     std::string key = entry.substr(0, eq), value = entry.substr(eq + 1);
-    // read once at the start (the size the pack's pictures load at, the button sheet): changed here they would only
-    // seem to be, so a test asking for one fails (cvtest takes an error line as the step's)
-    for (const char* start : {"texture_pack_size", "button_layout"})
-        if (key == start) {
-            LOGE("live: %s applies from the next start, not here", key.c_str());
-            return;
-        }
+    // read once at the start (the size the pack's pictures load at): changed here it would only seem to be, so a test
+    // asking for it fails (cvtest takes an error line as the step's)
+    if (key == "texture_pack_size") {
+        LOGE("live: %s applies from the next start, not here", key.c_str());
+        return;
+    }
     uint32_t n = uint32_t(std::strtoul(value.c_str(), nullptr, 10));
     bool on = value == "true" || value == "1";
     app::Settings& st = app::Get();
@@ -483,7 +482,7 @@ void SettingsWatch() {
             if (it != values.end() && it->second == v) continue;
             bool live = std::find_if(std::begin(kLive), std::end(kLive), [&](const char* s) { return k == s; }) !=
                         std::end(kLive);
-            bool option = !live && k != "texture_pack" && k != "texture_pack_size" && k != "button_layout" &&
+            bool option = !live && k != "texture_pack" && k != "texture_pack_size" &&
                           std::find_if(app::kGame.options.begin(), app::kGame.options.end(),
                                        [&](const app::Option& o) { return k == o.key; }) != app::kGame.options.end();
             if (live || option) ApplySetting(k + "=" + v);
