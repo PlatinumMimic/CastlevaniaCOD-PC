@@ -1,7 +1,7 @@
 From 6ea6ea9ef4200d78c1f9a22c001a91d2865939fb Mon Sep 17 00:00:00 2001
 From: x <x@x>
 Date: Mon, 2 Nov 2026 19:13:27 -0500
-Subject: [PATCH 01/38] base: 91146ff + port patch
+Subject: [PATCH 01/41] base: 91146ff + port patch
 
 ---
  THIRD_PARTY.txt                               |   41 +
@@ -6863,7 +6863,7 @@ index 0000000..0e4abd8
 From 09e03ab59480f459691be93453305435a4d48a5b Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 21:54:02 -0500
-Subject: [PATCH 02/38] Frame generation motion, 2D texel box, menu strip mode,
+Subject: [PATCH 02/41] Frame generation motion, 2D texel box, menu strip mode,
  parallax, minimise fix
 
 - Frame generation: each 3D draw writes its own motion (second render target, previous
@@ -7810,7 +7810,7 @@ index a5ce65e..530d7c7 100644
 From d02db318efa43b0aaa92a902ff26760d43365574 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 22:16:03 -0500
-Subject: [PATCH 03/38] Full-width widescreen targets, FSR anti-aliasing before
+Subject: [PATCH 03/41] Full-width widescreen targets, FSR anti-aliasing before
  the UI
 
 - Targets are wider by the screen's shape over 4:3 in widescreen (aspect_), so 100%
@@ -8836,7 +8836,7 @@ index 0000000..021ac23
 From 86fdbbf9fede3d27472b913c91468c90b7c1991f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 03:42:50 -0500
-Subject: [PATCH 04/38] FSR and DLSS upscaling of the frame's 3D, DLSS
+Subject: [PATCH 04/41] FSR and DLSS upscaling of the frame's 3D, DLSS
  anti-aliasing
 
 Upscaling (g_upscale): from the frame's first draw into the back buffer
@@ -10740,7 +10740,7 @@ index 0000000..3aac47b
 From 5816483743c3d121086fe497d40530e6c2162920 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 06:47:00 -0500
-Subject: [PATCH 05/38] Reactive mask, texture bias, ambient occlusion;
+Subject: [PATCH 05/41] Reactive mask, texture bias, ambient occlusion;
  constants edited off the upload heap
 
 - Upscaling's texture bias by preset: Quality as sharp as the output size, Balanced half, Performance
@@ -11752,7 +11752,7 @@ index 6b358ed..2796d19 100644
 From cf0d0e529944e192812f4b2762181fa1dacd4ae4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 07:32:21 -0500
-Subject: [PATCH 06/38] Depth convention from the view: ambient occlusion, FSR
+Subject: [PATCH 06/41] Depth convention from the view: ambient occlusion, FSR
  and DLSS read near at 0
 
 The renderer turns the title's depth round, and this title's own has the near plane at its top, so the
@@ -12041,7 +12041,7 @@ index 4a3d203..24d3f74 100644
 From c666237234004033205a5c52f754579611d473a9 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 09:30:13 -0500
-Subject: [PATCH 07/38] DLSS frame generation: Reflex's limit at twice the
+Subject: [PATCH 07/41] DLSS frame generation: Reflex's limit at twice the
  game's rate; controllers for ImGui through SDL
 
 The NVIDIA app's DLSS override turns DLSS-G into dynamic multi frame generation aimed at the display's refresh (138
@@ -12238,7 +12238,7 @@ index 4551c08..1ddf311 100644
 From 94b2abadaccea201e5c3c7a06f24e6f187fabc83 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 09:58:58 -0500
-Subject: [PATCH 08/38] Surface depth reads a material's height map, carried in
+Subject: [PATCH 08/41] Surface depth reads a material's height map, carried in
  its ORM map's alpha, where it has one
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -12315,7 +12315,7 @@ index 04be33a..33398c9 100644
 From 119800e2b66705458413faae1813e84828246faf Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 14:57:42 -0500
-Subject: [PATCH 09/38] A game's hook on each file the title opens; a
+Subject: [PATCH 09/41] A game's hook on each file the title opens; a
  replacement uploaded into the one before it when it has its size (a movie's
  frames)
 
@@ -12442,7 +12442,7 @@ index 163ea09..ed25550 100644
 From c796ac415c220202297a66b60cae094c41b164fc Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:04:32 -0500
-Subject: [PATCH 10/38] XBE_MUTE and XBE_BACKGROUND for tests: the game silent,
+Subject: [PATCH 10/41] XBE_MUTE and XBE_BACKGROUND for tests: the game silent,
  and opened behind other windows without the focus
 
 XBE_MUTE=1 sets XAudio2's master voice to silence. XBE_BACKGROUND=1 opens the window without activating it, at
@@ -12587,7 +12587,7 @@ index f95ebf5..6fd4f0b 100644
 From 8b92b57605303217a33aaf432757c7d886360bfe Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:04:32 -0500
-Subject: [PATCH 11/38] Ray tracing: the frame's 3D gathered into an
+Subject: [PATCH 11/41] Ray tracing: the frame's 3D gathered into an
  acceleration structure, and ambient occlusion traced through it
 
 DXR 1.1 inline ray queries (raytrace.h), on a card that has them, in a runtime built with the Windows SDK's dxc
@@ -13893,7 +13893,7 @@ index 33398c9..e3cbfcb 100644
 From 88fc4cf572f741a6beb48207cbe0cede3c96f8f7 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:51:05 -0500
-Subject: [PATCH 12/38] Ray traced reflections through the frame's scene;
+Subject: [PATCH 12/41] Ray traced reflections through the frame's scene;
  device-lost diagnostics (XBE_D3D12_DRED, XBE_D3D12_DEBUG)
 
 Reflections (gpu::kRtReflections, rt_refl.hlsl): a pixel shader over the frame's 3D before its anti-aliasing. Where
@@ -14781,7 +14781,7 @@ index bb18227..52518f6 100644
 From c32067df5bfe9a7881f941b76efdf7cfcc102e8d Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 20:18:06 -0500
-Subject: [PATCH 13/38] Ray traced bounce lighting, smoothed by full-size
+Subject: [PATCH 13/41] Ray traced bounce lighting, smoothed by full-size
  guides; the passes share one pipeline maker
 
 Bounce lighting (gpu::kRtLighting, rt_gi.hlsl): at half the 3D's size (XBE_RT_GI_SCALE), each pixel finds its
@@ -15567,7 +15567,7 @@ index 0000000..6de6059
 From 451bb2881e4734f62f7117414769be6c8236928d Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 20:50:14 -0500
-Subject: [PATCH 14/38] DLSS Ray Reconstruction: ray tracing's light denoised
+Subject: [PATCH 14/41] DLSS Ray Reconstruction: ray tracing's light denoised
  by DLSS with the guides
 
 With anti-aliasing on NVIDIA DLSS and Streamline's DLSS-RR files there (sl.dlss_d.dll,
@@ -16624,7 +16624,7 @@ index 0000000..e5ec8ec
 From 02f1da857ebfbc5ebc455c46d6bd554880b1ed81 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 21:05:27 -0500
-Subject: [PATCH 15/38] The bounce lighting's own denoiser, for cards whose
+Subject: [PATCH 15/41] The bounce lighting's own denoiser, for cards whose
  anti-aliasing does not denoise
 
 When no vendor's denoiser takes the frame (AMD FSR; DLSS without Ray Reconstruction's
@@ -17116,7 +17116,7 @@ index 0000000..f964668
 From 6c6bbd2392908bddc4414b2eb307140c3134d068 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 21:20:22 -0500
-Subject: [PATCH 16/38] The port's own denoiser takes the reflections and
+Subject: [PATCH 16/41] The port's own denoiser takes the reflections and
  ambient occlusion too
 
 When no vendor's denoiser takes the frame, ray traced ambient occlusion is gathered over the
@@ -17894,7 +17894,7 @@ index 0000000..aa89638
 From f298962a91bea475831791482cdaf1e0da4e9774 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 06:59:49 -0500
-Subject: [PATCH 17/38] Ray tracing: brightness-neutral lighting, water,
+Subject: [PATCH 17/41] Ray tracing: brightness-neutral lighting, water,
  lights, shadows, sky, shafts, quality
 
 - Bounce lighting takes the place of the game's flat fill: the room's average
@@ -20155,7 +20155,7 @@ index 0000000..94b3b9f
 From 159b084a04d7cd9a3ecb68d3bdfe92385e50fe25 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 07:49:59 -0500
-Subject: [PATCH 18/38] Ray tracing: steady lights, no sky haze in the light
+Subject: [PATCH 18/41] Ray tracing: steady lights, no sky haze in the light
  shafts
 
 - The lights sampled are the same every frame, up to 128 (the scene's own
@@ -20407,7 +20407,7 @@ index 944fbbb..842997c 100644
 From d5079c328aa8a90e146c274b18dffecf593b40ce Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 08:23:03 -0500
-Subject: [PATCH 19/38] Ray tracing: light shafts steady and subtle (the
+Subject: [PATCH 19/41] Ray tracing: light shafts steady and subtle (the
  flicker in rooms past the courtyard)
 
 The shafts were what sparkled: lights drawn flat (a fountain's spray, motes, a
@@ -20575,7 +20575,7 @@ index 842997c..25f0e59 100644
 From f8213ca4da69baa4bb4ffb3d9c53396fb2842870 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 09:30:52 -0500
-Subject: [PATCH 20/38] Ray tracing: only steady glows are lights, none bigger
+Subject: [PATCH 20/41] Ray tracing: only steady glows are lights, none bigger
  than a torch's flame; a gain on the lit side
 
 A sword's swing, a hit's sparks and a spell's burst were lights for the few
@@ -20774,7 +20774,7 @@ index 25f0e59..0b52482 100644
 From 8f9e441ae51a5b9480a19cb0ac0df68997bad0fb Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 09:40:02 -0500
-Subject: [PATCH 21/38] Ray tracing: the stronger contrast by default;
+Subject: [PATCH 21/41] Ray tracing: the stronger contrast by default;
  XBE_RT_VIEW 17, the lights' light alone
 
 Julian picked the stronger of the looks compared room by room: a surface
@@ -20871,7 +20871,7 @@ index 524bb6f..7305652 100644
 From 18f86cf3abfade7d07250990d6d411f82beee565 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 10:09:44 -0500
-Subject: [PATCH 22/38] Ray tracing: a light up to a torch's flame counts whole
+Subject: [PATCH 22/41] Ray tracing: a light up to a torch's flame counts whole
  (XBE_RT_LIGHTS_AREA 30000); XBE_RT_LIGHTS_LOG
 
 At 4000 a torch's flame, two triangles of some 15000, threw a sixth of its
@@ -20942,7 +20942,7 @@ index 9c410c6..9a30b80 100644
 From f7dab6e5d45fe6ca22ed9e27a35a47eb2d6c2951 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 10:45:47 -0500
-Subject: [PATCH 23/38] Ray tracing: realism fixes (untested): see-through
+Subject: [PATCH 23/41] Ray tracing: realism fixes (untested): see-through
  leaves and ivy, characters lit as the room, steady room light
 
 - Blended pictures with clear parts (ivy, fallen leaves) are cut-outs to rays (XBE_RT_CUTOUT_BLEND 16), so the
@@ -21303,7 +21303,7 @@ index af08efe..9035b31 100644
 From ef6ff50614d9553542672f20a45710a4656ad6d9 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:17:37 -0500
-Subject: [PATCH 24/38] Ray tracing: characters gain none of the bounce above
+Subject: [PATCH 24/41] Ray tracing: characters gain none of the bounce above
  the room's average (XBE_RT_GI_CHAR_BOOST 0)
 
 The game lights Hector and the enemies with lights of their own; added to theirs, what the rays found above the
@@ -21379,7 +21379,7 @@ index 5a17af6..b46d6a7 100644
 From b003f73b601f0801cfeaf28bc9f4fbeab71f0197 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:29:58 -0500
-Subject: [PATCH 25/38] Ray tracing: see-through layers to ambient occlusion;
+Subject: [PATCH 25/41] Ray tracing: see-through layers to ambient occlusion;
  the water's glow gathered by bounce rays
 
 - Every picture's alpha is looked at as it is uploaded (AlphaKind), the game's own as well as a pack's: one with
@@ -21834,7 +21834,7 @@ index 9035b31..c3ffcca 100644
 From 915959e6c915ed1089b33bca89f0bda45f168094 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:39:02 -0500
-Subject: [PATCH 26/38] Ray tracing: this title's leaves and ivy are cut-outs
+Subject: [PATCH 26/41] Ray tracing: this title's leaves and ivy are cut-outs
  (its alpha read through a stage with no texture)
 
 The title draws its world with stage 0 MODULATE(TEXTURE, DIFFUSE) and a MODULATE left at stage 1 over no texture,
@@ -21992,7 +21992,7 @@ index ccf8b2d..1f8270d 100644
 From 5f0492a7c84d750d7340efd29f64dee00ec61d1c Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:54:35 -0500
-Subject: [PATCH 27/38] Ray tracing: ambient occlusion spares the glows drawn
+Subject: [PATCH 27/41] Ray tracing: ambient occlusion spares the glows drawn
  over a pixel
 
 The lamps' light beams are glows that write the depth; ambient occlusion, multiplied into the frame after them,
@@ -22146,7 +22146,7 @@ index c3ffcca..bffff2d 100644
 From 88508749b37de46688e44781bf27ca016f453494 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:59:06 -0500
-Subject: [PATCH 28/38] Ray tracing: GlowsAlong after Spot (rt_scene.hlsli)
+Subject: [PATCH 28/41] Ray tracing: GlowsAlong after Spot (rt_scene.hlsli)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
@@ -22241,7 +22241,7 @@ index bffff2d..728b01d 100644
 From aff34dd589be099404a97a3b739810ed216c2831 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 12:37:56 -0500
-Subject: [PATCH 29/38] Ray tracing: the save room marker lights no floor; the
+Subject: [PATCH 29/41] Ray tracing: the save room marker lights no floor; the
  top draw found by the depth (untested)
 
 - A glow drawn by a pixel shader program is no light (the marker's swirl, masked to a ring by a second picture,
@@ -22390,7 +22390,7 @@ index 728b01d..e3d02f4 100644
 From dd240b2974ac611498530a03e9e99cc6f37a3066 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 12:48:58 -0500
-Subject: [PATCH 30/38] Ray tracing: the bounce lighting as a gain on the
+Subject: [PATCH 30/41] Ray tracing: the bounce lighting as a gain on the
  game's own light; the frame's draw by its depth
 
 The bounce lighting's lit side was added in the surface's picture's colour: the save room door's panel, a bright
@@ -22610,7 +22610,7 @@ index e3d02f4..4852371 100644
 From 53f6f5924da6e026d87469f52d5a39312b6d767a Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 13:10:30 -0500
-Subject: [PATCH 31/38] Ray tracing: the lights' light bounced a second time;
+Subject: [PATCH 31/41] Ray tracing: the lights' light bounced a second time;
  characters' shadows from the lamps near them
 
 rt_lights.hlsli holds the lights' sampling (PickLight, LightAt) for rt_gi and rt_ao.
@@ -22981,7 +22981,7 @@ index 0000000..13d5855
 From 18c37434ee9619de9f0174bf65999e3fe435df90 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:00:55 -0500
-Subject: [PATCH 32/38] Ray tracing: lights' samples kept frame to frame, glows
+Subject: [PATCH 32/41] Ray tracing: lights' samples kept frame to frame, glows
  remembered off screen, flames drawn flat as lights
 
 The bounce pass keeps each texel's light sample (rt_gi.hlsl's second target) and
@@ -24047,7 +24047,7 @@ index 13d5855..25662de 100644
 From 956b5c80c6a596d251070cebd5b4eafedd99a9ab Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:08:52 -0500
-Subject: [PATCH 33/38] Ray tracing: a flame drawn flat lights as one of at
+Subject: [PATCH 33/41] Ray tracing: a flame drawn flat lights as one of at
  least 8000 units' area (XBE_RT_LIGHTS_FLAME)
 
 Torch and candle sprites are small, and lit their walls by their sprite's area
@@ -24140,7 +24140,7 @@ index 25662de..253dec4 100644
 From 5cd0cbc155a3780700c9fee424368bc3bb9f8057 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:45:47 -0500
-Subject: [PATCH 34/38] Pipelines kept between sessions (D3D12 pipeline
+Subject: [PATCH 34/41] Pipelines kept between sessions (D3D12 pipeline
  library); frames that hitch logged (untested)
 
 A pipeline took 10-25 ms to make even with its shaders read from the disk cache:
@@ -24583,7 +24583,7 @@ index 6f3dac5..efc21b1 100644
 From 32a9d57f4268c3a27407d64c1ab4e8d104ffe581 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:56:35 -0500
-Subject: [PATCH 35/38] Pipeline cache's functions outside the file's own
+Subject: [PATCH 35/41] Pipeline cache's functions outside the file's own
  namespace (the link)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -24645,7 +24645,7 @@ index a582900..3c43d01 100644
 From 5ba1a470ae32df46b9cdc7c3dd1c52f327d35161 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:00:32 -0500
-Subject: [PATCH 36/38] Ray tracing: the bounce rays' glow gather leaves out
+Subject: [PATCH 36/41] Ray tracing: the bounce rays' glow gather leaves out
  the lights sampled as lights
 
 A lamp's glow in front of its wall was counted twice: sampled as a light, and
@@ -24729,7 +24729,7 @@ index 4852371..cfed908 100644
 From 30b52505d3d25aea8d2d7a6827ba9b0a79621301 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:14:35 -0500
-Subject: [PATCH 37/38] Ray tracing: a surface's light eased toward a ceiling
+Subject: [PATCH 37/41] Ray tracing: a surface's light eased toward a ceiling
  rather than doubled (XBE_RT_GI_LIFT_MOST 0.7, KNEE 0.3)
 
 Raised linearly up to the knee, then eased toward the most: the stone right by
@@ -24798,7 +24798,7 @@ index 3251f12..c361218 100644
 From 7058b40343af8bfa91a912120fe63c38eff93361 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:52:56 -0500
-Subject: [PATCH 38/38] Shaders prepared ahead: every pipeline listed and made
+Subject: [PATCH 38/41] Shaders prepared ahead: every pipeline listed and made
  before it is drawn; --prepare-shaders; a game's file read hook
 
 The pipeline library (cache/shaders/pipelines.bin) now has a list beside it (pipelines.list): every pipeline the
@@ -25477,6 +25477,646 @@ index ed25550..6c33632 100644
  
  // boot
  bool Boot(std::vector<uint8_t> xbe, const std::string& xbe_name, const std::string& game_dir, const std::string& data_dir);
+-- 
+2.43.0
+
+
+From 8308d688720145651848ba357de7e505b2f4fffe Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Wed, 4 Nov 2026 16:17:09 -0500
+Subject: [PATCH 39/41] Ray tracing: glows in an instance of their own, the
+ lights' light with an end, the sky's light held
+
+- The world's glows (emissive draws) go into a bottom level and instance of their own (mask 8), which only the
+  rays that gather glows (GlowsAlong, LightAlong) cross. Every other ray crossed them as candidates passed over one
+  by one: the save room 5.27's 500 water glows stacked on its walls slowed the frame past 1/60 s, the game with it.
+- A light's light eases to nothing toward XBE_RT_LIGHTS_REACH (2500 view units, the bounce rays' reach; the list's
+  fourth column): a purple lamp in view lit the mountains across the valley behind it.
+- The sky's light is held over the frames since the cut (rt_gimean.hlsl 4): its share of the frame rises toward the
+  most seen (XBE_RT_SKY_RISE, 60 frames) and does not fall, its colour eases (XBE_RT_SKY_EASE, 120). Measured from
+  each frame alone, the outdoors grew brighter as the camera tilted up and darker as it tilted down.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
+---
+ runtime/gpu/d3d12.cpp       | 57 +++++++++++++++++++++++++----
+ runtime/gpu/raytrace.cpp    | 71 +++++++++++++++++++++++--------------
+ runtime/gpu/raytrace.h      |  4 +--
+ runtime/gpu/rt_gimean.hlsl  | 13 ++++++-
+ runtime/gpu/rt_lights.hlsli | 14 ++++++--
+ runtime/gpu/rt_scene.hlsli  |  6 ++--
+ 6 files changed, 124 insertions(+), 41 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index 0e66226..fc254a2 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -93,7 +93,7 @@ constexpr uint32_t kRd = 8;
+ // the bounce lighting's room average (Lighting, rt_gimean.hlsl), last: its four levels, each 1/8 of the one before,
+ // and its eased value twice over (this frame's and the frame before's)
+ constexpr uint32_t kMeanRtv = kRdRtv + kRd;
+-constexpr uint32_t kMean = 7;  // the room's average bounce's levels and eased pair; the sky's (SkyLight)
++constexpr uint32_t kMean = 9;  // the room's average bounce's levels and eased pair; the sky's (SkyLight), held pair
+ // the light shafts' (Shafts, rt_shafts.hlsl), last: this frame's march, its gathered twice over
+ constexpr uint32_t kShaftRtv = kMeanRtv + kMean;
+ constexpr uint32_t kShafts = 3;
+@@ -858,7 +858,8 @@ private:
+     bool rt_view_now_ = false;  // this frame's camera, and its move from the frame before, known (the water's)
+     // the sky's measure this frame (SkyLight's SRV index, -1 none) and the frame it was made for
+     float sky_slot_ = -1;
+-    uint64_t sky_frame_ = UINT64_MAX;
++    uint64_t sky_frame_ = UINT64_MAX, sky_hold_frame_ = UINT64_MAX;
++    uint32_t sky_cur_ = 0;
+     // the light shafts' targets (Shafts): the march, the gathered twice over (shaft_cur_ this frame's)
+     ComPtr<ID3D12Resource> shafts_[kShafts];
+     D3D12_RESOURCE_STATES shafts_state_[kShafts] = {};
+@@ -1252,6 +1253,16 @@ private:
+     // XBE_RT_LIGHTS_FLAME: the least area a flame drawn flat (a torch's, a candle's sprite) lights as, up to 16 times
+     // its own (rt_lights.hlsli), as a float's bits for the lights' list (8000: 5.8's torch warmed its wall by a third,
+     // the room some 15% against RT off's; 30000 washed the room out; 0: as its sprite alone)
++    // how far a light's light reaches (XBE_RT_LIGHTS_REACH, 2500 view units, the bounce rays' own reach; 0: no end),
++    // a float's bits for the list's fourth column: eased to nothing toward it (rt_lights.hlsli's Reach). Without it a
++    // lamp in view lit the mountains across the valley behind it, its light only falling with the distance squared
++    static uint32_t LightReach() {
++        static const float kReach = std::getenv("XBE_RT_LIGHTS_REACH") ? float(std::atof(std::getenv("XBE_RT_LIGHTS_REACH")))
++                                                                       : 2500.0f;
++        uint32_t bits;
++        std::memcpy(&bits, &kReach, sizeof(bits));
++        return bits;
++    }
+     static uint32_t FlameArea() {
+         static const float kFlame = std::getenv("XBE_RT_LIGHTS_FLAME") ? float(std::atof(std::getenv("XBE_RT_LIGHTS_FLAME")))
+                                                                       : 8000.0f;
+@@ -6129,6 +6140,7 @@ bool D3D12Backend::EnsureMeanTargets(uint32_t tw, uint32_t th) {
+         mean_for_w_ = tw;
+         mean_for_h_ = th;
+         mean_frame_ = UINT64_MAX;
++        sky_hold_frame_ = UINT64_MAX;
+     }
+     return true;
+ }
+@@ -6145,11 +6157,13 @@ float D3D12Backend::SkyLight(Target& t, uint32_t rw, uint32_t rh, uint32_t tw, u
+     if (kSky <= 0 || !EnsureMeanTargets(tw, th)) return -1;
+     const D3D12_RESOURCE_STATES kRead =
+         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+-    constexpr uint32_t kSkyMean = kMean - 1;
+-    uint32_t slot = AllocSrvSlots(3);
++    constexpr uint32_t kSkyMean = 6, kSkyHeld = 7;  // this frame's, then the held pair
++    uint32_t slot = AllocSrvSlots(5);
+     TextureSrv(t.res.Get(), t.fmt, slot);
+     TextureSrv(aa_depth_.Get(), DXGI_FORMAT_R32_FLOAT, slot + 1);
+     TextureSrv(mean_[kSkyMean].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, slot + 2);
++    TextureSrv(mean_[kSkyHeld].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, slot + 3);
++    TextureSrv(mean_[kSkyHeld + 1].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, slot + 4);
+     float p[8] = {float(slot), float(rw), float(rh), 3, float(slot + 1), ao_view_.near_w, ao_view_.far_w, 0};
+     Alloc cb = Upload(256, 256);
+     std::memcpy(cb.cpu, p, sizeof(p));
+@@ -6163,7 +6177,32 @@ float D3D12Backend::SkyLight(Target& t, uint32_t rw, uint32_t rh, uint32_t tw, u
+         LOGR("ray tracing: the sky's light %s, strength %.2f", drawn ? "measured" : "not measured", double(kSky));
+         sky_said_ = true;
+     }
+-    sky_slot_ = drawn ? float(slot + 2) : -1.0f;
++    // held over the frames since the cut (rt_gimean.hlsl, 4): the sky as the frame showed it rose and fell as the
++    // camera tilted (more of it in view looking up, none looking down at Hector), and the whole outdoors' light with
++    // it. Its share of the frame rises toward the most seen (over about a second) and does not fall; its colour eases
++    // toward the frame's over about two seconds while any is in view
++    if (drawn) {
++        static const float kRise = 1.0f / std::max(1.0f, env("XBE_RT_SKY_RISE", 60.0f)),
++                           kHue = 1.0f / std::max(1.0f, env("XBE_RT_SKY_EASE", 120.0f));
++        bool reset = rt_reset_ || sky_hold_frame_ == UINT64_MAX || sky_hold_frame_ + 30 < presents_;
++        uint32_t cur = kSkyHeld + (sky_cur_ ^ 1), prev = kSkyHeld + sky_cur_;
++        float h[8] = {float(slot + 2), 1, 1, 4, float(slot + 3 + (prev - kSkyHeld)), kHue, reset ? 1.0f : 0.0f, kRise};
++        Alloc hcb = Upload(256, 256);
++        std::memcpy(hcb.cpu, h, sizeof(h));
++        Transition(mean_[prev].Get(), mean_state_[prev], kRead);
++        Transition(mean_[cur].Get(), mean_state_[cur], D3D12_RESOURCE_STATE_RENDER_TARGET);
++        drawn = rt_.Trace(rt::Scene::Pass::BounceMean, hcb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++                          Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kMeanRtv + cur, rtv_inc_),
++                          DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 1);
++        Transition(mean_[cur].Get(), mean_state_[cur], kRead);
++        if (drawn) {
++            sky_cur_ ^= 1;
++            sky_hold_frame_ = presents_;
++            sky_slot_ = float(slot + 3 + (cur - kSkyHeld));
++            return sky_slot_;
++        }
++    }
++    sky_slot_ = -1.0f;
+     return sky_slot_;
+ }
+ 
+@@ -6232,12 +6271,14 @@ uint32_t D3D12Backend::LightList(float lt[4], float sk[4], uint32_t list[][4]) {
+     lt[3] = kLightMost;
+     sk[2] = kFlat;
+     sk[3] = kLightArea;
+-    const uint32_t flame = FlameArea();
++    const uint32_t flame = FlameArea(), reach = LightReach();
+     for (uint32_t i = 0; i < lights; i++) {
+         list[i][0] = em[i * 2];
+         list[i][1] = em[i * 2 + 1];
+         list[i][2] = flame;
++        list[i][3] = reach;
+     }
++    list[0][3] = reach;  // the glows remembered off screen's too, listed or not
+     return lights;
+ }
+ 
+@@ -6386,12 +6427,14 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     gc.lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
+     gc.lt[2] = std::max(1.0f, kLightTries);
+     gc.lt[3] = kLightMost;
+-    const uint32_t flame = FlameArea();
++    const uint32_t flame = FlameArea(), reach = LightReach();
+     for (uint32_t i = 0; i < lights; i++) {
+         gc.list[i][0] = em[i * 2];
+         gc.list[i][1] = em[i * 2 + 1];
+         gc.list[i][2] = flame;
++        gc.list[i][3] = reach;
+     }
++    gc.list[0][3] = reach;
+     if (lights && !lights_said_) {
+         LOGR("ray tracing: %zu lights in the scene (its glows, flames and spells), %u sampled a frame", em.size() / 2,
+              lights);
+diff --git a/runtime/gpu/raytrace.cpp b/runtime/gpu/raytrace.cpp
+index 4a8d52b..f9064b2 100644
+--- a/runtime/gpu/raytrace.cpp
++++ b/runtime/gpu/raytrace.cpp
+@@ -412,19 +412,25 @@ uint32_t Scene::LateBefore() const {
+ bool Scene::Build(const float to_view[12], const float* water, const uint32_t* water_pictures) {
+     if (!ready_ || built_ || geoms_.empty()) return false;
+     Slot& s = slots_[slot_];
+-    // the scene's draws first, then the characters' (an instance of their own, mask 4: what the character shadows'
++    // the scene's solid draws and cut-outs first, then its glows (an instance of their own, mask 8: only the rays that
++    // gather glows meet them), then the characters' (an instance of their own, mask 4: what the character shadows'
+     // rays meet), then the lights drawn flat (in no instance: the lights' samples alone read them), each in the order
+-    // drawn; the water after them
+-    auto group = [](const Geometry& g) { return g.look.screen ? 2 : g.look.character ? 1 : 0; };
++    // drawn; the water after them. The glows were in the world's instance, which every ray crosses, as candidates each
++    // ray's loop passed over one by one: the save room's 500 water glows stacked over its walls slowed the frame to
++    // half speed
++    auto group = [](const Geometry& g) {
++        return g.look.screen ? 3 : g.look.character ? 2 : g.look.emissive ? 1 : 0;
++    };
+     std::stable_sort(geoms_.begin(), geoms_.end(),
+                      [&](const Geometry& a, const Geometry& b) { return group(a) < group(b); });
+     const size_t n = geoms_.size();
+-    size_t chars = 0, flat = 0;
++    size_t glows = 0, chars = 0, flat = 0;
+     for (const Geometry& g : geoms_) {
+-        chars += group(g) == 1 ? 1 : 0;
+-        flat += group(g) == 2 ? 1 : 0;
++        glows += group(g) == 1 ? 1 : 0;
++        chars += group(g) == 2 ? 1 : 0;
++        flat += group(g) == 3 ? 1 : 0;
+     }
+-    const size_t world = n - chars - flat;
++    const size_t world = n - chars - flat, solid = world - glows;
+ 
+     // the frame before's late water (LateCapture), when it was the frame just before and its move is known: its
+     // vertices copied into this frame's capture after the scene's, its indices into this frame's index buffer (the
+@@ -551,34 +557,37 @@ bool Scene::Build(const float to_view[12], const float* water, const uint32_t* w
+         in.pGeometryDescs = d.data();
+         return in;
+     };
+-    // the world's (when it has none, the characters' alone), the characters', the water's
+-    describe(geoms_.data(), world, descs_);
+-    std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> cdescs, wdescs;
++    // the world's (when it has none, the characters' alone), its glows', the characters', the water's
++    describe(geoms_.data(), solid, descs_);
++    std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> gdescs, cdescs, wdescs;
++    describe(geoms_.data() + solid, glows, gdescs);
+     describe(geoms_.data() + world, chars, cdescs);
+     describe(wgeoms.data(), wgeoms.size(), wdescs, true);
+-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom = inputs(descs_), cbottom = inputs(cdescs),
+-                                                         wbottom = inputs(wdescs);
+-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bi{}, ci{}, wi{};
+-    if (world) dev_->GetRaytracingAccelerationStructurePrebuildInfo(&bottom, &bi);
++    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom = inputs(descs_), gbottom = inputs(gdescs),
++                                                         cbottom = inputs(cdescs), wbottom = inputs(wdescs);
++    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bi{}, gi{}, ci{}, wi{};
++    if (solid) dev_->GetRaytracingAccelerationStructurePrebuildInfo(&bottom, &bi);
++    if (glows) dev_->GetRaytracingAccelerationStructurePrebuildInfo(&gbottom, &gi);
+     if (chars) dev_->GetRaytracingAccelerationStructurePrebuildInfo(&cbottom, &ci);
+     if (wet) dev_->GetRaytracingAccelerationStructurePrebuildInfo(&wbottom, &wi);
+ 
+     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS top{};
+     top.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+     top.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+-    top.NumDescs = 3;  // room for the characters' and the water's instances
++    top.NumDescs = 4;  // room for the glows', the characters' and the water's instances
+     top.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO ti{};
+     dev_->GetRaytracingAccelerationStructurePrebuildInfo(&top, &ti);
+ 
+     const auto kAs = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+-    uint64_t scratch = std::max({bi.ScratchDataSizeInBytes, ci.ScratchDataSizeInBytes, ti.ScratchDataSizeInBytes,
+-                                 wi.ScratchDataSizeInBytes});
+-    if ((world && !Ensure(s.blas, s.blas_bytes, bi.ResultDataMaxSizeInBytes, kAs)) ||
++    uint64_t scratch = std::max({bi.ScratchDataSizeInBytes, gi.ScratchDataSizeInBytes, ci.ScratchDataSizeInBytes,
++                                 ti.ScratchDataSizeInBytes, wi.ScratchDataSizeInBytes});
++    if ((solid && !Ensure(s.blas, s.blas_bytes, bi.ResultDataMaxSizeInBytes, kAs)) ||
+         !Ensure(s.tlas, s.tlas_bytes, ti.ResultDataMaxSizeInBytes, kAs) ||
+         !Ensure(s.scratch, s.scratch_bytes, scratch, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+         return false;
+     bool people = chars && Ensure(s.cblas, s.cblas_bytes, ci.ResultDataMaxSizeInBytes, kAs);
++    bool glowing = glows && Ensure(s.gblas, s.gblas_bytes, gi.ResultDataMaxSizeInBytes, kAs);
+     if (wet && !Ensure(s.wblas, s.wblas_bytes, wi.ResultDataMaxSizeInBytes, kAs)) wet = false;
+ 
+     // each bottom level in turn, the scratch shared (a barrier between)
+@@ -590,22 +599,31 @@ bool Scene::Build(const float to_view[12], const float* water, const uint32_t* w
+         cl_->BuildRaytracingAccelerationStructure(&bd, 0, nullptr);
+         UavBarrier();
+     };
+-    if (world) build(bottom, s.blas.Get());
++    if (solid) build(bottom, s.blas.Get());
++    if (glowing) build(gbottom, s.gblas.Get());
+     if (people) build(cbottom, s.cblas.Get());
+     if (wet) build(wbottom, s.wblas.Get());
+ 
+     // the world's instance (mask 1): the captured clip x, y and w put back into view space; the characters' (mask 4)
+     // likewise, their draws in the table after the world's (its instance ID, which a hit's geometry index adds to);
+     // the water's (mask 2): the frame before's, moved into this frame's view, its draws in the table after those
+-    D3D12_RAYTRACING_INSTANCE_DESC inst[3] = {};
++    D3D12_RAYTRACING_INSTANCE_DESC inst[4] = {};
+     uint32_t count = 0;
+-    if (world) {
++    if (solid) {
+         std::memcpy(inst[count].Transform, to_view, sizeof(float) * 12);
+         inst[count].InstanceMask = 0x01;
+         inst[count].InstanceID = 0;
+         inst[count].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
+         inst[count++].AccelerationStructure = s.blas->GetGPUVirtualAddress();
+     }
++    // the glows' (mask 8): their draws in the table after the world's solid ones
++    if (glowing) {
++        std::memcpy(inst[count].Transform, to_view, sizeof(float) * 12);
++        inst[count].InstanceMask = 0x08;
++        inst[count].InstanceID = uint32_t(solid);
++        inst[count].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
++        inst[count++].AccelerationStructure = s.gblas->GetGPUVirtualAddress();
++    }
+     if (people) {
+         std::memcpy(inst[count].Transform, to_view, sizeof(float) * 12);
+         inst[count].InstanceMask = 0x04;
+@@ -621,6 +639,7 @@ bool Scene::Build(const float to_view[12], const float* water, const uint32_t* w
+         inst[count++].AccelerationStructure = s.wblas->GetGPUVirtualAddress();
+     }
+     if (!count) return false;
++    static_assert(sizeof(inst) <= 256, "the instances' upload buffer (Init) holds 256 bytes");
+     std::memcpy(s.instance_map, inst, sizeof(inst));
+     top.NumDescs = count;
+     has_water_ = wet;
+@@ -637,11 +656,11 @@ bool Scene::Build(const float to_view[12], const float* water, const uint32_t* w
+     // the first frame's, then one every half minute or so (XBE_RT_LIGHTS_LOG: every 5 seconds, with its lights)
+     static const uint64_t kEvery = std::getenv("XBE_RT_LIGHTS_LOG") ? 300 : 1800;
+     if (builds_++ % kEvery == 0) {
+-        LOGR("ray tracing: the frame's scene, %zu draws (%zu of characters, %zu lights drawn flat, %u of water), %llu "
+-             "triangles, %u vertices; %.1f MB built; %zu lights listed (%zu of them drawn flat)", n, chars, flat,
+-             waters_, (unsigned long long)triangles, used_,
+-             double(bi.ResultDataMaxSizeInBytes + ci.ResultDataMaxSizeInBytes) / 1048576.0, emissive_.size() / 2,
+-             emissive_.size() / 2 - emissive_solid_);
++        LOGR("ray tracing: the frame's scene, %zu draws (%zu glows, %zu of characters, %zu lights drawn flat, %u of "
++             "water), %llu triangles, %u vertices; %.1f MB built; %zu lights listed (%zu of them drawn flat)", n, glows,
++             chars, flat, waters_, (unsigned long long)triangles, used_,
++             double(bi.ResultDataMaxSizeInBytes + gi.ResultDataMaxSizeInBytes + ci.ResultDataMaxSizeInBytes) / 1048576.0,
++             emissive_.size() / 2, emissive_.size() / 2 - emissive_solid_);
+     }
+     return true;
+ }
+diff --git a/runtime/gpu/raytrace.h b/runtime/gpu/raytrace.h
+index 4555714..d97cee0 100644
+--- a/runtime/gpu/raytrace.h
++++ b/runtime/gpu/raytrace.h
+@@ -203,8 +203,8 @@ private:
+         // the frame it was; the water instance's own BLAS when this slot's frame took the frame before's
+         Microsoft::WRL::ComPtr<ID3D12Resource> late, late_index, wblas;
+         uint64_t late_bytes = 0, late_index_bytes = 0, wblas_bytes = 0;
+-        Microsoft::WRL::ComPtr<ID3D12Resource> cblas;  // the characters' bottom level
+-        uint64_t cblas_bytes = 0;
++        Microsoft::WRL::ComPtr<ID3D12Resource> cblas, gblas;  // the characters' bottom level, the glows'
++        uint64_t cblas_bytes = 0, gblas_bytes = 0;
+         uint32_t* late_index_map = nullptr;
+         D3D12_RESOURCE_STATES late_state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+         std::vector<Geometry> late_geoms;
+diff --git a/runtime/gpu/rt_gimean.hlsl b/runtime/gpu/rt_gimean.hlsl
+index cb3a6dc..19d45d6 100644
+--- a/runtime/gpu/rt_gimean.hlsl
++++ b/runtime/gpu/rt_gimean.hlsl
+@@ -13,7 +13,8 @@ cbuffer P : register(b0) {
+                   // buffer's 0 and 1), and the share of the frame it covers (rgb the mean, alpha the share that had any), 2: hold
+                   // the room's mean over the frames, the last level's this frame's
+     float4 ease;  // the SRV heap's index of the held mean before, the least share of it this frame's is (1 over the
+-                  // frames it holds), 1: start over
++                  // frames it holds), 1: start over; 4 (the sky held): the held before, its colour's ease, start over,
++                  // its share's rise
+ };
+ static const float4 cam = float4(0, 0, 0, 0);  // rt_scene.hlsli's view and size, which nothing here traces
+ static const float4 part = float4(1, 1, 1, 1);  // through
+@@ -41,6 +42,16 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+             }
+         return n > 0 ? float4(sum / n, n / (64 * 36)) : 0;
+     }
++    if (src.w == 4) {
++        // the sky held over the frames since the cut (ease.x the held before, y its colour's ease, z start over, w its
++        // share's rise): its share rises toward the most the frame has shown and does not fall (looking down at Hector
++        // is not going indoors), its colour eases toward the frame's while any is in view
++        float4 now = Tex(src.x).Load(int3(0, 0, 0));
++        float4 before = Tex(ease.x).Load(int3(0, 0, 0));
++        if (ease.z != 0 || before.a <= 0) return now;
++        if (now.a <= 0) return before;
++        return float4(lerp(before.rgb, now.rgb, ease.y), now.a > before.a ? lerp(before.a, now.a, ease.w) : before.a);
++    }
+     if (src.w == 2) {
+         // the mean of the frames since the cut (alpha: how many), of the last 1 / ease.y once there are more: the
+         // room's, not the view's (eased toward each frame's, it rose and fell as the camera turned)
+diff --git a/runtime/gpu/rt_lights.hlsli b/runtime/gpu/rt_lights.hlsli
+index 253dec4..d8bf424 100644
+--- a/runtime/gpu/rt_lights.hlsli
++++ b/runtime/gpu/rt_lights.hlsli
+@@ -46,6 +46,16 @@ float3 LightEmits(uint li, uint prim, float2 bary, out Spot s, out float area) {
+ // unshadowed, as a small glowing patch (no side of a sprite turned away from it; no nearer than a little way off: a
+ // wall right behind a flame is lit, not burnt white), the point (q), and one over how likely a candidate is to be it
+ // (inv: its triangle's area, its light's triangles, the lights)
++// How much of a light's light reaches d2 (its distance squared) away: all of it near, eased to nothing toward the
++// reach (the list's fourth column, a float's bits; 0: no end)
++float Reach(float d2, uint li) {
++    float r = asfloat(lights[li].w);
++    if (r <= 0) return 1;
++    float x = d2 / (r * r);
++    float w = saturate(1 - x * x);
++    return w * w;
++}
++
+ float3 LightPoint(uint li, uint prim, float2 bary, float3 p, float3 n, out float3 q, out float inv) {
+     uint count = min(uint(lt.x), 128u);
+     uint tris = max(lights[li].y, 1u);
+@@ -57,7 +67,7 @@ float3 LightPoint(uint li, uint prim, float2 bary, float3 p, float3 n, out float
+     float3 d = q - p;
+     float d2 = dot(d, d);
+     float cosn = saturate(dot(n, d * rsqrt(max(d2, 1e-8f))));
+-    return e * cosn / (d2 + max(area * 0.25f, 3600.0f));
++    return e * cosn * Reach(d2, li) / (d2 + max(area * 0.25f, 3600.0f));
+ }
+ 
+ #ifdef RT_GLOW_MEMORY
+@@ -75,7 +85,7 @@ float3 Remembered(uint r, float3 p, float3 n, out float3 q) {
+     float3 d = q - p;
+     float d2 = dot(d, d);
+     float cosn = saturate(dot(n, d * rsqrt(max(d2, 1e-8f))));
+-    return b.rgb * cosn / (d2 + b.w);
++    return b.rgb * cosn * Reach(d2, 0) / (d2 + b.w);
+ }
+ #endif
+ 
+diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
+index cfed908..78833dc 100644
+--- a/runtime/gpu/rt_scene.hlsli
++++ b/runtime/gpu/rt_scene.hlsli
+@@ -74,7 +74,7 @@ float TraceSceneMasked(float3 o, float3 d, float tmin, float tmax, int budget, u
+     r.TMax = tmax;
+     RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
+     // the instances mask picks (1 the world's, 4 the characters': their draws after the world's in the table, a hit's
+-    // draw is its instance's ID and its geometry index; 2 the water's)
++    // draw is its instance's ID and its geometry index; 2 the water's; 8 the world's glows, which no ray here meets)
+     q.TraceRayInline(scene, RAY_FLAG_NONE, mask, r);
+     while (q.Proceed()) {
+         if (q.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
+@@ -103,7 +103,7 @@ bool LightAlong(float3 o, float3 d, float t0, float t1) {
+     r.TMin = t0;
+     r.TMax = t1;
+     RayQuery<RAY_FLAG_CULL_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
+-    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x05, r);
++    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x08, r);  // the glows' instance alone
+     int budget = 8;
+     while (q.Proceed()) {
+         if (budget-- <= 0) break;
+@@ -300,7 +300,7 @@ float3 GlowsAlong(float3 o, float3 d, float tmax, bool unlisted) {
+     r.TMin = 0;
+     r.TMax = tmax;
+     RayQuery<RAY_FLAG_CULL_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
+-    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x01, r);
++    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x08, r);  // the glows' instance alone (raytrace.cpp's Build)
+     float3 sum = 0;
+     int budget = 12;
+     while (q.Proceed()) {
+-- 
+2.43.0
+
+
+From b0f8e7a94817e3cd878e4c362b00dafd5da89280 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Wed, 4 Nov 2026 16:51:34 -0500
+Subject: [PATCH 40/41] The F10 menu's frame capture also keeps the screen as
+ shown (screen.bmp)
+
+A capture kept the console's 640x480 frame (final.bmp), before widescreen, ray tracing and upscaling: what the player
+saw could not be told from it. The back buffer is now read too, before the port's own menus go over it, and written
+at the output's size; HDR (scRGB or HDR10) is brought to SDR, the scene's white to white, the highlights eased in.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
+---
+ runtime/gpu/d3d12.cpp | 102 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 102 insertions(+)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index fc254a2..f1f734f 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -900,6 +900,7 @@ private:
+     void FrameGenInputs(Target* t, uint32_t bi, D3D12_CPU_DESCRIPTOR_HANDLE rh);
+     void MeasureFrame(Target& t);
+     void HdrReadBack(uint32_t bi, D3D12_RESOURCE_STATES& bs);
++    void ScreenShot(uint32_t bi, D3D12_RESOURCE_STATES& bs);
+     void ReleaseOldTextures();
+     void ResetFrame();
+     void CountFps();
+@@ -1028,6 +1029,7 @@ private:
+     // one frame capture: every draw in a text file, each target as the frame leaves it, the textures it read
+     FILE* cap_ = nullptr;
+     std::filesystem::path cap_dir_;
++    std::filesystem::path shot_dir_;  // a capture just finished: the frame as shown goes there (ScreenShot)
+     uint32_t cap_i_ = 0;
+     uint32_t cap_rt_ = 0;
+     std::unordered_set<uint32_t> cap_seen_;
+@@ -7664,6 +7666,14 @@ void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
+     if (hdr_) HdrConstants();
+     if (t) BlitFrame(*t);
+     if (fg_) FrameGenInputs(t, bi, rh);
++    // a capture's frame as the screen shows it, before the port's own menus go over it
++    if (!shot_dir_.empty()) {
++        ScreenShot(bi, bs);
++        shot_dir_.clear();
++        Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
++        cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
++        bound_rt_ = bound_ds_ = nullptr;
++    }
+     if (hdr_) {
+         RenderUiHdr(rh);
+         HdrReadBack(bi, bs);
+@@ -7693,6 +7703,97 @@ float Half(uint16_t h) {
+ 
+ }  // namespace
+ 
++// A capture's (StartCapture, the F10 menu's Capture this frame) picture as the screen shows it: the back buffer at the
++// output's size, widescreen, ray tracing, upscaling and the HUD, as screen.bmp beside the console frame (final.bmp,
++// 640x480 before all of that). HDR is brought to SDR: the scene's white (hdr_scene_nits) to white, the highlights
++// above it eased in rather than cut
++void D3D12Backend::ScreenShot(uint32_t bi, D3D12_RESOURCE_STATES& bs) {
++    D3D12_RESOURCE_DESC rd = bb_[bi]->GetDesc();
++    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp;
++    UINT rows;
++    UINT64 row_size, bytes;
++    dev_->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &row_size, &bytes);
++    ComPtr<ID3D12Resource> rb;
++    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
++    D3D12_RESOURCE_DESC bd = BufferDesc(bytes);
++    if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++                                             IID_PPV_ARGS(&rb))))
++        return;
++    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_COPY_SOURCE);
++    D3D12_TEXTURE_COPY_LOCATION dl{rb.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
++    dl.PlacedFootprint = fp;
++    D3D12_TEXTURE_COPY_LOCATION sl{bb_[bi].Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
++    cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
++    Flush();
++    uint8_t* p = nullptr;
++    if (FAILED(rb->Map(0, nullptr, reinterpret_cast<void**>(&p)))) return;
++    const uint32_t w = uint32_t(rd.Width), h = rd.Height;
++    const DXGI_FORMAT f = rd.Format;
++    const float scene = std::max(hdr_cb_[0] * kScrgbNits, 80.0f);
++    // HDR10's PQ code values to nits
++    static const std::vector<float> pq = [] {
++        std::vector<float> t(1024);
++        for (int i = 0; i < 1024; i++) {
++            double e = std::pow(i / 1023.0, 1 / 78.84375);
++            t[i] = float(10000 * std::pow(std::max(e - 0.8359375, 0.0) / (18.8515625 - 18.6875 * e), 1 / 0.1593017578125));
++        }
++        return t;
++    }();
++    auto srgb = [](float v) {
++        v = std::isfinite(v) ? std::max(v, 0.0f) : 0.0f;
++        v = v < 0.8f ? v : 0.8f + 0.2f * (1 - std::exp(-(v - 0.8f) / 0.2f));  // the highlights eased toward white
++        v = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1 / 2.4f) - 0.055f;
++        return uint8_t(std::clamp(v * 255 + 0.5f, 0.0f, 255.0f));
++    };
++    const uint32_t pitch = (w * 3 + 3) & ~3u;
++    std::vector<uint8_t> out(size_t(pitch) * h);
++    for (uint32_t y = 0; y < h; y++) {
++        const uint8_t* row = p + size_t(y) * fp.Footprint.RowPitch;
++        uint8_t* o = out.data() + size_t(h - 1 - y) * pitch;  // a BMP's rows bottom up
++        for (uint32_t x = 0; x < w; x++, o += 3) {
++            if (f == DXGI_FORMAT_R16G16B16A16_FLOAT) {
++                const uint16_t* v = reinterpret_cast<const uint16_t*>(row) + x * 4;
++                float k = kScrgbNits / scene;
++                o[0] = srgb(Half(v[2]) * k);
++                o[1] = srgb(Half(v[1]) * k);
++                o[2] = srgb(Half(v[0]) * k);
++            } else if (f == DXGI_FORMAT_R10G10B10A2_UNORM) {
++                uint32_t v = reinterpret_cast<const uint32_t*>(row)[x];
++                float r = pq[v & 1023], g = pq[(v >> 10) & 1023], b = pq[(v >> 20) & 1023];
++                // BT.2020 to BT.709
++                float r7 = 1.6605f * r - 0.5876f * g - 0.0728f * b, g7 = -0.1246f * r + 1.1329f * g - 0.0083f * b,
++                      b7 = -0.0182f * r - 0.1006f * g + 1.1187f * b;
++                o[0] = srgb(b7 / scene);
++                o[1] = srgb(g7 / scene);
++                o[2] = srgb(r7 / scene);
++            } else {  // B8G8R8A8, already as the screen shows it
++                const uint8_t* v = row + x * 4;
++                o[0] = v[0];
++                o[1] = v[1];
++                o[2] = v[2];
++            }
++        }
++    }
++    rb->Unmap(0, nullptr);
++    if (FILE* fo = _wfopen((shot_dir_ / "screen.bmp").c_str(), L"wb")) {
++        uint32_t size = 54 + uint32_t(out.size());
++        uint8_t head[54] = {'B', 'M'};
++        auto put = [&](int at, uint32_t v) { std::memcpy(head + at, &v, 4); };
++        put(2, size);
++        put(10, 54);
++        put(14, 40);
++        put(18, w);
++        put(22, h);
++        head[26] = 1;
++        head[28] = 24;
++        put(34, uint32_t(out.size()));
++        std::fwrite(head, 1, sizeof(head), fo);
++        std::fwrite(out.data(), 1, out.size(), fo);
++        std::fclose(fo);
++        LOGR("d3d12: the screen as shown, %ux%u, captured to %s", w, h, (shot_dir_ / "screen.bmp").string().c_str());
++    }
++}
++
+ // tests of the HDR output: XBE_HDR_STATS logs the frame's brightness every two seconds; with XBE_HDR_DUMP=<folder>,
+ // a file named dump there has the next frame written to that folder as hdr-<n>.raw (HDRF, width, height as 32 bit
+ // numbers, then each pixel's RGBA as half floats) and is deleted
+@@ -8043,6 +8144,7 @@ void D3D12Backend::Present(const Surface& front) {
+     PerfScope perf_present{g_perf.present};
+     if (cap_) {
+         FinishCapture(front);
++        shot_dir_ = cap_dir_;
+     } else if (g_capture.exchange(false)) {
+         // F3 with XBE_CAPTURE_DIR, or a menu's button anywhere (into captures\)
+         if (g_capture_asked.exchange(false) || CaptureOn()) StartCapture();
+-- 
+2.43.0
+
+
+From c49995697c2b6b5d2611b0cc79bf892db9019fb3 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Wed, 4 Nov 2026 17:03:32 -0500
+Subject: [PATCH 41/41] Ray tracing: the sky's light whole at a twentieth of
+ the frame, risen in a third of a second
+
+On the bridge before the courtyard the light still rose the first time the camera tilted down to the sky (its held
+share rose from the little the first view showed): XBE_RT_SKY_SHARE 0.15 to 0.05, XBE_RT_SKY_RISE 60 to 20 frames.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
+---
+ runtime/gpu/d3d12.cpp | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index f1f734f..e9be537 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -6181,10 +6181,12 @@ float D3D12Backend::SkyLight(Target& t, uint32_t rw, uint32_t rh, uint32_t tw, u
+     }
+     // held over the frames since the cut (rt_gimean.hlsl, 4): the sky as the frame showed it rose and fell as the
+     // camera tilted (more of it in view looking up, none looking down at Hector), and the whole outdoors' light with
+-    // it. Its share of the frame rises toward the most seen (over about a second) and does not fall; its colour eases
+-    // toward the frame's over about two seconds while any is in view
++    // it. Its share of the frame rises toward the most seen (over a third of a second) and does not fall, and a
++    // twentieth of the frame (XBE_RT_SKY_SHARE) is the whole sky's light: on the bridge before the courtyard the light
++    // still rose the first time the camera tilted down to the sky. Its colour eases toward the frame's over about two
++    // seconds while any is in view
+     if (drawn) {
+-        static const float kRise = 1.0f / std::max(1.0f, env("XBE_RT_SKY_RISE", 60.0f)),
++        static const float kRise = 1.0f / std::max(1.0f, env("XBE_RT_SKY_RISE", 20.0f)),
+                            kHue = 1.0f / std::max(1.0f, env("XBE_RT_SKY_EASE", 120.0f));
+         bool reset = rt_reset_ || sky_hold_frame_ == UINT64_MAX || sky_hold_frame_ + 30 < presents_;
+         uint32_t cur = kSkyHeld + (sky_cur_ ^ 1), prev = kSkyHeld + sky_cur_;
+@@ -6374,7 +6376,7 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // the sky's light (SkyLight), outdoors
+     WorldUpInView(ao_view_, gc.sky);
+     gc.sky[3] = SkyLight(t, rw, rh, tw, th);
+-    static const float kSkyStrength = env("XBE_RT_SKY", 0.4f), kSkyShare = env("XBE_RT_SKY_SHARE", 0.15f);
++    static const float kSkyStrength = env("XBE_RT_SKY", 0.4f), kSkyShare = env("XBE_RT_SKY_SHARE", 0.05f);
+     gc.sk[0] = kSkyStrength;
+     gc.sk[1] = kSkyShare;
+     // the lights drawn flat (a torch's flame, a glow's sprite, motes in the air): 0.8 as bright as the scene's own
+@@ -6684,7 +6686,7 @@ void D3D12Backend::Shafts(Target& t, uint32_t rw, uint32_t rh) {
+     static const float kStrength = env("XBE_RT_SHAFTS", 1.0f), kDensity = env("XBE_RT_SHAFTS_DENSITY", 0.00015f),
+                        kReach = env("XBE_RT_SHAFTS_REACH", 12000.0f), kGlow = env("XBE_RT_SHAFTS_GLOW", 4.0f),
+                        kSkyAir = env("XBE_RT_SHAFTS_SKY", 0.0f), kStepsSet = env("XBE_RT_SHAFTS_STEPS", 0),
+-                       kLightGain = env("XBE_RT_LIGHTS_GAIN", 24.0f), kSkyShare = env("XBE_RT_SKY_SHARE", 0.15f),
++                       kLightGain = env("XBE_RT_LIGHTS_GAIN", 24.0f), kSkyShare = env("XBE_RT_SKY_SHARE", 0.05f),
+                        kFlat = env("XBE_RT_LIGHTS_FLAT", 0.8f), kLightArea = env("XBE_RT_LIGHTS_AREA", 30000.0f);
+     const uint32_t q = RtQuality();
+     const float steps = kStepsSet > 0 ? kStepsSet : q == 0 ? 0.0f : q == 1 ? 6.0f : 10.0f;
 -- 
 2.43.0
 

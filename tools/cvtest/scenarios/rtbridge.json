@@ -1,0 +1,101 @@
+{
+  "name": "rtbridge",
+  "save": "julian",
+  "perf": true,
+  "note": "The bridge room before the courtyard (5.0), where Julian saw the light change with the camera's height: the camera level, overhead, low with the sky in view and level again, at the warp's spot and back along the way in by the mountains.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 0 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-0-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "5-0-over",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:50f,55f:wait:1f",
+      "shot": "5-0-low",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "5-0-level",
+      "judge": false
+    },
+    {
+      "press": "0f:lsd:90f,95f:wait:1f",
+      "shot": "5-0-back1",
+      "judge": false
+    },
+    {
+      "press": "0f:lsd:90f,95f:wait:1f",
+      "shot": "5-0-back2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "5-0-back2-over",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:50f,55f:wait:1f",
+      "shot": "5-0-back2-low",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "5-0-back2-level",
+      "judge": false
+    },
+    {
+      "press": "0f:rsr:60f,65f:wait:1f",
+      "shot": "5-0-turned",
+      "judge": false
+    },
+    {
+      "press": "0f:rsr:60f,65f:wait:1f",
+      "shot": "5-0-turned2",
+      "judge": false
+    }
+  ]
+}
