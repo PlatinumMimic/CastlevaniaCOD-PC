@@ -23,6 +23,7 @@
 #include "app/app.h"
 #include "core/input.h"
 #include "gpu/backend.h"
+#include "gpu/raytrace.h"
 
 // game settings beside the runtime's, in the settings file (game_info.cpp lists them)
 bool g_fps_counter = false;
@@ -47,6 +48,8 @@ uint32_t g_upscale = 0;
 uint32_t g_sharpening = 30;
 // the 3D darkened where surfaces meet: 0 off, 1 low, 2 high (gpu::g_ambient_occlusion)
 uint32_t g_ambient_occlusion = 1;
+// ray tracing over the frame's 3D: 0 off, 1 its ambient occlusion ray traced (gpu::g_ray_tracing)
+uint32_t g_ray_tracing = 0;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern bool g_hd_movies;         // movies.cpp: a movie pack's HD movies drawn
 extern uint32_t g_movie_view;    // movies.cpp: 0 the game's 4:3, 1 the picture whole as large as it goes, 2 filled
@@ -301,6 +304,21 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled("needs anti-aliasing");
         }
     }
+    Row("Ray tracing", "On a graphics card with ray tracing (DXR 1.1: NVIDIA RTX, AMD Radeon RX 6000 and later): the "
+                       "ambient occlusion traced against the room's own 3D rather than worked out from the screen, so "
+                       "what is off screen or behind something shades too. Needs ambient occlusion and anti-aliasing "
+                       "on.");
+    {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##rt", g_ray_tracing, {0, 1}, {"Off", "Ambient occlusion"});
+        if (g_ray_tracing && !gpu::g_ray_tracing_ready.load(std::memory_order_relaxed)) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("not on this graphics card");
+        } else if (g_ray_tracing && (!g_ambient_occlusion || !g_antialias)) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("needs ambient occlusion and anti-aliasing");
+        }
+    }
     // DLSS turned into multi frame generation by the NVIDIA app slows the game (FrameGenSeen): said in its help too
     static std::string fg_help;
     bool fg_slow = g_fg_seen.kind == 2 && g_fg_seen.game_fps > 1 && g_fg_seen.game_fps < 57 &&
@@ -503,6 +521,7 @@ void Defaults() {
     g_upscale = 0;
     g_sharpening = 30;
     g_ambient_occlusion = 1;
+    g_ray_tracing = 0;
     app::ApplyDisplay();
 }
 
@@ -613,6 +632,7 @@ void MenuToRenderer() {
     gpu::g_upscale.store(std::min<uint32_t>(g_upscale, 3), std::memory_order_relaxed);
     gpu::g_aa_sharpness.store(std::min<uint32_t>(g_sharpening, 100), std::memory_order_relaxed);
     gpu::g_ambient_occlusion.store(std::min<uint32_t>(g_ambient_occlusion, 2), std::memory_order_relaxed);
+    gpu::g_ray_tracing.store(g_ray_tracing ? gpu::kRtAmbientOcclusion : 0, std::memory_order_relaxed);
 }
 
 void MenuUi(double fps) {

@@ -30,6 +30,7 @@ extern uint32_t g_antialias;                  // menu.cpp, read by the SDK's ren
 extern uint32_t g_upscale;                    // menu.cpp, read by the SDK's renderer (gpu::g_upscale)
 extern uint32_t g_sharpening;                 // menu.cpp, read by the SDK's renderer (gpu::g_aa_sharpness)
 extern uint32_t g_ambient_occlusion;          // menu.cpp, read by the SDK's renderer (gpu::g_ambient_occlusion)
+extern uint32_t g_ray_tracing;                // menu.cpp, read by the SDK's renderer (gpu::g_ray_tracing)
 void GameInit();                              // setup.cpp
 
 // what the runtime asks of the game; strings must be set, hooks may stay null
@@ -65,7 +66,8 @@ const app::GameInfo app::kGame = {
                 {"antialiasing", nullptr, &g_antialias},
                 {"upscaling", nullptr, &g_upscale},
                 {"sharpening", nullptr, &g_sharpening},
-                {"ambient_occlusion", nullptr, &g_ambient_occlusion}},
+                {"ambient_occlusion", nullptr, &g_ambient_occlusion},
+                {"ray_tracing", nullptr, &g_ray_tracing}},
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
     .init = GameInit,                     // after the settings load, before the window and boot: game files, game code, renderer extension

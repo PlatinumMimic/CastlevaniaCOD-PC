@@ -274,6 +274,18 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
 - **Anisotropic Filtering** - Up to 16x, on the game's own textures too: they have no mip levels, so a floor or
   wall seen at an angle shimmers in the distance without it; with the HD pack, whose pictures have mip levels,
   it keeps them sharp there instead.
+- **Ambient Occlusion** - Soft shadow where surfaces meet: in corners, between stones, under ledges and where feet
+  touch the floor (`ambient_occlusion`: 0 off, 1 low, 2 high). It is worked out from the 3D's depth before the
+  anti-aliasing smooths it, so it needs anti-aliasing on.
+- **Ray Tracing** - On a graphics card with DirectX ray tracing (DXR 1.1: NVIDIA GeForce RTX, AMD Radeon RX 6000 or
+  newer, Intel Arc), the ambient occlusion is traced through the room itself instead of guessed from the screen
+  (`ray_tracing = 1`; launcher Graphics page or the in-game menu). Each frame, the vertices the game's own draws put on
+  the screen are gathered into an acceleration structure (the world as drawn, characters posed as they are), and
+  each pixel sends rays over its surface into it, so what is off screen or behind something still shades, and an
+  edge's shadow does not end where the screen's view of it does. Cut-outs (railings, leaves, grates) are seen through
+  where their pictures are. About 1 ms a frame at 1080p on a GeForce RTX 5080, against 0.4 ms for the screen space
+  pass. Its shaders are compiled to DXIL by the Windows SDK's `dxc` when the port is built; a build without it, or a
+  card without DXR 1.1, keeps the screen space ambient occlusion.
 - **Field of View** - 100% (the game's, which each room's camera sets) to 200%, a wider view as the number goes up;
   the in-game menu shows the view's angle as you move it. It holds through a room change's fade-in; story scenes
   keep the game's framing (`fov = 130`).
@@ -456,7 +468,10 @@ Changes this game needed beyond the generated config:
   grid, which puts Hector's 4X stencil
   shadow volume back in place (found by Neguchads). The SDK's mixer plays every channel of a voice by itself now
   (cutscene audio is a 5.1 stream with the voices in the centre channel). `kernel::g_file_opened`, a game's hook on
-  each file the title opens; a replacement uploaded into the texture of the one before it when it has its size.
+  each file the title opens; a replacement uploaded into the texture of the one before it when it has its size. Ray
+  tracing (`runtime\gpu\raytrace.h`, `rt_*.hlsl`): the world's draws captured by their vertex shaders into an
+  acceleration structure each frame, and ambient occlusion traced through it. `XBE_MUTE` and `XBE_BACKGROUND` keep a
+  test's game silent and behind other windows.
 - Releases are the SDK's own (`release.bat`): the game code is `Castlevania.dll`, which the exe builds on the
   player's PC on its first start (the SDK's `runtime\app\game_code.cpp`, behind a progress window) from their own
   `default.xbe`. A DLL whose stamp does not match the exe and xbe is built again.
