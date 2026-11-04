@@ -49,7 +49,7 @@ uint32_t g_sharpening = 30;
 // the 3D darkened where surfaces meet: 0 off, 1 low, 2 high (gpu::g_ambient_occlusion)
 uint32_t g_ambient_occlusion = 1;
 // ray tracing over the frame's 3D (gpu::g_ray_tracing), bits: 1 its ambient occlusion ray traced, 2 reflections, 4
-// bounce lighting. The menus offer 0 off, 1 ambient occlusion, 5 lighting (with it) and 7 lighting and reflections
+// bounce lighting. The menus offer 0 off, 1 ambient occlusion and 5 lighting (with it); reflections are not offered
 uint32_t g_ray_tracing = 0;
 // how strongly ray tracing's bounce lighting shows, percent (gpu::g_rt_lighting_strength): 100 keeps each room as bright
 // as the game made it, its light from where the rays say; 0 none of it
@@ -315,12 +315,10 @@ void GraphicsTab(bool& save) {
                        "so what is off screen or behind something shades too, and characters cast soft shadows "
                        "(needs ambient occlusion on). Lighting: with it, the light the room's surfaces throw onto each "
                        "other, water's on the stone beside it, a torch's on its wall, the sky's outdoors, and the light "
-                       "the air catches. Reflections: water, iron, dressed stone and the characters' armour mirror the "
-                       "room too. Needs anti-aliasing on.");
+                       "the air catches. Needs anti-aliasing on.");
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
-        save |= Choice<uint32_t>("##rt", g_ray_tracing, {0, 1, 5, 7},
-                                 {"Off", "Ambient occlusion", "Lighting", "Lighting and reflections"});
+        save |= Choice<uint32_t>("##rt", g_ray_tracing, {0, 1, 5}, {"Off", "Ambient occlusion", "Lighting"});
         if (g_ray_tracing && !gpu::g_ray_tracing_ready.load(std::memory_order_relaxed)) {
             ImGui::SameLine();
             ImGui::TextDisabled("not on this graphics card");
@@ -666,13 +664,14 @@ void SettingsWatch();  // keyboard.cpp
 
 // the settings the SDK's renderer reads: each frame, and before it starts (GameInit), as DLSS is chosen then
 void MenuToRenderer() {
+    // reflections are not offered: an older build's lighting and reflections (7) is lighting
+    if (g_ray_tracing & 6) g_ray_tracing = 5;
     gpu::g_surface_depth.store(std::min<uint32_t>(g_surface_depth, 2), std::memory_order_relaxed);
     gpu::g_antialias.store(std::min<uint32_t>(g_antialias, 2), std::memory_order_relaxed);
     gpu::g_upscale.store(std::min<uint32_t>(g_upscale, 3), std::memory_order_relaxed);
     gpu::g_aa_sharpness.store(std::min<uint32_t>(g_sharpening, 100), std::memory_order_relaxed);
     gpu::g_ambient_occlusion.store(std::min<uint32_t>(g_ambient_occlusion, 2), std::memory_order_relaxed);
-    gpu::g_ray_tracing.store(g_ray_tracing & (gpu::kRtAmbientOcclusion | gpu::kRtReflections | gpu::kRtLighting),
-                             std::memory_order_relaxed);
+    gpu::g_ray_tracing.store(g_ray_tracing & (gpu::kRtAmbientOcclusion | gpu::kRtLighting), std::memory_order_relaxed);
     gpu::g_rt_lighting_strength.store(float(std::min<uint32_t>(g_rt_lighting, 200)) / 100.0f, std::memory_order_relaxed);
     gpu::g_rt_quality.store(std::min<uint32_t>(g_rt_quality, 2), std::memory_order_relaxed);
 }

@@ -278,8 +278,9 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
   touch the floor (`ambient_occlusion`: 0 off, 1 low, 2 high). It is worked out from the 3D's depth before the
   anti-aliasing smooths it, so it needs anti-aliasing on.
 - **Ray Tracing** - On a graphics card with DirectX ray tracing (DXR 1.1: NVIDIA GeForce RTX, AMD Radeon RX 6000 or
-  newer, Intel Arc), rays through the room itself (`ray_tracing`: 0 off, 1 ambient occlusion, 5 lighting, 7 lighting
-  and reflections; bits 1, 4 and 2; launcher Graphics page or the in-game menu; anti-aliasing on). Each frame, the vertices the game's own draws put on
+  newer, Intel Arc), rays through the room itself (`ray_tracing`: 0 off, 1 ambient occlusion, 5 lighting; bits 1 and
+  4; launcher Graphics page or the in-game menu; anti-aliasing on). Reflections (bit 2) are no longer offered: an
+  older setting of 7, lighting and reflections, is read as 5. Each frame, the vertices the game's own draws put on
   the screen are gathered into an acceleration structure (the world as drawn, characters posed as they are), with
   each draw's picture and texture pack material. Cut-outs (railings, leaves, grates) are seen through where their
   pictures are.
@@ -317,7 +318,7 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
       room out). The game's own fog stays as it was (the sky's light in the air is
       left out: outdoors it laid a haze over every open place, which washed the courtyards out and turned the door's
       blur white).
-  - *Reflections*: a surface with a texture pack's material maps reflects what its mirror direction meets, that
+  - *Reflections* (in the renderer, no longer offered in the menus): a surface with a texture pack's material maps reflects what its mirror direction meets, that
     draw's picture lit as the game lit it, blurred as its roughness spreads the rays. The HD pack's maps are rough all
     over (about 0.8, no metal), too rough to reflect anything, so the port gives the pack's iron (railings, gates)
     a metal's gloss and its dressed stone a worn polish that shows at a low angle; a manifest's `reflect_roughness`

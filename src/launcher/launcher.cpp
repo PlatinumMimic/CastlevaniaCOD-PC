@@ -790,7 +790,7 @@ struct Settings {
     uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
     uint32_t sharpening = 30;           // percent, AMD FSR's
     uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
-    uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion, 5 lighting, 7 lighting and reflections (menu.cpp)
+    uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion, 5 lighting (menu.cpp); reflections are not offered
     uint32_t rt_lighting = 100;         // percent, how strongly its lighting shows (menu.cpp)
     uint32_t rt_quality = 2;            // 0 low, 1 medium, 2 high: how much ray tracing a frame does (menu.cpp)
     uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
@@ -841,9 +841,9 @@ struct Settings {
         upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
         sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
         ambient_occlusion = std::min(rest["ambient_occlusion"].value_or(ambient_occlusion), 2u);
-        // bits (1 ambient occlusion, 2 reflections, 4 lighting) as the choices offer them
+        // bits (1 ambient occlusion, 2 reflections, 4 lighting) as the choices offer them: off, ambient occlusion, lighting
         uint32_t rt = rest["ray_tracing"].value_or(ray_tracing);
-        ray_tracing = (rt & 2) ? 7u : (rt & 4) ? 5u : (rt & 1);
+        ray_tracing = (rt & 6) ? 5u : (rt & 1);  // an older build's lighting and reflections (7): lighting
         rt_lighting = std::min(rest["ray_tracing_lighting"].value_or(rt_lighting), 200u);
         rt_quality = std::min(rest["ray_tracing_quality"].value_or(rt_quality), 2u);
         surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
@@ -2307,12 +2307,9 @@ private:
                                              "rather than from what the screen shows, so it holds at the screen's "
                                              "edges and behind things. Lighting adds the light the room's surfaces "
                                              "throw onto each other: water's on the stone beside it, a torchlit wall's "
-                                             "on the floor. Reflections: iron and dressed stone mirror the room too, "
-                                             "with a texture pack's material maps. Needs a graphics card with DirectX "
-                                             "ray tracing."),
+                                             "on the floor. Needs a graphics card with DirectX ray tracing."),
                          true);
-            Segmented<uint32_t>("rt", settings_.ray_tracing, {0, 1, 5, 7},
-                                {T("Off"), T("Ambient occlusion"), T("Lighting"), T("Lighting and reflections")});
+            Segmented<uint32_t>("rt", settings_.ray_tracing, {0, 1, 5}, {T("Off"), T("Ambient occlusion"), T("Lighting")});
             EndOff();
             if (!rays) ControlNote(kAmber, T("This graphics card has no DirectX ray tracing."));
             else if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
