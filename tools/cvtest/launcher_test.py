@@ -113,14 +113,15 @@ class Launcher:
         self.pkg, self.out = pkg, out
         self.state = pkg / "launcher-state.json"
         self.state.unlink(missing_ok=True)
-        env = dict(env, CV_LAUNCHER_STATE=str(self.state), **(more_env or {}))
+        # behind the other windows, never taking the focus (cvtest's XBE_BACKGROUND): clicks are the launcher's own
+        env = dict(env, CV_LAUNCHER_STATE=str(self.state), XBE_BACKGROUND="1", **(more_env or {}))
         if LINUX:
             env["DISPLAY"] = cvtest.display()
         self.proc = subprocess.Popen([str(pkg / ("CastlevaniaLauncher" + EXE)), *args], cwd=pkg, env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.win = wait(lambda: cvtest.find_window(self.proc.pid), 30)
         # up once it says where its controls are: the page asked for (home has Play), drawn with them
-        pages = ["home", "display", "graphics", "game", "controls", "files"]
+        pages = ["home", "display", "graphics", "view", "textures", "game", "controls", "files"]
         page = pages.index(args[list(args).index("--page") + 1]) if "--page" in args else 0
         self.controls = wait(lambda: self.read().get("page") == page and len(self.read().get("controls", {})) > 3
                              and (page or self.read()["controls"].get("play")) and self.read()["controls"], 30) or {}
@@ -212,6 +213,7 @@ def game_follows(pkg, env, start, chosen, expect):
     log says it plays its release's disc; ended there, at the first start's building of the game code"""
     set_settings(pkg, release=chosen)
     shutil.rmtree(pkg / "logs", ignore_errors=True)
+    env = dict(env, XBE_BACKGROUND="1")  # behind the other windows, never taking the focus
     if LINUX:
         env = dict(env, DISPLAY=cvtest.display())
     proc = subprocess.Popen([str(pkg / (start + EXE))], cwd=pkg, env=env, stdout=subprocess.DEVNULL,
@@ -354,7 +356,7 @@ def main():
     results.append(result("Russian: the home page (russian.png)", [] if ok else ["no picture of the launcher"]))
 
     # every page in every language
-    pages = ["home", "display", "graphics", "game", "controls", "files"]
+    pages = ["home", "display", "graphics", "view", "textures", "game", "controls", "files"]
     errors = []
     for code in ("en", "de", "es", "fr", "it", "pt-BR", "ru"):
         set_settings(pkg, launcher_language=code)
@@ -373,8 +375,9 @@ def main():
     set_settings(pkg, release=EU)
     errors = []
     checks = [("display", "mode.1", "display_mode", "borderless"), ("display", "mode.2", "display_mode", "windowed"),
-              ("graphics", "wide", "widescreen", False), ("graphics", "scale.0", "render_percent", 50),
-              ("graphics", "aniso.3", "anisotropic_filtering", 8), ("game", "fps", "fps_counter", True),
+              ("graphics", "scale.0", "render_percent", 50), ("graphics", "aniso.3", "anisotropic_filtering", 8),
+              ("view", "wide.0", "widescreen", False), ("view", "wide.2", "widescreen_aspect", 1610),
+              ("game", "fps", "fps_counter", True),
               ("controls", "layout.1", "button_layout", 1)]
     la = None
     for page, control, key, value in checks:
@@ -387,7 +390,8 @@ def main():
     if not la.set_by_click("Reset to defaults", lambda: settings(pkg).get("render_percent") == 100):
         errors.append("Reset to defaults did not put render_percent back")
     s = settings(pkg)
-    for key, value in (("display_mode", "borderless"), ("widescreen", True), ("render_percent", 100),
+    for key, value in (("display_mode", "borderless"), ("widescreen", True), ("widescreen_aspect", 169),
+                       ("render_percent", 100),
                        ("anisotropic_filtering", 0), ("fps_counter", False), ("button_layout", 0),
                        ("launcher_language", "en"), ("release", EU)):
         if s.get(key) != value:

@@ -15,6 +15,15 @@
 // A 4 bit texture is 8 bit on the Xbox, its indices under 16. Pictures load in the background, scaled to the size
 // set, their PS2 alpha doubled, with every mip level; the game's own texture is drawn until they are ready. They go
 // in the textures folder beside the game (any folders inside it), which is looked for like the assets folder.
+//
+// Material maps: a pack's materials\manifest.json (schema pcsx2-material-replacements-v1, as the PCSX2 build of the
+// game with material replacements reads it) names a normal map and an ORM map (occlusion, roughness, metalness) for a
+// picture by the same hashes, "<texture>:<palette>:<region>:<TEX0 bits>", with how strongly each shades it. They load
+// with the picture, at its size cap, and the renderer shades the picture's colour with them (the SDK's
+// gpu/shaders.cpp, material). texture_pack_materials = false leaves them out. surface_depth (menu.cpp) sees into them
+// too (parallax), as deep as the material's family has it (or the manifest's parallax_strength): its height map
+// ("height" beside "normal" and "orm", grey, white the top) is how deep each point lies, or where it has none, its
+// occlusion map, dark in their crevices and along a wall's mortar.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -32,12 +41,17 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -56,8 +70,11 @@
 #include "gpu/texture.h"
 
 bool g_texture_pack = true;         // settings file: texture_pack
+bool g_texture_pack_materials = true;  // texture_pack_materials: a pack's material maps (manifest.json) too
 uint32_t g_texture_pack_size = 2048;  // texture_pack_size: the largest side a picture is loaded at, 0 as it is
 uint32_t g_button_layout = 0;         // button_layout: 0 Xbox, 1 PS2 (its icons here, its shoulders in keyboard.cpp)
+
+int RoomId();  // telemetry.cpp: map * 256 + room, -1 before the game has one
 
 namespace {
 
@@ -157,15 +174,161 @@ constexpr Alias kAliases[] = {
                                                                                                         // colours
 };
 
+// just enough JSON for a material manifest: objects, arrays, strings, numbers, true, false, null
+struct Json {
+    enum Kind { kNull, kBool, kNumber, kString, kArray, kObject } kind = kNull;
+    double number = 0;
+    std::string text;
+    std::vector<Json> items;
+    // an object's, key by key (two lists: a vector of pairs would hold a Json while it is incomplete)
+    std::vector<std::string> keys;
+    std::vector<Json> values;
+    const Json* Get(const char* key) const {
+        for (size_t i = 0; i < keys.size(); i++)
+            if (keys[i] == key) return &values[i];
+        return nullptr;
+    }
+    double Num(const char* key, double fallback) const {
+        const Json* v = Get(key);
+        return v && v->kind == kNumber ? v->number : fallback;
+    }
+    std::string Str(const char* key) const {
+        const Json* v = Get(key);
+        return v && v->kind == kString ? v->text : std::string();
+    }
+};
+
+class JsonReader {
+public:
+    explicit JsonReader(const std::string& s) : s_(s) {}
+    bool Read(Json& out) {
+        bool ok = Value(out, 0);
+        Space();
+        return ok && i_ == s_.size();
+    }
+
+private:
+    void Space() {
+        while (i_ < s_.size() && std::isspace(static_cast<unsigned char>(s_[i_]))) i_++;
+    }
+    bool Value(Json& v, int depth) {
+        if (depth > 64) return false;
+        Space();
+        if (i_ >= s_.size()) return false;
+        char c = s_[i_];
+        if (c == '{') {
+            v.kind = Json::kObject;
+            i_++;
+            Space();
+            if (i_ < s_.size() && s_[i_] == '}') return ++i_, true;
+            for (;;) {
+                Space();
+                std::string key;
+                if (!String(key)) return false;
+                Space();
+                if (i_ >= s_.size() || s_[i_++] != ':') return false;
+                Json item;
+                if (!Value(item, depth + 1)) return false;
+                v.keys.push_back(std::move(key));
+                v.values.push_back(std::move(item));
+                Space();
+                if (i_ < s_.size() && s_[i_] == ',') {
+                    i_++;
+                    continue;
+                }
+                return i_ < s_.size() && s_[i_++] == '}';
+            }
+        }
+        if (c == '[') {
+            v.kind = Json::kArray;
+            i_++;
+            Space();
+            if (i_ < s_.size() && s_[i_] == ']') return ++i_, true;
+            for (;;) {
+                Json item;
+                if (!Value(item, depth + 1)) return false;
+                v.items.push_back(std::move(item));
+                Space();
+                if (i_ < s_.size() && s_[i_] == ',') {
+                    i_++;
+                    continue;
+                }
+                return i_ < s_.size() && s_[i_++] == ']';
+            }
+        }
+        if (c == '"') {
+            v.kind = Json::kString;
+            return String(v.text);
+        }
+        for (const char* word : {"true", "false", "null"})
+            if (s_.compare(i_, std::strlen(word), word) == 0) {
+                v.kind = word[0] == 'n' ? Json::kNull : Json::kBool;
+                v.number = word[0] == 't';
+                i_ += std::strlen(word);
+                return true;
+            }
+        char* end = nullptr;
+        v.number = std::strtod(s_.c_str() + i_, &end);
+        if (end == s_.c_str() + i_) return false;
+        v.kind = Json::kNumber;
+        i_ = size_t(end - s_.c_str());
+        return true;
+    }
+    // a string, its escapes kept as the character after the backslash (a manifest's names have none)
+    bool String(std::string& out) {
+        if (i_ >= s_.size() || s_[i_] != '"') return false;
+        for (i_++; i_ < s_.size(); i_++) {
+            char c = s_[i_];
+            if (c == '"') return ++i_, true;
+            if (c == '\\' && i_ + 1 < s_.size()) c = s_[++i_];
+            out += c;
+        }
+        return false;
+    }
+    const std::string& s_;
+    size_t i_ = 0;
+};
+
+// a manifest's material: its two maps, its height map if it has one, and how they shade (gpu::Material::params)
+struct MaterialEntry {
+    fs::path normal, orm, height;
+    float params[3][4];
+};
+
 class Pack {
 public:
+    // at the start: the pack's pictures indexed when it is on (else when it is first switched on, Epoch)
     void Init() {
-        if (!g_texture_pack) return;
+        on_ = g_texture_pack;
+        if (on_ && !indexing_.exchange(true)) Index();
+    }
+
+    // the replacements' epoch (gpu::Extension::ReplaceEpoch), asked once a frame: the pack switched on or off while
+    // the game runs moves it on, every texture then asking again; switched on for the first time, its pictures are
+    // indexed on a thread of their own, the epoch moving on again once they are
+    uint32_t Epoch() {
+        bool on = g_texture_pack;
+        if (on != on_) {
+            on_ = on;
+            epoch_++;
+            LOGR("texpack: switched %s", on ? "on" : "off");
+            if (on && !indexing_.exchange(true)) std::thread([this] { Index(); }).detach();
+        }
+        return epoch_ + (ready_ ? 1u : 0u);
+    }
+
+private:
+    void Index() {
         std::string dirs;
+        std::vector<fs::path> manifests;
         for (const fs::path& dir : Folders()) {
             std::error_code ec;
             for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
                 if (!it->is_regular_file(ec)) continue;
+                if (it->path().filename() == "manifest.json" && it->path().parent_path().filename() == "materials") {
+                    manifests.push_back(it->path());
+                    continue;
+                }
                 std::string ext = it->path().extension().string();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
                 if (ext != ".png" && ext != ".dds") continue;
@@ -185,13 +348,22 @@ public:
         LOGR("texpack: %zu pictures in %s, up to %u px", files_.size(), dirs.c_str(), g_texture_pack_size);
         if (files_.empty()) return;
         state_.resize(files_.size());
+        material_of_.assign(files_.size(), -1);
+        static const bool off = std::getenv("CV_MATERIALS") && std::string(std::getenv("CV_MATERIALS")) == "0";
+        if (g_texture_pack_materials && !off)
+            for (const fs::path& m : manifests) ReadManifest(m);
         unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 6u);
         for (unsigned i = 0; i < n; i++) std::thread([this] { Work(); }).detach();
+        ready_ = true;
     }
 
+public:
     uint64_t Replace(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette) {
         Key tried{};
-        uint64_t id = Match(d, guest, palette, tried);
+        // the pack off (or its pictures not indexed yet): the game's own texture, the census as without a pack
+        uint64_t id = g_texture_pack && ready_ ? Match(d, guest, palette, tried) : 0;
+        asked_.fetch_add(1, std::memory_order_relaxed);
+        if (id) matched_.fetch_add(1, std::memory_order_relaxed);
         Census(d, guest, palette, id, tried);
         return id;
     }
@@ -233,6 +405,80 @@ public:
     }
 
 private:
+    // a material manifest: each material whose picture the pack has, by that picture
+    void ReadManifest(const fs::path& file) {
+        std::ifstream f(file, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        Json root;
+        if (!JsonReader(text).Read(root) || root.kind != Json::kObject) {
+            LOGW("texpack: %s is not a material manifest", file.string().c_str());
+            return;
+        }
+        if (root.Str("schema") != "pcsx2-material-replacements-v1") {
+            LOGW("texpack: %s has schema %s, not pcsx2-material-replacements-v1", file.string().c_str(),
+                 root.Str("schema").c_str());
+            return;
+        }
+        if (const Json* on = root.Get("enabled"); on && on->kind == Json::kBool && !on->number) {
+            LOGR("texpack: %s has its materials turned off", file.string().c_str());
+            return;
+        }
+        const Json* list = root.Get("materials");
+        size_t listed = list && list->kind == Json::kArray ? list->items.size() : 0, matched = 0, missing = 0,
+               heights = 0;
+        for (size_t n = 0; n < listed; n++) {
+            const Json& m = list->items[n];
+            unsigned long long t = 0, p = 0;
+            if (std::sscanf(m.Str("semantic_key").c_str(), "%llx:%llx:", &t, &p) != 2) continue;
+            const Json* maps = m.Get("maps");
+            if (!maps) continue;
+            // a map's path is the manifest folder's, never above it
+            auto map = [&](const char* key) {
+                std::string rel = maps->Str(key);
+                fs::path path = (file.parent_path() / fs::path(rel)).lexically_normal();
+                bool inside = !rel.empty() && rel.find("..") == std::string::npos && fs::path(rel).is_relative();
+                std::error_code ec;
+                return inside && fs::is_regular_file(path, ec) ? path : fs::path();
+            };
+            MaterialEntry e{map("normal"), map("orm"), map("height"), {}};
+            if (e.normal.empty() || e.orm.empty()) {
+                missing++;
+                continue;
+            }
+            // as the PCSX2 build's defaults where the manifest says nothing
+            const Json* r = m.Get("response");
+            Json none;
+            const Json& q = r ? *r : none;
+            float light[3] = {-0.35f, -0.45f, 0.82f};
+            if (const Json* l = q.Get("light_direction"); l && l->kind == Json::kArray && l->items.size() == 3)
+                for (int i = 0; i < 3; i++) light[i] = float(l->items[size_t(i)].number);
+            // how deep it reads under parallax (surface_depth: its height map, or the occlusion map as the depth):
+            // masonry, rock and plaster fully; wood and iron less; leaves and grass, whose maps are veins and blades,
+            // not at all
+            std::string family = m.Str("material_family");
+            float parallax = family == "vegetation" ? 0.0f : family == "iron" ? 0.5f : family == "wood" ? 0.6f : 1.0f;
+            float params[3][4] = {
+                {1.0f, float(q.Num("normal_strength", 1.0)), float(q.Num("response_strength", 0.75)),
+                 float(q.Num("specular_strength", 0.35))},
+                {light[0], light[1], light[2], 0.0f},
+                {float(q.Num("ao_strength", 0.35)), float(q.Num("roughness_bias", 0.0)),
+                 float(q.Num("metalness_scale", 1.0)), float(q.Num("parallax_strength", parallax))},
+            };
+            std::memcpy(e.params, params, sizeof(params));
+            auto it = Find(Key{t, p});
+            if (it == index_.end()) continue;
+            if (material_of_[it->second] < 0) {
+                material_of_[it->second] = int(materials_.size());
+                heights += !e.height.empty();
+                materials_.push_back(std::move(e));
+                matched++;
+            }
+        }
+        LOGR("texpack: %zu materials in %s, %zu for pictures of the pack, %zu of them with height maps%s", listed,
+             file.string().c_str(), matched, heights,
+             missing ? (", " + std::to_string(missing) + " without both maps").c_str() : "");
+    }
+
     // the pack's picture for a texture, under its own name or the PS2's (kAliases)
     std::map<Key, uint32_t>::const_iterator Find(const Key& key) const {
         auto it = index_.find(key);
@@ -261,10 +507,110 @@ private:
                           (unsigned long long)tried.palette);
             what = name;
         }
-        std::lock_guard lock(m_);
-        if (!census_.insert(seen).second) return;
-        LOGR("texpack census: %s %ux%u %u levels%s: %s", gpu::Format(d.format).name, d.width, d.height, d.levels,
-             d.cube ? " cube" : "", what.c_str());
+        {
+            std::lock_guard lock(m_);
+            if (census_.insert(seen).second)
+                LOGR("texpack census: %s %ux%u %u levels%s: %s", gpu::Format(d.format).name, d.width, d.height, d.levels,
+                     d.cube ? " cube" : "", what.c_str());
+        }
+        if (palette && tried.texture) CensusEntry(d, guest, palette, id, tried);
+    }
+
+public:
+    // CV_TEXPACK_CENSUS=<folder> (not 1): census.jsonl there, every paletted texture the game uploaded since it
+    // started, by the name a pack's picture of it has, rewritten every few seconds (CensusFlush): its size, the pack's
+    // picture and whether it has a material, how it was drawn (into the 3D world by a plain or a skinned vertex
+    // program, the characters', or in 2D, and adding to the target or not), the maps it was seen on and its first
+    // room; the game's
+    // own texture is saved once as originals\<name>.png, as CV_TEXPACK_MISSES saves one
+    static const fs::path& CensusDir() {
+        static const fs::path dir = [] {
+            const char* v = std::getenv("CV_TEXPACK_CENSUS");
+            return v && std::string(v) != "1" ? fs::path(v) : fs::path();
+        }();
+        return dir;
+    }
+
+    // a draw sampled the texture at data
+    void Used(uint32_t data, bool world, bool skinned, bool additive) {
+        auto it = census_by_data_.find(data);
+        if (it == census_by_data_.end()) return;
+        CensusRow& c = census_list_[size_t(it->second)];
+        (world ? (skinned ? c.skinned : c.world) : c.flat)++;
+        c.additive += additive;
+        int room = RoomId();
+        if (room >= 0) {
+            c.maps |= 1u << ((room >> 8) & 31);
+            if (c.room < 0) c.room = room;
+        }
+    }
+
+    void CensusFlush() {
+        if (CensusDir().empty() || census_list_.empty()) return;
+        std::error_code ec;
+        fs::create_directories(CensusDir(), ec);
+        fs::path tmp = CensusDir() / "census.jsonl.tmp";
+        {
+            std::ofstream f(tmp);
+            for (const CensusRow& c : census_list_) {
+                std::string maps;
+                for (int m = 0; m < 32; m++)
+                    if ((c.maps >> m) & 1) maps += (maps.empty() ? "" : ",") + std::to_string(m);
+                char room[16] = "";
+                if (c.room >= 0) std::snprintf(room, sizeof(room), "%d.%d", c.room >> 8, c.room & 255);
+                f << "{\"name\":\"" << c.name << "\",\"w\":" << c.w << ",\"h\":" << c.h << ",\"picture\":\"" << c.picture
+                  << "\",\"material\":" << (c.material ? "true" : "false") << ",\"world\":" << c.world
+                  << ",\"skinned\":" << c.skinned << ",\"flat\":" << c.flat << ",\"additive\":" << c.additive
+                  << ",\"maps\":[" << maps << "],\"room\":\"" << room << "\"}\n";
+            }
+        }
+        fs::rename(tmp, CensusDir() / "census.jsonl", ec);
+    }
+
+private:
+    struct CensusRow {
+        std::string name, picture;
+        uint32_t w = 0, h = 0;
+        bool material = false;
+        uint64_t world = 0, skinned = 0, flat = 0, additive = 0;
+        uint32_t maps = 0;
+        int room = -1;
+    };
+
+    // the census's entry for a texture just uploaded at d.data, made the first time its name is met
+    void CensusEntry(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette, uint64_t id,
+                     const Key& tried) {
+        if (CensusDir().empty()) return;
+        auto it = census_index_.find(tried);
+        if (it == census_index_.end()) {
+            std::vector<uint8_t> idx;
+            if (!gpu::PaletteIndices(d, guest, idx)) return;
+            bool four = Key{TextureHash(idx, d.width, d.height, false), PaletteHash(palette, 256)} != tried;
+            char name[64];
+            std::snprintf(name, sizeof(name), "%016llx-%016llx-000000%02x", (unsigned long long)tried.texture,
+                          (unsigned long long)tried.palette, four ? 0x14 : 0x13);
+            CensusRow c;
+            c.name = name;
+            c.w = d.width;
+            c.h = d.height;
+            if (id) {
+                c.picture = files_[size_t(id - 1)].filename().string();
+                c.material = material_of_.size() > id - 1 && material_of_[size_t(id - 1)] >= 0;
+            }
+            it = census_index_.emplace(tried, int(census_list_.size())).first;
+            census_list_.push_back(std::move(c));
+            fs::path file = CensusDir() / "originals" / (std::string(name) + ".png");
+            std::vector<uint8_t> px(idx.size() * 4);  // B G R A, the PS2's alpha
+            for (size_t i = 0; i < idx.size(); i++) {
+                uint32_t col = palette[idx[i]];
+                px[i * 4] = uint8_t(col);
+                px[i * 4 + 1] = uint8_t(col >> 8);
+                px[i * 4 + 2] = uint8_t(col >> 16);
+                px[i * 4 + 3] = uint8_t(((col >> 24) + 1) >> 1);
+            }
+            std::thread([file, px = std::move(px), w = d.width, h = d.height] { SavePng(file, px, w, h); }).detach();
+        }
+        census_by_data_[d.data] = it->second;
     }
 
     // CV_TEXPACK_MISSES set: each texture the pack has no picture for, once, as the pack would name it, with a 4 bit
@@ -364,6 +710,9 @@ private:
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         ComPtr<IWICImagingFactory> wic;
         CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
+        Codec codec = wic.Get();
+#else
+        Codec codec = nullptr;
 #endif
         for (;;) {
             uint32_t i;
@@ -373,12 +722,31 @@ private:
                 i = queue_.front();
                 queue_.pop_front();
             }
-#ifdef _WIN32
-            std::shared_ptr<gpu::Replacement> r = wic ? Load(wic.Get(), files_[i]) : nullptr;
-#else
-            std::shared_ptr<gpu::Replacement> r = Load(files_[i]);
-#endif
+            std::shared_ptr<gpu::Replacement> r = Load(codec, files_[i]);
             if (!r) LOGW("texpack: %s does not load", files_[i].filename().string().c_str());
+            if (r && material_of_[i] >= 0) {
+                const MaterialEntry& e = materials_[size_t(material_of_[i])];
+                auto m = std::make_shared<gpu::Material>();
+                bool ok = LoadPicture(codec, e.normal, false, m->normal) && LoadPicture(codec, e.orm, false, m->orm);
+                if (ok) {
+                    std::memcpy(m->params, e.params, sizeof(m->params));
+                    // the height map into the ORM map's alpha, each level from its own (the ORM map's colours are
+                    // averaged unweighted, its alpha 255 as they were); the parallax's share made negative says so
+                    if (!e.height.empty()) {
+                        if (AddHeight(codec, e.height, m->orm))
+                            m->params[2][3] = -std::abs(m->params[2][3]);
+                        else
+                            LOGW("texpack: %s does not load at its ORM map's size; its occlusion is read as the depth",
+                                 e.height.filename().string().c_str());
+                    }
+                    r->material = std::move(m);
+                    static std::atomic<int> logged{0};
+                    if (logged.fetch_add(1) < 8)
+                        LOGR("texpack: %s with its material maps", files_[i].filename().string().c_str());
+                } else {
+                    LOGW("texpack: the material maps of %s do not load", files_[i].filename().string().c_str());
+                }
+            }
             std::lock_guard lock(m_);
             state_[i].pixels = std::move(r);
             state_[i].stage = state_[i].pixels ? Stage::Ready : Stage::Failed;
@@ -412,61 +780,114 @@ private:
         return b;
     }
 
+    // the worker's picture decoder: WIC on Windows; on Linux stb and the DDS reader (runtime/linux/image.h) need none
+#ifdef _WIN32
+    using Codec = IWICImagingFactory*;
+#else
+    using Codec = std::nullptr_t;
+#endif
+
     // BGRA, PS2 alpha (128 opaque) to the Xbox's, halved to the size set, then every level below
-#ifndef _WIN32
-    static std::shared_ptr<gpu::Replacement> Load(const fs::path& file) {
-        std::vector<uint8_t> px;
-        uint32_t w = 0, h = 0;
+    static std::shared_ptr<gpu::Replacement> Load(Codec codec, const fs::path& file) {
+        auto r = std::make_shared<gpu::Replacement>();
+        if (!LoadPicture(codec, file, true, *r)) return nullptr;
+        return r;
+    }
+
+    // a height map (grey, 1 the top) into the alpha of orm's levels: its own levels from the one at orm's size (a
+    // larger map's halves; the levels are made with orm's alpha 255, so their colours were averaged unweighted)
+    static bool AddHeight(Codec codec, const fs::path& file, gpu::Picture& orm) {
+        gpu::Picture h;
+        if (!LoadPicture(codec, file, false, h)) return false;
+        size_t first = 0;
+        while (first < h.levels.size() && (std::max(h.width >> first, 1u) > orm.width ||
+                                           std::max(h.height >> first, 1u) > orm.height))
+            first++;
+        if (first >= h.levels.size() || std::max(h.width >> first, 1u) != orm.width ||
+            std::max(h.height >> first, 1u) != orm.height || h.levels.size() - first < orm.levels.size())
+            return false;
+        for (size_t l = 0; l < orm.levels.size(); l++) {
+            std::vector<uint8_t>& o = orm.levels[l];
+            const std::vector<uint8_t>& g = h.levels[first + l];
+            if (g.size() != o.size()) return false;
+            for (size_t i = 3; i < o.size(); i += 4) o[i] = g[i - 1];  // its red, a grey's
+        }
+        return true;
+    }
+
+    // a picture file as BGRA pixels
+    static bool Decode(Codec codec, const fs::path& file, std::vector<uint8_t>& px, uint32_t& w, uint32_t& h) {
+#ifdef _WIN32
+        if (!codec) return false;
+        ComPtr<IWICBitmapDecoder> dec;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        ComPtr<IWICFormatConverter> conv;
+        if (FAILED(codec->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+                                                    &dec)) ||
+            FAILED(dec->GetFrame(0, &frame)) || FAILED(codec->CreateFormatConverter(&conv)) ||
+            FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                    WICBitmapPaletteTypeCustom)))
+            return false;
+        UINT cw = 0, ch = 0;
+        conv->GetSize(&cw, &ch);
+        if (!cw || !ch) return false;
+        px.resize(size_t(cw) * ch * 4);
+        if (FAILED(conv->CopyPixels(nullptr, cw * 4, UINT(px.size()), px.data()))) return false;
+        w = cw;
+        h = ch;
+        return true;
+#else
         std::string ext = file.extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
         if (ext == ".dds") {
             std::ifstream f(file, std::ios::binary);
             std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), {});
-            if (!linuximage::ReadDds(bytes, px, w, h)) return nullptr;
-        } else if (!linuximage::ReadFile(file, px, w, h)) {
-            return nullptr;
+            return linuximage::ReadDds(bytes, px, w, h) && w && h;
         }
-        return Finish(std::move(px), w, h);
-    }
-#else
-    static std::shared_ptr<gpu::Replacement> Load(IWICImagingFactory* wic, const fs::path& file) {
-        ComPtr<IWICBitmapDecoder> dec;
-        ComPtr<IWICBitmapFrameDecode> frame;
-        ComPtr<IWICFormatConverter> conv;
-        if (FAILED(wic->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) ||
-            FAILED(dec->GetFrame(0, &frame)) || FAILED(wic->CreateFormatConverter(&conv)) ||
-            FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
-                                    WICBitmapPaletteTypeCustom)))
-            return nullptr;
-        UINT w = 0, h = 0;
-        conv->GetSize(&w, &h);
-        if (!w || !h) return nullptr;
-        std::vector<uint8_t> px(size_t(w) * h * 4);
-        if (FAILED(conv->CopyPixels(nullptr, w * 4, UINT(px.size()), px.data()))) return nullptr;
-        return Finish(std::move(px), w, h);
-    }
+        return linuximage::ReadFile(file, px, w, h) && w && h;
 #endif
+    }
 
-    static std::shared_ptr<gpu::Replacement> Finish(std::vector<uint8_t> px, uint32_t w, uint32_t h) {
-        for (size_t i = 3; i < px.size(); i += 4) px[i] = uint8_t(std::min(255u, (px[i] * 255u + 64) / 128));
+    // a picture as BGRA levels; ps2_alpha: its alpha is the PS2's (128 opaque), a material map's is not
+    static bool LoadPicture(Codec codec, const fs::path& file, bool ps2_alpha, gpu::Picture& out) {
+        std::vector<uint8_t> px;
+        uint32_t w = 0, h = 0;
+        if (!Decode(codec, file, px, w, h)) return false;
+        if (ps2_alpha)
+            for (size_t i = 3; i < px.size(); i += 4) px[i] = uint8_t(std::min(255u, (px[i] * 255u + 64) / 128));
         uint32_t cap = g_texture_pack_size ? g_texture_pack_size : 16384;
         while (std::max(w, h) > cap && w > 1 && h > 1) {
             px = Half(px, w, h);
             w /= 2;
             h /= 2;
         }
-        auto r = std::make_shared<gpu::Replacement>();
-        r->width = w;
-        r->height = h;
-        r->levels.push_back(std::move(px));
+        out.width = w;
+        out.height = h;
+        out.levels.clear();
+        out.levels.push_back(std::move(px));
         for (uint32_t lw = w, lh = h; lw > 1 || lh > 1;) {
-            r->levels.push_back(Half(r->levels.back(), lw, lh));
+            out.levels.push_back(Half(out.levels.back(), lw, lh));
             lw = std::max(lw / 2, 1u);
             lh = std::max(lh / 2, 1u);
         }
-        return r;
+        return true;
     }
 
+public:
+    // telemetry's "texpack" (telemetry.cpp): on, its pictures indexed, and the textures that asked for a picture and
+    // got one since the start
+    std::string Telemetry() const {
+        return std::string("{\"on\":") + (g_texture_pack ? "true" : "false") + ",\"ready\":" +
+               (ready_ ? "true" : "false") + ",\"asked\":" + std::to_string(asked_.load()) +
+               ",\"matched\":" + std::to_string(matched_.load()) + "}";
+    }
+
+private:
+    std::atomic<uint64_t> asked_{0}, matched_{0};
+    bool on_ = false;                     // g_texture_pack as Epoch last saw it
+    uint32_t epoch_ = 0;
+    std::atomic<bool> indexing_{false};   // Index started, once
+    std::atomic<bool> ready_{false};      // and done: index_, files_ and the workers there
     std::map<Key, uint32_t> index_;
     std::vector<fs::path> files_;
     std::mutex m_;
@@ -475,6 +896,12 @@ private:
     std::vector<Entry> state_;
     std::set<Key> missed_;
     std::set<uint64_t> census_;
+    std::vector<int> material_of_;  // by picture, its material in materials_, -1 none
+    std::vector<MaterialEntry> materials_;
+    // CV_TEXPACK_CENSUS's, on the render thread
+    std::map<Key, int> census_index_;
+    std::vector<CensusRow> census_list_;
+    std::unordered_map<uint32_t, int> census_by_data_;
 };
 
 Pack g_pack;
@@ -482,7 +909,12 @@ Pack g_pack;
 }  // namespace
 
 void TexturePackInit() { g_pack.Init(); }
+uint32_t TexturePackEpoch() { return g_pack.Epoch(); }
+std::string TexturePackJson() { return g_pack.Telemetry(); }
 uint64_t TexturePackReplace(const gpu::TextureDesc& d, const uint8_t* guest, const uint32_t* palette) {
     return g_pack.Replace(d, guest, palette);
 }
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id) { return g_pack.Replaced(id); }
+bool TexturePackCensus() { return !Pack::CensusDir().empty(); }
+void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive) { g_pack.Used(data, world, skinned, additive); }
+void TexturePackCensusFlush() { g_pack.CensusFlush(); }

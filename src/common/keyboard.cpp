@@ -34,9 +34,12 @@
 //   0:guard=<r>                       on those walks, the bot fights an enemy that comes within r first
 //   0:set=<setting>=<value>           a setting changed at the command's start, as the in-game menu changes it
 //                                     (display_mode, width, height, render_percent, anisotropic_filtering,
-//                                     widescreen, vsync, fps_cap, or a game option
-//                                     such as lament_save): the renderer takes it after the frame it presents. One
-//                                     read only at the start (texture_pack) is an error: give it with --set instead
+//                                     widescreen, widescreen_aspect, vsync, fps_cap, hdr, hdr_peak_nits,
+//                                     hdr_scene_nits, or a game option such as lament_save): the renderer takes it
+//                                     after the frame it presents; hdr_dump=1 has the next HDR frame written to
+//                                     XBE_HDR_DUMP's folder (gpu/d3d12.cpp). One
+//                                     read only at the start (texture_pack_size, button_layout) is an error: give
+//                                     it with --set instead. texture_pack is live: every texture is asked again
 //   <t>:ls=<x>/<y>, rs=<x>/<y>        a stick part way, -1 to 1
 // <va>:<bytes>[,...] in <folder>\dump.txt (or CV_PAD_LIVE_DUMP) also saves those guest memory ranges at each
 // command's end, as mem-<n>-<va>.bin.
@@ -50,6 +53,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -234,9 +238,9 @@ void ApplySetting(const std::string& entry) {
     size_t eq = entry.find('=');
     if (eq == std::string::npos) return;
     std::string key = entry.substr(0, eq), value = entry.substr(eq + 1);
-    // read once at the start (the pack's index and its size, the button sheet): changed here they would only seem to
-    // be, so a test asking for one fails (cvtest takes an error line as the step's)
-    for (const char* start : {"texture_pack", "texture_pack_size", "button_layout"})
+    // read once at the start (the size the pack's pictures load at, the button sheet): changed here they would only
+    // seem to be, so a test asking for one fails (cvtest takes an error line as the step's)
+    for (const char* start : {"texture_pack_size", "button_layout"})
         if (key == start) {
             LOGE("live: %s applies from the next start, not here", key.c_str());
             return;
@@ -255,9 +259,15 @@ void ApplySetting(const std::string& entry) {
     } else if (key == "render_percent") st.render_percent = n;
     else if (key == "anisotropic_filtering") st.aniso = n;
     else if (key == "widescreen") st.widescreen = on;
+    else if (key == "widescreen_aspect") st.widescreen_aspect = n == 1610 ? 1610 : 169;
     else if (key == "vsync") st.vsync = on;
     else if (key == "fps_cap") st.fps_cap = n;
-    else {
+    else if (key == "hdr") st.hdr = on;
+    else if (key == "hdr_peak_nits") st.hdr_peak_nits = n;
+    else if (key == "hdr_scene_nits") st.hdr_scene_nits = n;
+    else if (key == "hdr_dump") {  // tests: the next HDR frame written to XBE_HDR_DUMP's folder (gpu/d3d12.cpp)
+        if (const char* dir = std::getenv("XBE_HDR_DUMP")) std::ofstream(std::filesystem::path(dir) / "dump") << "1";
+    } else {
         auto it = std::find_if(app::kGame.options.begin(), app::kGame.options.end(),
                                [&](const app::Option& o) { return key == o.key; });
         if (it == app::kGame.options.end()) {
@@ -428,6 +438,57 @@ void LiveWait() {
 
 }  // namespace
 
+// the settings file changed by another program, the launcher kept open beside the game: what the in-game menu
+// changes at once (HDR and its levels, render scale, filtering, widescreen, vsync, the game's options) changes here
+// too, looked for about twice a second; a change is taken once the file has stood a look unchanged, not mid-write.
+// The rest (the pack, the button sheet, the window's mode and size, the graphics card) waits for the next start
+void SettingsWatch() {
+    static const std::filesystem::path file = app::ExeDir() / app::kGame.settings;
+    static std::filesystem::file_time_type seen{}, pending{};
+    static bool started = false;
+    static std::map<std::string, std::string> values;
+    static uint32_t frames = 0;
+    if (frames++ % 30) return;
+    std::error_code ec;
+    auto t = std::filesystem::last_write_time(file, ec);
+    if (ec || (started && t == seen)) return;
+    if (started && t != pending) {
+        pending = t;
+        return;
+    }
+    std::map<std::string, std::string> now;
+    std::ifstream f(file);
+    auto trim = [](std::string s) {
+        size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+    };
+    for (std::string line; std::getline(f, line);) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos || line.empty() || line[0] == '#' || line[0] == '[') continue;
+        std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
+        if (v.size() >= 2 && (v.front() == '"' || v.front() == '\'')) v = v.substr(1, v.size() - 2);
+        now[k] = v;
+    }
+    if (now.empty()) return;
+    seen = pending = t;
+    if (started) {
+        static const char* kLive[] = {"hdr", "hdr_peak_nits", "hdr_scene_nits", "render_percent",
+                                      "anisotropic_filtering", "widescreen", "widescreen_aspect", "vsync"};
+        for (const auto& [k, v] : now) {
+            auto it = values.find(k);
+            if (it != values.end() && it->second == v) continue;
+            bool live = std::find_if(std::begin(kLive), std::end(kLive), [&](const char* s) { return k == s; }) !=
+                        std::end(kLive);
+            bool option = !live && k != "texture_pack" && k != "texture_pack_size" && k != "button_layout" &&
+                          std::find_if(app::kGame.options.begin(), app::kGame.options.end(),
+                                       [&](const app::Option& o) { return k == o.key; }) != app::kGame.options.end();
+            if (live || option) ApplySetting(k + "=" + v);
+        }
+    }
+    values = std::move(now);
+    started = true;
+}
+
 bool MenuOpen();                     // menu.cpp
 void MenuToggle();                   // menu.cpp
 void MenuWindow();                   // menu.cpp
@@ -513,7 +574,17 @@ void KeyboardPad(int port, input::Pad& p) {
     static std::atomic<bool> sticks{false};
     bool both = (p.buttons & (kL3 | kR3)) == (kL3 | kR3);
     if (!sticks.exchange(both) && both) MenuToggle();
-    if (MenuOpen()) {
+    // the menu just closed from the controller (B, Start, L3 + R3): those buttons are not the game's, so it gets
+    // nothing until they are let go
+    static std::atomic<bool> menu_was{false}, hold{false};
+    bool menu = MenuOpen();
+    if (menu_was.exchange(menu) && !menu) hold = true;
+    if (hold) {
+        bool any = (p.buttons & 0xFF) != 0;
+        for (uint8_t a : p.analog) any |= a > 0x40;
+        hold = any;
+    }
+    if (menu || hold) {
         // the menu has the keyboard and controller
         p = input::Pad{};
         p.connected = true;

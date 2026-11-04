@@ -1,0 +1,15 @@
+{
+  "name": "title",
+  "note": "The start on a wide screen: the Konami logo and the other screens before the title, then the title with its menu, shot every second or two for how they fill a 16:9 screen (CV_WIDE_TRACE=<n> logs each draw of one frame in n).",
+  "settings": {"width": 1920, "height": 1080, "hdr": false},
+  "steps": [
+    {"press": "0:wait:1500", "shot": "boot-1", "judge": false},
+    {"press": "0:wait:1500", "shot": "boot-2", "judge": false},
+    {"press": "0:wait:1500", "shot": "boot-3", "judge": false},
+    {"press": "0:wait:1500", "shot": "boot-4", "judge": false},
+    {"press": "0:wait:1500", "shot": "boot-5", "judge": false},
+    {"press": "0:wait:1500", "shot": "boot-6", "judge": false},
+    {"press": "0:wait:2000", "shot": "title", "expect": ["not player.active"], "judge": false},
+    {"press": "0:a,2000:wait", "shot": "title-menu", "judge": false}
+  ]
+}

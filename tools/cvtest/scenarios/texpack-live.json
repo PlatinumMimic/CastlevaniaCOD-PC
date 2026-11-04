@@ -1,0 +1,15 @@
+{
+  "name": "texpack-live",
+  "after": "newgame.json",
+  "note": "The HD texture pack switched off and on again while the game runs (F10's HD texture pack, the live entry set=texture_pack=): every texture asks the pack again (gpu::Extension::ReplaceEpoch, texpack.cpp), gets none while it is off and its picture again once it is on (telemetry texpack: asked, matched); the courtyard's floor at the left changes and comes back.",
+  "steps": [
+    {"press": "0f:wait:30f", "shot": "pack-on", "measure": {"left": [0.05, 0.72, 0.33, 0.95]},
+     "expect": ["texpack.on and texpack.ready", "texpack.matched > 0"]},
+    {"press": "0:set=texture_pack=false,0f:wait:60f", "shot": "pack-off", "measure": {"left": [0.05, 0.72, 0.33, 0.95]},
+     "expect": ["found(log, 'texpack: switched off')", "not texpack.on", "texpack.asked - prev.texpack.asked > 20",
+                "texpack.matched == prev.texpack.matched", "abs(screen.edges.left / shots['pack-on'].edges.left - 1) > 0.05"]},
+    {"press": "0:set=texture_pack=true,0f:wait:90f", "shot": "pack-on-again", "measure": {"left": [0.05, 0.72, 0.33, 0.95]},
+     "expect": ["found(log, 'texpack: switched on')", "texpack.matched - prev.texpack.matched > 20",
+                "abs(screen.edges.left / shots['pack-on'].edges.left - 1) < 0.05"]}
+  ]
+}

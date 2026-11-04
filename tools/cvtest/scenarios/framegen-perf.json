@@ -1,0 +1,31 @@
+{
+  "name": "framegen-perf",
+  "after": "newgame.json",
+  "note": "The game's own frame rate with frame generation (the game's logic is one step a frame, so it must stay at 60): 5 s standing and 5 s with the camera turning in map 3 room 2, timed (XBE_PERF). --set frame_generation=0, 1 or 2.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 1
+  },
+  "perf": true,
+  "steps": [
+    {
+      "press": "0:warp=3.2,10f:wait:20f"
+    },
+    {
+      "until": "map == 3 and room == 2 and player.active and not loading",
+      "timeout": 30
+    },
+    {
+      "press": "0:wait:5000",
+      "shot": "stand",
+      "judge": false
+    },
+    {
+      "press": "0:rs=0.7/0:5000",
+      "shot": "turn",
+      "judge": false
+    }
+  ]
+}

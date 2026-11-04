@@ -65,7 +65,7 @@ def start(pkg, env, timeout, done):
     text (Windows), whether done held; every process of it ended after. Without the game the assets folder is not
     opened (CV_NO_OPEN): no window of the desktop's"""
     shutil.rmtree(pkg / "logs", ignore_errors=True)
-    env = dict(env, CV_NO_OPEN="1")
+    env = dict(env, CV_NO_OPEN="1", XBE_BACKGROUND="1")  # no folder opened; behind the other windows
     if lt.LINUX:
         env = dict(env, DISPLAY=cvtest.display())
     proc = subprocess.Popen([str(pkg / ("Castlevania" + lt.EXE))], cwd=pkg, env=env, stdout=subprocess.DEVNULL,
@@ -88,6 +88,11 @@ def start(pkg, env, timeout, done):
     log = lt.log_text(pkg)
     lt.end_family(proc.pid)
     return log, dialog, held
+
+
+def boxed(log):
+    """the words of the message boxes the game logged instead of showing (XBE_BACKGROUND)"""
+    return " ".join(l.split("message box: ", 1)[1] for l in log.splitlines() if "message box: " in l)
 
 
 def game_lines(log):
@@ -149,13 +154,16 @@ def main():
                                      for l in game_lines(log)), no_handover)
     if other:
         refused = "different release"
+        # the message box's words, in the log under XBE_BACKGROUND (the window would take the focus)
         case(f"other: {other.name}, another release, refused", lambda: link(other),
-             lambda log, dialog: (dialog and refused in dialog) if not lt.LINUX else
+             lambda log, dialog: refused in (dialog or "") + boxed(log) if not lt.LINUX else
              any(other.name in l and l.rstrip().endswith("another release") for l in game_lines(log)),
-             lambda log, dialog: [] if lt.LINUX or refused in (dialog or "") else [f"message box: {dialog}"])
+             lambda log, dialog: [] if lt.LINUX or refused in (dialog or "") + boxed(log)
+             else [f"message box: {dialog}"])
     case("empty: nothing in assets, asked for the game", lambda: None,
-         lambda log, dialog: "setup: no game in" in log and (lt.LINUX or bool(dialog)),
-         lambda log, dialog: [] if lt.LINUX or "assets folder" in (dialog or "") else [f"message box: {dialog}"],
+         lambda log, dialog: "setup: no game in" in log and (lt.LINUX or bool(dialog) or bool(boxed(log))),
+         lambda log, dialog: [] if lt.LINUX or "assets folder" in (dialog or "") + boxed(log)
+         else [f"message box: {dialog}"],
          timeout=30)
 
     failed = any(not r["ok"] for r in results)

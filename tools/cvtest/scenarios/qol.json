@@ -1,7 +1,7 @@
 {
   "name": "qol",
   "after": "newgame.json",
-  "note": "The HUD at the screen edges, the camera stick with and without inversion, the field of view and the far view (fog and draw distance 4x) on the drawbridge (5.0), then a fight in 5.12 for the game's rumble (CV_RUMBLE_TRACE): both motors. Then the rampart of 5.7 with fog and draw distance 4x: its sky's painted cards (a moon and strips past the room's far plane) keep the room's own fog. Checked by the telemetry: wide (the HUD's move), camera.angles (the turn, unwrapped), view (the field of view, far plane and fog as the game set them and as drawn) and wide.sky (the sky's draws given the room's fog).",
+  "note": "The HUD at the screen edges, the camera stick with and without inversion, the field of view and the far view (fog and draw distance 4x) on the drawbridge (5.0), then a fight in 5.12 for the game's rumble (CV_RUMBLE_TRACE): both motors. Then the rampart of 5.7 with fog and draw distance 4x: its sky's painted cards (a moon and strips past the room's far plane) drawn wrapped as the PS2 draws them, so no card's edge shows: no straight seam in it (screen.seams). Checked by the telemetry: wide (the HUD's move), camera.angles (the turn, unwrapped) and view (the field of view, far plane and fog as the game set them and as drawn).",
   "env": {"CV_RUMBLE_TRACE": "1"},
   "settings": {"width": 1600, "height": 900},
   "steps": [
@@ -28,6 +28,8 @@
     {"press": "0:heal,0:fight:15000", "shot": "fight-2", "expect": ["any(int(l.split(', ')[1].split(' / ')[0]) > 0 for l in found(runlog, r'^rumble \\d+: port 1'))", "any(int(l.split(' / ')[1].split()[0]) > 0 for l in found(runlog, r'^rumble \\d+: port 1'))"]},
     {"press": "0:set=fov=100,0:set=fog_distance=400,0:set=draw_distance=400,0:warp=5.7,10f:wait:20f"},
     {"until": "room == 7 and player.active and not loading", "timeout": 40},
-    {"press": "0f:wait:60f", "shot": "rampart-sky", "expect": ["view.far[1] == 4 * view.far[0]", "wide.sky.fogged > 0"]}
+    {"press": "0f:wait:60f", "shot": "rampart-sky", "seams": {"sky": [0.62, 0.0, 1.0, 0.26]},
+     "note": "the sky at the top right: a card's straight edge or a smeared block would stand out of it (70 and more)",
+     "expect": ["view.far[1] == 4 * view.far[0]", "screen.seams.sky < 15"]}
   ]
 }

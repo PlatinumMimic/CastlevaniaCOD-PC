@@ -19,6 +19,7 @@
 #include <dwmapi.h>
 #include <dxgi1_6.h>
 #include <shellapi.h>
+#include <urlmon.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 #else
@@ -38,6 +39,7 @@ extern char** environ;
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <atomic>
 #include <cstdint>
@@ -104,6 +106,38 @@ IDXGISwapChain* g_swap = nullptr;
 ID3D11RenderTargetView* g_rtv = nullptr;
 HWND g_hwnd = nullptr;
 bool g_activated = false;  // the window came back to the front: the files are looked at again (a pack added meanwhile)
+// the launcher's layout at 100%: everything it shows fits this, and the window scales it to whatever size it has
+constexpr float kBaseW = 1060, kBaseH = 690;
+constexpr float kMinZoom = 0.6f;  // the smallest the window shrinks to, a part of that
+bool g_sizing = false;            // the window's edge is being dragged: frames come from a timer (WM_TIMER)
+bool g_full = false;              // full screen (F11, Alt+Enter): the window borderless over its monitor
+WINDOWPLACEMENT g_placement{sizeof(WINDOWPLACEMENT)};  // where it was before full screen
+void (*g_paint)() = nullptr;      // one frame of the launcher, for the timer while sizing
+bool g_toggle_full = false;       // the button asked for full screen: between frames, not in the middle of one
+
+float WindowDpi(HWND hwnd) { return float(GetDpiForWindow(hwnd)) / 96.0f; }
+
+// full screen: borderless over the whole monitor the window is on; again, back as it was
+void ToggleFullScreen() {
+    LONG style = GetWindowLongW(g_hwnd, GWL_STYLE);
+    if (!g_full) {
+        MONITORINFO mi{sizeof(mi)};
+        if (!GetWindowPlacement(g_hwnd, &g_placement) ||
+            !GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi))
+            return;
+        SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        const RECT& m = mi.rcMonitor;
+        SetWindowPos(g_hwnd, HWND_TOP, m.left, m.top, m.right - m.left, m.bottom - m.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_full = true;
+    } else {
+        SetWindowLongW(g_hwnd, GWL_STYLE, (style & ~WS_POPUP) | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(g_hwnd, &g_placement);
+        SetWindowPos(g_hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_full = false;
+    }
+}
 
 void MakeTarget() {
     ID3D11Texture2D* bb = nullptr;
@@ -138,7 +172,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
     switch (msg) {
         case WM_SIZE:
-            if (g_dev && wp != SIZE_MINIMIZED) {
+            if (g_dev && wp != SIZE_MINIMIZED && LOWORD(lp) && HIWORD(lp)) {
+                g_ctx->OMSetRenderTargets(0, nullptr, nullptr);  // nothing may hold the buffers as they are resized
                 if (g_rtv) g_rtv->Release(), g_rtv = nullptr;
                 g_swap->ResizeBuffers(0, LOWORD(lp), HIWORD(lp), DXGI_FORMAT_UNKNOWN, 0);
                 MakeTarget();
@@ -146,6 +181,42 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SYSCOMMAND:
             if ((wp & 0xFFF0) == SC_KEYMENU) return 0;  // Alt alone
+            break;
+        case WM_GETMINMAXINFO: {
+            // no smaller than the layout at kMinZoom, its frame added
+            float dpi = WindowDpi(hwnd);
+            RECT r{0, 0, LONG(kBaseW * kMinZoom * dpi), LONG(kBaseH * kMinZoom * dpi)};
+            AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, GetDpiForWindow(hwnd));
+            auto* mm = reinterpret_cast<MINMAXINFO*>(lp);
+            mm->ptMinTrackSize = {r.right - r.left, r.bottom - r.top};
+            return 0;
+        }
+        case WM_DPICHANGED: {
+            // to another monitor: the size Windows suggests there
+            const RECT* r = reinterpret_cast<const RECT*>(lp);
+            SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
+        case WM_ENTERSIZEMOVE:
+            // Windows keeps the message loop while an edge is dragged: a timer draws the frames meanwhile
+            g_sizing = true;
+            SetTimer(hwnd, 1, 16, nullptr);
+            return 0;
+        case WM_EXITSIZEMOVE:
+            g_sizing = false;
+            KillTimer(hwnd, 1);
+            return 0;
+        case WM_TIMER:
+            if (wp == 1 && g_paint) g_paint();
+            return 0;
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
+            // F11, or Alt+Enter as games have it: full screen and back
+            if ((wp == VK_F11 && msg == WM_KEYDOWN) || (wp == VK_RETURN && msg == WM_SYSKEYDOWN && (lp & (1 << 29)))) {
+                if (!(lp & (1 << 30))) ToggleFullScreen();  // not again while held
+                return 0;
+            }
             break;
         case WM_ACTIVATEAPP:
             if (wp) g_activated = true;
@@ -160,6 +231,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 // Linux: SDL's window and an OpenGL context
 SDL_Window* g_window = nullptr;
 bool g_activated = false;  // the window came back to the front: the files are looked at again (a pack added meanwhile)
+bool g_full = false;         // full screen (F11, Alt+Enter, the button beside the language)
+bool g_toggle_full = false;  // the button asked for full screen: between frames, not in the middle of one
+
+void ToggleFullScreen() {
+    g_full = !g_full;
+    SDL_SetWindowFullscreen(g_window, g_full);
+}
 #endif
 
 // files
@@ -264,6 +342,36 @@ std::vector<Gpu> Gpus() {
         if (!g.software) list.push_back(g);
     }
     return list;
+}
+
+// the primary display, where the game opens: in Windows HDR mode or not, and its reported peak in nits; asked again
+// every two seconds, so switching HDR in Windows shows
+struct DisplayHdr {
+    bool hdr = false;
+    uint32_t peak = 0;
+};
+DisplayHdr PrimaryHdr() {
+    static DisplayHdr last;
+    static ULONGLONG asked = 0;
+    ULONGLONG now = GetTickCount64();
+    if (asked && now - asked < 2000) return last;
+    asked = now;
+    last = {};
+    HMONITOR mon = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return last;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> a;
+    for (UINT i = 0; factory->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
+        Microsoft::WRL::ComPtr<IDXGIOutput> o;
+        for (UINT j = 0; a->EnumOutputs(j, &o) != DXGI_ERROR_NOT_FOUND; j++) {
+            Microsoft::WRL::ComPtr<IDXGIOutput6> o6;
+            DXGI_OUTPUT_DESC1 d{};
+            if (FAILED(o.As(&o6)) || FAILED(o6->GetDesc1(&d)) || d.Monitor != mon) continue;
+            last.hdr = d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+            last.peak = uint32_t(d.MaxLuminance + 0.5f);
+        }
+    }
+    return last;
 }
 
 // what the game takes with no card named: the fastest, else the default adapter
@@ -411,6 +519,7 @@ struct Files {
     fs::path textures;
     size_t pictures = 0;      // .png and .dds in textures and the folders inside it
     bool ps2_buttons = false;  // the PS2's button icons among them (texpack.cpp, the PS2 button layout)
+    bool movies = false;       // a movie pack beside the game: movies\movies.toml (movies.cpp)
     fs::path logo;             // the title logo among them, for the home page
 
     void Scan() {
@@ -432,6 +541,10 @@ struct Files {
                                      name.rfind(L"fe15d42446e1b4e5-5623c99b0b0ecf41-", 0) == 0))
                     logo = it->path();
             }
+        }
+        {
+            std::error_code ec;
+            movies = fs::is_regular_file(ExeDir() / "movies" / "movies.toml", ec);
         }
         assets = FindAssets();
         xbe = {};
@@ -574,6 +687,247 @@ uint32_t GameLanguageFor(const std::string& launcher) {
     return 1;
 }
 
+// Frame generation's libraries (the SDK's runtime/gpu/framegen.h), which this game's download does not carry: the
+// player's own copy, downloaded from the vendor's official GitHub release into the game's folder with their licences.
+// AMD FSR 3: its signed DLLs beside the game, the loader, frame generation and the upscaler (the game's
+// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G and DLSS files in streamline\ (frame generation, and
+// the game's anti-aliasing and upscaling).
+constexpr const wchar_t* kFsrRaw = L"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/";
+constexpr const char* kFsrLicence = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/v2.3.0/Kits/FidelityFX/docs/license.md";
+constexpr const wchar_t* kDlssZip = L"https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip";
+constexpr const char* kDlssLicence = "https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/license.txt";
+const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll",
+                                    L"amd_fidelityfx_upscaler_dx12.dll"};
+const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
+                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
+
+// all of a kind's files there, beside the game (FSR) or in its streamline folder (DLSS)
+bool HaveFrameGen(const fs::path& game, uint32_t kind) {
+    std::error_code ec;
+    if (kind == 1) {
+        for (const wchar_t* f : kFsrFiles)
+            if (!fs::is_regular_file(game / f, ec)) return false;
+        return true;
+    }
+    for (const wchar_t* f : kDlssFiles)
+        if (!fs::is_regular_file(game / L"streamline" / f, ec)) return false;
+    return true;
+}
+
+// a GeForce RTX 40 or 50: DLSS frame generation's cards
+bool DlssCard(const std::string& name) {
+    size_t at = name.find("RTX ");
+    return at != std::string::npos && at + 5 < name.size() && (name[at + 4] == '4' || name[at + 4] == '5') &&
+           std::isdigit(static_cast<unsigned char>(name[at + 5]));
+}
+
+// any GeForce RTX (or NVIDIA RTX workstation card): DLSS anti-aliasing's
+bool RtxCard(const std::string& name) {
+    return name.find("NVIDIA") != std::string::npos && name.find("RTX") != std::string::npos;
+}
+
+#ifdef _WIN32
+// each download's SHA-256 as AMD and NVIDIA released it at those versions: a file that differs (a changed or broken
+// download) is deleted, never used
+struct Pinned {
+    const wchar_t* name;
+    const char* sha256;
+};
+const Pinned kPinned[] = {
+    {L"amd_fidelityfx_loader_dx12.dll", "e2d85aa05a9bd9ed8b38935fdf5199372cca6f74c12015143bb6f945ee1608aa"},
+    {L"amd_fidelityfx_framegeneration_dx12.dll", "02297beedd285e822d3a64f314cf00faf378dcec0edc47ff0c4dd71b3a8c2f18"},
+    {L"amd_fidelityfx_upscaler_dx12.dll", "d0dcccc74a43c44ba435b7a369b456e0970d8a4464e4bd683119b374f2c9fb46"},
+    {L"streamline.zip", "92c4d954631a1710da86ca3fa8d5034f2b9503838c95fc4ae977ae149319781b"},
+};
+
+// a file's SHA-256 in hex, read a megabyte at a time; empty when it cannot be read
+std::string Sha256File(const fs::path& file) {
+    std::ifstream f(file, std::ios::binary);
+    BCRYPT_HASH_HANDLE h = nullptr;
+    if (!f || BCryptCreateHash(BCRYPT_SHA256_ALG_HANDLE, &h, nullptr, 0, nullptr, 0, 0) != 0) return {};
+    std::vector<char> buf(1 << 20);
+    bool ok = true;
+    while (ok && f) {
+        f.read(buf.data(), std::streamsize(buf.size()));
+        if (f.gcount() > 0)
+            ok = BCryptHashData(h, reinterpret_cast<PUCHAR>(buf.data()), ULONG(f.gcount()), 0) == 0;
+    }
+    uint8_t digest[32];
+    ok = ok && BCryptFinishHash(h, digest, 32, 0) == 0;
+    BCryptDestroyHash(h);
+    if (!ok) return {};
+    std::string hex;
+    for (uint8_t b : digest) {
+        hex += "0123456789abcdef"[b >> 4];
+        hex += "0123456789abcdef"[b & 15];
+    }
+    return hex;
+}
+
+// the download is the file pinned for its name (kPinned); one that is not is deleted
+bool AsPinned(const fs::path& file) {
+    for (const Pinned& p : kPinned)
+        if (file.filename() == p.name) {
+            if (Sha256File(file) == p.sha256) return true;
+            std::error_code ec;
+            fs::remove(file, ec);
+            return false;
+        }
+    return false;
+}
+
+struct FrameGenDownload {
+    std::atomic<bool> running{false};
+    std::atomic<float> progress{0};
+    std::atomic<uint32_t> kind{0};
+    std::string result;
+    std::thread worker;
+
+    // URLDownloadToFile's progress
+    struct Progress : IBindStatusCallback {
+        std::atomic<float>* out;
+        float from, span;
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** p) override {
+            if (id == IID_IUnknown || id == IID_IBindStatusCallback) {
+                *p = this;
+                return S_OK;
+            }
+            *p = nullptr;
+            return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+        ULONG STDMETHODCALLTYPE Release() override { return 1; }
+        HRESULT STDMETHODCALLTYPE OnStartBinding(DWORD, IBinding*) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE GetPriority(LONG*) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE OnLowResource(DWORD) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE OnProgress(ULONG done, ULONG total, ULONG, LPCWSTR) override {
+            if (total) *out = from + span * float(double(done) / double(total));
+            return S_OK;
+        }
+        HRESULT STDMETHODCALLTYPE OnStopBinding(HRESULT, LPCWSTR) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE GetBindInfo(DWORD*, BINDINFO*) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE OnDataAvailable(DWORD, DWORD, FORMATETC*, STGMEDIUM*) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE OnObjectAvailable(REFIID, IUnknown*) override { return S_OK; }
+    };
+
+    // url to file through a .part beside it, so a file is whole or not there
+    bool Fetch(const std::wstring& url, const fs::path& to, float from, float span, HRESULT& hr) {
+        fs::path part = to;
+        part += L".part";
+        Progress p{};
+        p.out = &progress;
+        p.from = from;
+        p.span = span;
+        hr = URLDownloadToFileW(nullptr, url.c_str(), part.c_str(), 0, &p);
+        std::error_code ec;
+        if (FAILED(hr) || fs::file_size(part, ec) == 0) {
+            fs::remove(part, ec);
+            if (SUCCEEDED(hr)) hr = E_FAIL;
+            return false;
+        }
+        fs::rename(part, to, ec);
+        if (ec) hr = HRESULT_FROM_WIN32(ec.value());
+        return !ec;
+    }
+
+    // Windows' own tar takes the named files out of a zip
+    static bool Extract(const fs::path& zip, const fs::path& into, const std::vector<std::wstring>& names) {
+        wchar_t sys[MAX_PATH];
+        GetSystemDirectoryW(sys, MAX_PATH);
+        std::wstring cmd = L"\"" + std::wstring(sys) + L"\\tar.exe\" -xf \"" + zip.wstring() + L"\" -C \"" + into.wstring() + L"\"";
+        for (const std::wstring& n : names) cmd += L" \"" + n + L"\"";
+        STARTUPINFOW si{sizeof(si)};
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+            return false;
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return code == 0;
+    }
+
+    void Start(uint32_t k, fs::path game) {
+        if (running) return;
+        if (worker.joinable()) worker.join();
+        running = true;
+        progress = 0;
+        kind = k;
+        result.clear();
+        worker = std::thread([this, k, game] {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            HRESULT hr = S_OK;
+            std::error_code ec;
+            bool ok = true;
+            fs::create_directories(game / L"licences", ec);
+            if (k == 1) {
+                ok = Fetch(std::wstring(kFsrRaw) + L"docs/license.md", game / L"licences" / L"AMD-FidelityFX-licence.md", 0, 0.02f, hr);
+                constexpr int n = int(std::size(kFsrFiles));
+                for (int i = 0; ok && i < n; i++) {
+                    ok = Fetch(std::wstring(kFsrRaw) + L"signedbin/" + kFsrFiles[i], game / kFsrFiles[i],
+                               0.02f + 0.98f * float(i) / n, 0.98f / n, hr);
+                    if (ok && !AsPinned(game / kFsrFiles[i])) {
+                        ok = false;
+                        hr = TRUST_E_BAD_DIGEST;
+                    }
+                }
+            } else {
+                fs::path tmp = game / L"streamline-download";
+                fs::create_directories(tmp, ec);
+                fs::path zip = tmp / L"streamline.zip";
+                ok = Fetch(kDlssZip, zip, 0, 0.95f, hr);
+                if (ok && !AsPinned(zip)) {
+                    ok = false;
+                    hr = TRUST_E_BAD_DIGEST;
+                }
+                std::vector<std::wstring> names{L"license.txt", L"bin/x64/nvngx_dlss.license.txt", L"bin/x64/reflex.license.txt"};
+                for (const wchar_t* f : kDlssFiles) names.push_back(std::wstring(L"bin/x64/") + f);
+                if (ok && !Extract(zip, tmp, names)) {
+                    ok = false;
+                    hr = E_FAIL;
+                }
+                if (ok) {
+                    fs::create_directories(game / L"streamline", ec);
+                    for (const wchar_t* f : kDlssFiles) {
+                        fs::copy_file(tmp / L"bin" / L"x64" / f, game / L"streamline" / f, fs::copy_options::overwrite_existing, ec);
+                        if (ec) ok = false;
+                    }
+                    fs::copy_file(tmp / L"license.txt", game / L"licences" / L"NVIDIA-Streamline-licence.txt",
+                                  fs::copy_options::overwrite_existing, ec);
+                    fs::copy_file(tmp / L"bin" / L"x64" / L"nvngx_dlss.license.txt",
+                                  game / L"licences" / L"NVIDIA-DLSS-licence.txt", fs::copy_options::overwrite_existing, ec);
+                    fs::copy_file(tmp / L"bin" / L"x64" / L"reflex.license.txt",
+                                  game / L"licences" / L"NVIDIA-Reflex-licence.txt", fs::copy_options::overwrite_existing, ec);
+                    if (!ok) hr = E_FAIL;
+                }
+                fs::remove_all(tmp, ec);
+            }
+            progress = 1;
+            result = ok ? T("Downloaded. The game uses them from its next start.")
+                        : F("The download failed (error {}): check the connection and try again.",
+                            {std::to_string(uint32_t(hr))});
+            CoUninitialize();
+            running = false;
+        });
+    }
+    ~FrameGenDownload() {
+        if (worker.joinable()) worker.join();
+    }
+};
+
+#else
+// Linux: the vendors' libraries are Windows DLLs, so nothing is downloaded (DLSS does not run there; FSR is the
+// renderer's own)
+struct FrameGenDownload {
+    std::atomic<bool> running{false};
+    std::atomic<float> progress{0};
+    std::atomic<uint32_t> kind{0};
+    std::string result;
+    void Start(uint32_t, fs::path) {}
+};
+#endif
+
 // settings: the keys the game reads, the rest of the file kept
 
 struct Settings {
@@ -582,7 +936,12 @@ struct Settings {
     uint32_t render_percent = 100;
     uint32_t aniso = 0;
     bool vsync = true;
+    bool hdr = true;                    // HDR output on a display in Windows HDR mode (the SDK's)
+    uint32_t hdr_peak_nits = 0;         // 0 the display's own peak
+    uint32_t hdr_scene_nits = 200;
+    uint32_t frame_generation = 0;      // 0 off, 1 AMD FSR 3, 2 NVIDIA DLSS (the SDK's, from the next start)
     bool widescreen = true;
+    uint32_t widescreen_aspect = 169;  // 169 (16:9) or 1610 (16:10)
     bool fps_counter = false;
     bool pause_on_focus_loss = true;
     uint32_t menu_key = VK_F10;
@@ -591,6 +950,7 @@ struct Settings {
     uint32_t game_language = 1;    // the European release's, as the console's (XGetLanguage): kGameLanguages
     bool texture_pack = true;
     uint32_t texture_pack_size = 2048;  // 0 full size
+    bool texture_pack_materials = true;  // the pack's normal and ORM maps (texpack.cpp)
     uint32_t button_layout = 0;         // 0 Xbox, 1 PS2
     bool lament_save = false;           // the Moai of a Lament of Innocence save (hooks.cpp)
     bool ps2_stick = true;              // the sticks as the PS2 read them (hooks.cpp)
@@ -599,6 +959,14 @@ struct Settings {
     uint32_t draw_distance = 100;       // percent of the game's far plane (game/view.cpp)
     uint32_t fog_distance = 100;        // percent of the game's fog distance, 0 none (game/view.cpp)
     bool hud_edges = true;              // widescreen: the HUD at the screen's corners (widescreen.cpp)
+    bool menu_spread = true;            // widescreen: the pause menu's columns toward the sides (widescreen.cpp)
+    bool hd_movies = true;              // a movie pack's HD movies (movies.cpp)
+    uint32_t movie_view = 1;            // 0 the game's 4:3 frame, 1 fit, 2 fill (movies.cpp)
+    uint32_t antialiasing = 1;          // 0 off, 1 AMD FSR, 2 NVIDIA DLSS (menu.cpp, the SDK's renderer)
+    uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
+    uint32_t sharpening = 30;           // percent, AMD FSR's
+    uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
+    uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     std::string release;                // the release played, by its executable's name, when there are more (the SDK's)
     toml::table rest;
@@ -617,7 +985,12 @@ struct Settings {
         render_percent = rest["render_percent"].value_or(render_percent);
         aniso = rest["anisotropic_filtering"].value_or(aniso);
         vsync = rest["vsync"].value_or(vsync);
+        hdr = rest["hdr"].value_or(hdr);
+        hdr_peak_nits = rest["hdr_peak_nits"].value_or(hdr_peak_nits);
+        hdr_scene_nits = rest["hdr_scene_nits"].value_or(hdr_scene_nits);
+        frame_generation = std::min(rest["frame_generation"].value_or(frame_generation), 2u);
         widescreen = rest["widescreen"].value_or(widescreen);
+        widescreen_aspect = rest["widescreen_aspect"].value_or(widescreen_aspect) == 1610 ? 1610u : 169u;
         fps_counter = rest["fps_counter"].value_or(fps_counter);
         pause_on_focus_loss = rest["pause_on_focus_loss"].value_or(pause_on_focus_loss);
         menu_key = rest["menu_key"].value_or(menu_key);
@@ -626,6 +999,7 @@ struct Settings {
         game_language = rest["game_language"].value_or(GameLanguageFor(language));
         texture_pack = rest["texture_pack"].value_or(texture_pack);
         texture_pack_size = rest["texture_pack_size"].value_or(texture_pack_size);
+        texture_pack_materials = rest["texture_pack_materials"].value_or(texture_pack_materials);
         button_layout = rest["button_layout"].value_or(button_layout);
         lament_save = rest["lament_save"].value_or(lament_save);
         ps2_stick = rest["ps2_stick"].value_or(ps2_stick);
@@ -635,6 +1009,14 @@ struct Settings {
         draw_distance = rest["draw_distance"].value_or(draw_distance);
         fog_distance = rest["fog_distance"].value_or(fog_distance);
         hud_edges = rest["hud_edges"].value_or(hud_edges);
+        menu_spread = rest["menu_spread"].value_or(menu_spread);
+        hd_movies = rest["hd_movies"].value_or(hd_movies);
+        movie_view = std::min(rest["movie_view"].value_or(movie_view), 2u);
+        antialiasing = std::min(rest["antialiasing"].value_or(antialiasing), 2u);
+        upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
+        sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
+        ambient_occlusion = std::min(rest["ambient_occlusion"].value_or(ambient_occlusion), 2u);
+        surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
         release = rest["release"].value_or(release);
     }
@@ -646,7 +1028,12 @@ struct Settings {
         rest.insert_or_assign("render_percent", int64_t(render_percent));
         rest.insert_or_assign("anisotropic_filtering", int64_t(aniso));
         rest.insert_or_assign("vsync", vsync);
+        rest.insert_or_assign("hdr", hdr);
+        rest.insert_or_assign("hdr_peak_nits", int64_t(hdr_peak_nits));
+        rest.insert_or_assign("hdr_scene_nits", int64_t(hdr_scene_nits));
+        rest.insert_or_assign("frame_generation", int64_t(frame_generation));
         rest.insert_or_assign("widescreen", widescreen);
+        rest.insert_or_assign("widescreen_aspect", int64_t(widescreen_aspect));
         rest.insert_or_assign("fps_counter", fps_counter);
         rest.insert_or_assign("pause_on_focus_loss", pause_on_focus_loss);
         rest.insert_or_assign("menu_key", int64_t(menu_key));
@@ -655,6 +1042,7 @@ struct Settings {
         rest.insert_or_assign("game_language", int64_t(game_language));
         rest.insert_or_assign("texture_pack", texture_pack);
         rest.insert_or_assign("texture_pack_size", int64_t(texture_pack_size));
+        rest.insert_or_assign("texture_pack_materials", texture_pack_materials);
         rest.insert_or_assign("button_layout", int64_t(button_layout));
         rest.insert_or_assign("lament_save", lament_save);
         rest.insert_or_assign("ps2_stick", ps2_stick);
@@ -664,6 +1052,14 @@ struct Settings {
         rest.insert_or_assign("draw_distance", int64_t(draw_distance));
         rest.insert_or_assign("fog_distance", int64_t(fog_distance));
         rest.insert_or_assign("hud_edges", hud_edges);
+        rest.insert_or_assign("menu_spread", menu_spread);
+        rest.insert_or_assign("hd_movies", hd_movies);
+        rest.insert_or_assign("movie_view", int64_t(movie_view));
+        rest.insert_or_assign("antialiasing", int64_t(antialiasing));
+        rest.insert_or_assign("upscaling", int64_t(upscaling));
+        rest.insert_or_assign("sharpening", int64_t(sharpening));
+        rest.insert_or_assign("ambient_occlusion", int64_t(ambient_occlusion));
+        rest.insert_or_assign("surface_depth", int64_t(surface_depth));
         rest.insert_or_assign("gpu", gpu);
         rest.insert_or_assign("release", release);
         std::ofstream f(File());
@@ -703,6 +1099,10 @@ std::vector<Res> Resolutions() {
         }
         SDL_free(modes);
     }
+    // 1920x1200 for a 16:10 window (or a 16:10 screen streamed to) where the display has no such mode
+    bool seen = false;
+    for (const Res& r : list) seen |= r.w == 1920 && r.h == 1200;
+    if (!seen) list.push_back({1920, 1200});
     std::sort(list.begin() + 1, list.end(), [](Res a, Res b) { return a.w != b.w ? a.w > b.w : a.h > b.h; });
     return list;
 }
@@ -715,16 +1115,19 @@ std::string ResName(Res r) {
     return std::to_string(r.w) + "x" + std::to_string(r.h);
 }
 #else
+// the monitor's modes, and 1920x1200 for a 16:10 window (or a 16:10 screen streamed to) where it has no such mode
 std::vector<Res> Resolutions() {
     std::vector<Res> list{{0, 0}};
     DEVMODEW dm{};
     dm.dmSize = sizeof(dm);
-    for (DWORD i = 0; EnumDisplaySettingsW(nullptr, i, &dm); i++) {
-        if (dm.dmPelsWidth < 640 || dm.dmPelsHeight < 480) continue;
+    auto add = [&](uint32_t w, uint32_t h) {
         bool seen = false;
-        for (const Res& r : list) seen |= r.w == dm.dmPelsWidth && r.h == dm.dmPelsHeight;
-        if (!seen) list.push_back({dm.dmPelsWidth, dm.dmPelsHeight});
-    }
+        for (const Res& r : list) seen |= r.w == w && r.h == h;
+        if (!seen) list.push_back({w, h});
+    };
+    for (DWORD i = 0; EnumDisplaySettingsW(nullptr, i, &dm); i++)
+        if (dm.dmPelsWidth >= 640 && dm.dmPelsHeight >= 480) add(dm.dmPelsWidth, dm.dmPelsHeight);
+    add(1920, 1200);
     std::sort(list.begin() + 1, list.end(), [](Res a, Res b) { return a.w != b.w ? a.w > b.w : a.h > b.h; });
     return list;
 }
@@ -786,15 +1189,18 @@ ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
 #ifdef _WIN32
 // Segoe Fluent / MDL2 icons, for status lines and the language
 enum : uint32_t {
-    kIconCheck = 0xE73E, kIconGlobe = 0xE774, kIconWarn = 0xE7BA, kIconDisc = 0xE958,
+    kIconCheck = 0xE73E, kIconWindow = 0xE73F, kIconFullScreen = 0xE740, kIconGlobe = 0xE774, kIconWarn = 0xE7BA,
+    kIconDisc = 0xE958,
 };
-const ImWchar kIconRanges[] = {0xE73E, 0xE73E, 0xE774, 0xE774, 0xE7BA, 0xE7BA, 0xE958, 0xE958, 0};
+const ImWchar kIconRanges[] = {0xE73E, 0xE740, 0xE774, 0xE774, 0xE7BA, 0xE7BA, 0xE958, 0xE958, 0};
 #else
-// Linux: the same icons from Material Icons (a release's fonts folder): check, language, warning, album
+// Linux: the same icons from Material Icons (a release's fonts folder): check, window (fullscreen_exit), full screen,
+// language, warning, album
 enum : uint32_t {
-    kIconCheck = 0xE5CA, kIconGlobe = 0xE894, kIconWarn = 0xE002, kIconDisc = 0xE019,
+    kIconCheck = 0xE5CA, kIconWindow = 0xE5D1, kIconFullScreen = 0xE5D0, kIconGlobe = 0xE894, kIconWarn = 0xE002,
+    kIconDisc = 0xE019,
 };
-const ImWchar kIconRanges[] = {0xE002, 0xE002, 0xE019, 0xE019, 0xE5CA, 0xE5CA, 0xE894, 0xE894, 0};
+const ImWchar kIconRanges[] = {0xE002, 0xE002, 0xE019, 0xE019, 0xE5CA, 0xE5CA, 0xE5D0, 0xE5D1, 0xE894, 0xE894, 0};
 #endif
 // the letters of the launcher's languages: Latin with the accents of Portuguese, Spanish and Italian, Cyrillic, and
 // dashes, quotes and the ellipsis
@@ -953,6 +1359,21 @@ void Banner(ImDrawList* dl, ImVec2 a, float w, float h) {
     dl->AddRectFilledMultiColor({a.x, ry}, {a.x + w * 0.92f, ry + S(2)}, white, Fade(white, 0), Fade(white, 0), white);
 }
 
+// controls that do nothing as the other settings stand (upscaling with anti-aliasing off): shown under a veil of the
+// card's navy and not taken, a note under them saying what they need
+bool g_off = false;
+void BeginOff(bool off) {
+    ImGui::BeginDisabled(off);
+    g_off = off;
+}
+void EndOff() {
+    ImGui::EndDisabled();
+    g_off = false;
+}
+void Veil(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    if (g_off) dl->AddRectFilled(a - ImVec2(S(1), S(1)), b + ImVec2(S(1), S(1)), Rgb(2, 9, 38, 175));
+}
+
 // an on/off switch; true when flipped
 // CV_LAUNCHER_STATE=<file>, for tests (tools/cvtest/launcher_test.py): where the controls are, a switch, list or
 // slider by its id (a list's choices and a row of choices by their index after it: "mode.2"), a button by its words,
@@ -992,6 +1413,7 @@ bool Toggle(const char* id, bool& v) {
     ImVec2 c{a.x + r + t * (size.x - 2 * r), a.y + r};
     dl->AddCircleFilled(c, r - S(4), Rgb(230, 236, 240), 24);
     dl->AddCircle(c, r - S(4), Rgb(16, 40, 60), 24);
+    Veil(dl, a, a + size);
     return pressed;
 }
 
@@ -1036,6 +1458,7 @@ bool Segmented(const char* id, T& value, const std::vector<T>& values, const std
         else dl->AddText(f, size, tp, hover ? kText : kMuted, names[i].c_str());
         ImGui::PopID();
     }
+    Veil(dl, a, a + ImVec2(avail, h));
     ImGui::SetCursorScreenPos(a);
     ImGui::Dummy({avail, h});
     ImGui::PopID();
@@ -1073,6 +1496,7 @@ bool Slider(const char* id, uint32_t& value, uint32_t lo, uint32_t hi, const std
     Bar(dl, a + in, a + ImVec2(right, h) - in, S(7), hover ? kAccentHi : kAccent, kAccentLo, Rgb(0, 60, 14));
     ImVec2 ts = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, name.c_str());
     Outlined(dl, g_italic, a + ImVec2((avail - ts.x) * 0.5f, (h - ts.y) * 0.5f), kText, Rgb(0, 50, 12, 220), name.c_str(), 1);
+    Veil(dl, a, a + ImVec2(avail, h));
     ImGui::PopID();
     return changed;
 }
@@ -1189,11 +1613,36 @@ void EndSetting() {
     ImGui::Dummy({0, S(4)});
 }
 
+// a setting with many choices: title and description across the card, its control under them across it too
+void BeginWideSetting(const char* title, const char* desc, bool first = false) {
+    if (!first) {
+        Rule(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x, kLine);
+        ImGui::Dummy({0, S(7)});
+    }
+    Text(g_semi, kText, title);
+    if (desc) Wrapped(g_small, kMuted, desc);
+    ImGui::Dummy({0, S(4)});
+    ImGui::BeginGroup();
+}
+
 // a switch at the right end of the control column
 void ToggleRight(const char* id, bool& v) {
     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - S(46));
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(5));
     Toggle(id, v);
+}
+
+// a line under a setting's control, in its column: what the choice does, or what it needs (amber)
+void ControlNote(ImU32 col, const std::string& s) {
+    ImGui::Dummy({0, S(1)});
+    Wrapped(g_small, col, s.c_str());
+}
+
+// the name of the cards under it, in the band's teal
+void Section(const char* s) {
+    ImGui::Dummy({0, S(4)});
+    Text(g_small, kTealHi, s);
+    ImGui::Dummy({0, S(1)});
 }
 
 // a page's name on its banner, what it is for under it
@@ -1241,8 +1690,10 @@ void Status(uint32_t icon, ImU32 col, const std::string& text) {
     ImGui::TextUnformatted(Icon(icon).c_str());
     ImGui::PopStyleColor();
     ImGui::SameLine(0, S(10));
+    ImGui::PushTextWrapPos(0.0f);  // a long line (some languages') wraps under itself, not out of its card
     ImGui::TextUnformatted(text.c_str());
     g_marks.Mark("status:" + text);
+    ImGui::PopTextWrapPos();
     ImGui::PopFont();
 }
 
@@ -1386,6 +1837,37 @@ void Fonts() {
     g_button = load(italic, 26, false);
 }
 
+#ifdef _WIN32
+float g_font_scale = 0;  // the scale the fonts were last made at
+
+// the scale the window gives: the layout at 100% fitted into the window's size, at its monitor's DPI
+float FitScale() {
+    RECT rc;
+    GetClientRect(g_hwnd, &rc);
+    float dpi = WindowDpi(g_hwnd);
+    float zoom = std::min(float(rc.right - rc.left) / (kBaseW * dpi), float(rc.bottom - rc.top) / (kBaseH * dpi));
+    return dpi * std::clamp(zoom, kMinZoom, 4.0f);
+}
+
+// before a frame: the style and the fonts at the scale the window's size gives. While an edge is being dragged the
+// fonts are only stretched to it; they are made anew at that size once the window stops (sharp at every size)
+void Rescale() {
+    float want = FitScale();
+    bool fonts = std::fabs(want - g_font_scale) > 0.001f && !g_sizing;
+    if (std::fabs(want - g_scale) < 0.001f && !fonts) return;
+    g_scale = want;
+    ImGui::GetStyle() = ImGuiStyle();
+    Style();
+    ImGuiIO& io = ImGui::GetIO();
+    if (fonts) {
+        io.Fonts->Clear();
+        Fonts();
+        ImGui_ImplDX11_InvalidateDeviceObjects();  // the font texture made again at the next frame
+        g_font_scale = want;
+    }
+    io.FontGlobalScale = g_scale / g_font_scale;
+}
+#endif
 
 // --list-gpus: the graphics cards the launcher offers, a line each: d3d12 (Vulkan on Linux) or none, then the name,
 // as the game takes it in its gpu setting
@@ -1606,6 +2088,44 @@ Picture LoadCrest() {
 #endif
 }
 
+// the pages, in the sidebar's order
+enum Page : int { kHome, kDisplay, kGraphics, kView, kTextures, kGame, kControls, kFiles, kPageCount };
+
+// the Graphics page's quality presets: anti-aliasing (on keeps the kind chosen), upscaling and ambient occlusion
+// together. Original is the Xbox's picture; anti-aliasing off, the others do nothing, so off is Original whatever
+// they are
+struct Preset {
+    uint32_t aa, upscaling, ao;
+};
+constexpr Preset kPresets[] = {{0, 0, 0}, {1, 3, 0}, {1, 2, 1}, {1, 0, 1}, {1, 0, 2}};
+enum : int { kOriginal, kLow, kMedium, kHigh, kUltra, kCustom = -1 };
+
+int PresetOf(const Settings& s) {
+    if (!s.antialiasing) return kOriginal;
+    for (int i = kLow; i <= kUltra; i++)
+        if (s.upscaling == kPresets[i].upscaling && s.ambient_occlusion == kPresets[i].ao) return i;
+    return kCustom;
+}
+
+void SetPreset(Settings& s, int p) {
+    s.antialiasing = kPresets[p].aa ? std::max(s.antialiasing, 1u) : 0;
+    s.upscaling = kPresets[p].upscaling;
+    s.ambient_occlusion = kPresets[p].ao;
+}
+
+const char* PresetName(int p) {
+    switch (p) {
+        case kOriginal: return T("Original");
+        case kLow: return T("Low");
+        case kMedium: return T("Medium");
+        case kHigh: return T("High");
+        case kUltra: return T("Ultra");
+        default: return T("Custom");
+    }
+}
+
+const char* AntiAliasName(uint32_t aa) { return aa == 2 ? "NVIDIA DLSS" : aa == 1 ? "AMD FSR" : T("Off"); }
+
 // the launcher's state and its one screen
 class Launcher {
 public:
@@ -1655,11 +2175,13 @@ public:
         ImGui::BeginChild("page", {0, 0}, ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PushFont(g_body);
         switch (page_) {
-            case 0: keep = HomePage(); break;
-            case 1: DisplayPage(); break;
-            case 2: GraphicsPage(); break;
-            case 3: GamePage(); break;
-            case 4: ControlsPage(); break;
+            case kHome: keep = HomePage(); break;
+            case kDisplay: DisplayPage(); break;
+            case kGraphics: GraphicsPage(); break;
+            case kView: ViewPage(); break;
+            case kTextures: TexturesPage(); break;
+            case kGame: GamePage(); break;
+            case kControls: ControlsPage(); break;
             default: FilesPage(); break;
         }
         ImGui::PopFont();
@@ -1677,13 +2199,18 @@ private:
         const Settings& s = settings_;
         return s.display_mode + "|" + std::to_string(s.width) + "x" + std::to_string(s.height) + "|" +
                std::to_string(s.render_percent) + "|" + std::to_string(s.aniso) + "|" + std::to_string(s.vsync) +
-               std::to_string(s.widescreen) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
+               std::to_string(s.widescreen) + std::to_string(s.widescreen_aspect) + std::to_string(s.fps_counter) + std::to_string(s.pause_on_focus_loss) +
                std::to_string(s.keep_open) + "|" + std::to_string(s.menu_key) + "|" + std::to_string(s.texture_pack) +
-               std::to_string(s.texture_pack_size) + "|" + std::to_string(s.button_layout) +
+               std::to_string(s.texture_pack_size) + std::to_string(s.texture_pack_materials) + "|" +
+               std::to_string(s.button_layout) +
                std::to_string(s.lament_save) + "|" + s.gpu + "|" + s.language + "|" + std::to_string(s.game_language) +
                "|" + std::to_string(s.ps2_stick) + std::to_string(s.invert_camera_x) + std::to_string(s.invert_camera_y) +
                std::to_string(s.hud_edges) + "|" + std::to_string(s.fov) + "|" + std::to_string(s.draw_distance) + "|" +
-               std::to_string(s.fog_distance) + "|" + s.release;
+               std::to_string(s.fog_distance) + "|" + s.release + "|" +
+               std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
+               std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
+               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + "|" +
+               std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view);
     }
 
     void AutoSave() {
@@ -1734,14 +2261,15 @@ private:
         dl->AddText(g_small, g_small->FontSize, {tx + S(2), p.y + S(27)}, Rgb(226, 78, 70), "Curse of Darkness");
         ImGui::Dummy({0, cs + S(22)});
 
-        static const words::Key kPages[] = {"Home", "Display", "Graphics", "Game", "Controls", "Game files"};
-        for (int i = 0; i < 6; i++) {
-            if (i == 1) {
+        static const words::Key kPages[kPageCount] = {"Home", "Display", "Graphics", "View", "Textures",
+                                                      "Game", "Controls", "Game files"};
+        for (int i = 0; i < kPageCount; i++) {
+            if (i == kDisplay) {
                 ImGui::Dummy({0, S(4)});
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(30));
                 Label(T("SETTINGS"));
             }
-            if (i == 5) ImGui::Dummy({0, S(6)});
+            if (i == kFiles) ImGui::Dummy({0, S(6)});
             if (NavItem(T(kPages[i]), page_ == i)) page_ = i;
             g_marks.Mark("page." + std::to_string(i));
         }
@@ -1775,7 +2303,8 @@ private:
         int cur = words::Current();
         std::string preview = Icon(kIconGlobe) + "  " + words::kLanguages[cur].name;
         ImGui::PushFont(g_body);
-        ImGui::SetNextItemWidth(-FLT_MIN);
+        float side = ImGui::GetFrameHeight();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - side - S(6));
         bool open = ImGui::BeginCombo("##language", preview.c_str());
         g_marks.Mark("language");
         if (open) {
@@ -1786,8 +2315,15 @@ private:
             }
             ImGui::EndCombo();
         }
-        ImGui::PopFont();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Language"));
+        // beside it, full screen and back (also F11 or Alt+Enter)
+        ImGui::SameLine(0, S(6));
+        ImGui::PushID("fullscreen");
+        if (Button(Icon(g_full ? kIconWindow : kIconFullScreen).c_str(), {side, side}, Kind::Ghost, g_body))
+            g_toggle_full = true;
+        ImGui::PopID();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_full ? T("Leave full screen (F11)") : T("Full screen (F11)"));
+        ImGui::PopFont();
     }
 
     // which release Play starts, when the game files have more than one: a list beside Play, its middle at left_mid
@@ -1852,7 +2388,7 @@ private:
         float buttons_mid = ImGui::GetItemRectMax().y - S(54) * 0.5f;  // for what is beside them
         if (!ready) {
             ImGui::SameLine(0, S(22));
-            if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = 5;
+            if (Button(T("Set up game files"), {0, S(54)}, Kind::Secondary)) page_ = kFiles;
         } else if (files_.Releases().size() > 1) {
             ReleaseChoice({ImGui::GetItemRectMax().x + S(22), buttons_mid});
         }
@@ -1904,14 +2440,19 @@ private:
         std::string mode = settings_.display_mode == "fullscreen" ? T("Fullscreen")
                            : settings_.display_mode == "windowed" ? T("Windowed")
                                                                   : T("Borderless");
+        std::string quality = PresetName(PresetOf(settings_));
+        if (settings_.antialiasing) quality += "  |  " + std::string(AntiAliasName(settings_.antialiasing));
         struct Tile {
             const char* label;
             std::string value;
             int page;
-        } tiles[] = {{T("Display"), mode + "  |  " + res, 1},
-                     {T("Widescreen"), settings_.widescreen ? T("On (16:9, Hor+)") : T("Off (4:3)"), 2},
-                     {T("Render scale"), std::to_string(settings_.render_percent) + "%", 2},
-                     {T("Menu key"), KeyName(settings_.menu_key) + "  |  L3 + R3", 3}};
+        } tiles[] = {{T("Display"), mode + "  |  " + res, kDisplay},
+                     {T("Graphics quality"), quality, kGraphics},
+                     {T("Widescreen"),
+                      settings_.widescreen ? F("On ({}, Hor+)", {settings_.widescreen_aspect == 1610 ? "16:10" : "16:9"})
+                                           : T("Off (4:3)"),
+                      kView},
+                     {T("Menu key"), KeyName(settings_.menu_key) + "  |  L3 + R3", kGame}};
         float gap = S(12), tw = (ImGui::GetContentRegionAvail().x - gap) / 2, th = S(68);
         for (int i = 0; i < 4; i++) {
             if (i % 2) ImGui::SameLine(0, gap);
@@ -1926,6 +2467,13 @@ private:
             Cursor(dl, {p.x + tw - S(38) + S(6) * hv, p.y + th * 0.5f}, S(18), 0.3f + 0.7f * hv);
         }
         ImGui::Dummy({0, S(8)});
+        // anti-aliasing is on by default but its vendor's files are not in the download: without them it, upscaling
+        // and ambient occlusion do nothing, so say so where everyone looks
+        if (settings_.antialiasing && !HaveFrameGen(ExeDir(), AntiAliasVendor())) {
+            Status(kIconWarn, kAmber, F("Anti-aliasing ({}) needs its files: download them on the Graphics page.",
+                                        {AntiAliasName(AntiAliasVendor())}));
+            ImGui::Dummy({0, S(4)});
+        }
         std::string tip = F("In game, press {} or click both sticks (L3 + R3) for these settings.", {KeyName(settings_.menu_key)});
         Wrapped(g_small, kMuted, tip.c_str());
         return keep;
@@ -1972,6 +2520,60 @@ private:
         }
     }
 
+    // a vendor's files (1 AMD FSR, 2 NVIDIA DLSS), for anti-aliasing and frame generation: here, or a download from
+    // the vendor's own release, with its licence a click away
+    void VendorFiles(uint32_t k) {
+        bool fsr = k == 1;
+        if (fg_download_.running && fg_download_.kind == k) {
+            ImGui::ProgressBar(fg_download_.progress, {-FLT_MIN, S(30)},
+                               fsr ? T("Downloading from AMD...") : T("Downloading from NVIDIA..."));
+            return;
+        }
+        if (HaveFrameGen(ExeDir(), k)) {
+            Status(kIconCheck, kGreen, fsr ? T("AMD FSR's files are here") : T("NVIDIA DLSS's files are here"));
+        } else {
+            Status(kIconWarn, kAmber, fsr ? T("AMD FSR's files are not here yet") : T("NVIDIA DLSS's files are not here yet"));
+            Wrapped(g_small, kMuted, fsr ? T("From AMD's own release on GitHub. The files are AMD's, under AMD's licence, "
+                                             "which is saved with them; they are not part of this game's download.")
+                                         : T("From NVIDIA's own Streamline release on GitHub (about 280 MB, of which the game "
+                                             "keeps 70). The files are NVIDIA's, under NVIDIA's licences, which are saved "
+                                             "with them; they are not part of this game's download."));
+            ImGui::Dummy({0, S(4)});
+            ImGui::BeginDisabled(fg_download_.running);
+            if (Button(fsr ? T("Download from AMD") : T("Download from NVIDIA"), {0, 0}, Kind::Primary))
+                fg_download_.Start(k, ExeDir());
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (Button(T("Read the licence"), {0, 0}, Kind::Secondary))
+                ShellExecuteW(nullptr, L"open", Wide(fsr ? kFsrLicence : kDlssLicence).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        if (!fg_download_.running && !fg_download_.result.empty() && fg_download_.kind == k) {
+            Note(fg_download_.result);
+            fg_download_.result.clear();
+        }
+    }
+
+    // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR
+    uint32_t AntiAliasVendor() const {
+        uint32_t aa = settings_.antialiasing;
+        return aa == 2 && !RtxCard(UsedGpu().name) ? 1 : aa;
+    }
+
+    // frame generation's warnings, and its files when anti-aliasing's card above does not show them already
+    void FrameGenStatus() {
+        uint32_t k = settings_.frame_generation;
+        if (!k) return;
+        if (k == 2 && !DlssCard(UsedGpu().name)) {
+            Status(kIconWarn, kAmber, T("Needs a GeForce RTX 40 or 50: this graphics card has no DLSS frame generation. "
+                                        "AMD FSR 3 works on it."));
+        }
+        if (k == 2 && settings_.hdr) {
+            Wrapped(g_small, kMuted, T("With HDR on, the game sends HDR10 for DLSS frame generation, the HDR format it "
+                                       "takes."));
+        }
+        if (k != AntiAliasVendor()) VendorFiles(k);
+    }
+
     void DisplayPage() {
         PageTitle(T("Display"), T("How the game window fills your screen."));
         BeginCard("display");
@@ -1999,10 +2601,139 @@ private:
         ToggleRight("vsync", settings_.vsync);
         EndSetting();
         EndCard();
+#ifdef _WIN32
+        BeginCard("hdr");
+        BeginSetting("HDR", T("On a display with HDR on in Windows: fire, magic, light and the other brightest parts of "
+                              "the picture shine brighter than the rest. Off sends the usual picture."), true);
+        ToggleRight("hdr", settings_.hdr);
+        EndSetting();
+        DisplayHdr shown = PrimaryHdr();
+        if (shown.hdr) {
+            Status(kIconCheck, kGreen, F("This display: HDR on in Windows, peak {} nits", {std::to_string(shown.peak)}));
+        } else {
+            Status(kIconWarn, kAmber, T("This display: HDR off in Windows"));
+            Wrapped(g_small, kMuted, T("For HDR in the game, turn on Use HDR in Windows' display settings."));
+        }
+        if (settings_.hdr) {
+            BeginSetting(T("Peak brightness"), T("The brightest highlights. The display's own peak suits most; lower it if "
+                                                 "highlights glare."));
+            {
+                uint32_t own = shown.peak >= 400 ? shown.peak : 1000;
+                uint32_t v = settings_.hdr_peak_nits ? settings_.hdr_peak_nits : own;
+                std::string name = F("{} nits", {std::to_string(v)});
+                if (!settings_.hdr_peak_nits) name += "  -  " + std::string(T("the display's"));
+                if (Slider("peak", v, 400, 4000, name)) settings_.hdr_peak_nits = (v + 5) / 10 * 10;
+            }
+            EndSetting();
+            BeginSetting(T("Scene brightness"), T("How bright the picture is apart from its highlights. 200 nits suits most "
+                                                  "rooms; more for a bright room, less for a dark one."));
+            Slider("scene", settings_.hdr_scene_nits, 80, 500, F("{} nits", {std::to_string(settings_.hdr_scene_nits)}));
+            EndSetting();
+        }
+        EndCard();
+#endif
     }
 
     void GraphicsPage() {
-        PageTitle(T("Graphics"), T("Picture quality and shape."));
+        PageTitle(T("Graphics"), T("Picture quality and speed. A running game takes the changes at once, unless a setting "
+                                   "says otherwise."));
+        uint32_t& aa = settings_.antialiasing;
+
+        Section(T("QUALITY"));
+        BeginCard("presets");
+        BeginWideSetting(T("Quality preset"), T("Sets anti-aliasing, upscaling and ambient occlusion together. Pick the "
+                                                "closest, then change any of them below."), true);
+        {
+            int preset = PresetOf(settings_);
+            if (Segmented<int>("preset", preset, {kOriginal, kLow, kMedium, kHigh, kUltra},
+                               {PresetName(kOriginal), PresetName(kLow), PresetName(kMedium), PresetName(kHigh),
+                                PresetName(kUltra)}))
+                SetPreset(settings_, preset);
+            const char* note = preset == kOriginal ? T("The game as the Xbox showed it: no smoothing, no added shadow.")
+                               : preset == kLow    ? T("For handhelds and older graphics: the 3D at half resolution, "
+                                                       "smoothed and rebuilt to full size.")
+                               : preset == kMedium ? T("For handhelds and laptops: balanced upscaling and soft shadow. It "
+                                                       "held 60 FPS on a Legion Go 2 in testing.")
+                               : preset == kHigh   ? T("Full resolution, smooth edges and soft shadow. The default.")
+                               : preset == kUltra  ? T("As High, with deeper shadow in corners and crevices.")
+                                                   : T("Your own mix of the settings below.");
+            ControlNote(kMuted, note);
+        }
+        EndSetting();
+        EndCard();
+
+        Section(T("ANTI-ALIASING AND UPSCALING"));
+        BeginCard("aa");
+        BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world. AMD FSR works on any "
+                                           "graphics card; NVIDIA DLSS needs a GeForce RTX. The HUD and menus stay sharp."),
+                     true);
+        Segmented<uint32_t>("aa", aa, {0, 1, 2}, {T("Off"), "AMD FSR", "NVIDIA DLSS"});
+        if (aa == 2 && AntiAliasVendor() != 2) ControlNote(kAmber, T("This graphics card has no DLSS: the game uses AMD FSR."));
+        else if (aa == 2) ControlNote(kMuted, T("From the game's next start."));
+        EndSetting();
+        if (aa) VendorFiles(AntiAliasVendor());
+        if (aa) ImGui::Dummy({0, S(6)});
+        BeginOff(!aa);
+        BeginWideSetting(T("Upscaling"), T("Draws the 3D world at a lower resolution and rebuilds it to full size, for a "
+                                           "higher frame rate on slower graphics or a handheld. The HUD and menus stay at "
+                                           "full resolution."));
+        Segmented<uint32_t>("up", settings_.upscaling, {0, 1, 2, 3},
+                            {T("Native"), T("Quality"), T("Balanced"), T("Performance")});
+        EndOff();
+        if (!aa) {
+            ControlNote(kAmber, T("Needs anti-aliasing on."));
+        } else {
+            static const words::Key kUpNotes[] = {
+                "The 3D at the screen's full resolution.",
+                "The 3D at two thirds of the resolution, its textures as sharp as at full size.",
+                "The 3D at 59% of the resolution: a good trade on a handheld.",
+                "The 3D at half the resolution: the fastest, a little softer.",
+            };
+            ControlNote(kMuted, T(kUpNotes[std::min(settings_.upscaling, 3u)]));
+        }
+        EndSetting();
+        BeginOff(AntiAliasVendor() != 1);
+        BeginSetting(T("Sharpening"), T("Brings back fine texture detail after AMD FSR smooths the picture; too much "
+                                        "outlines the edges. 30% suits most."));
+        Slider("sharp", settings_.sharpening, 0, 100,
+               settings_.sharpening ? std::to_string(settings_.sharpening) + "%" : std::string(T("Off")));
+        EndOff();
+        if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+        else if (AntiAliasVendor() == 2) ControlNote(kMuted, T("NVIDIA DLSS has no sharpening of its own."));
+        EndSetting();
+        EndCard();
+
+        Section(T("LIGHTING AND DETAIL"));
+        BeginCard("detail");
+        BeginOff(!aa);
+        BeginSetting(T("Ambient occlusion"), T("Soft shadow where surfaces meet: in corners, between stones, under ledges "
+                                               "and where feet touch the floor. Low is lighter on the graphics card."),
+                     true);
+        Segmented<uint32_t>("ao", settings_.ambient_occlusion, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
+        EndOff();
+        if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+        EndSetting();
+        BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "
+                                                   "little."));
+        Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
+        EndSetting();
+        BeginSetting(T("Render scale"), T("The whole picture drawn at more or less than the screen's resolution. Above "
+                                          "100% is sharper and far slower; for speed, upscaling is the better way."));
+        Segmented<uint32_t>("scale", settings_.render_percent, {50, 75, 100, 150, 200}, {"50%", "75%", "100%", "150%", "200%"});
+        EndSetting();
+        EndCard();
+
+        Section(T("FRAME GENERATION"));
+        BeginCard("framegen");
+        BeginSetting(T("Frame generation"), T("A frame made between each two the game draws, for twice the frame rate on a "
+                                              "screen that shows it (120 Hz or more). AMD FSR 3 works on any graphics card; "
+                                              "NVIDIA DLSS needs a GeForce RTX 40 or 50. From the next start."), true);
+        Segmented<uint32_t>("fg", settings_.frame_generation, {0, 1, 2}, {T("Off"), "AMD FSR 3", "NVIDIA DLSS"});
+        EndSetting();
+        FrameGenStatus();
+        EndCard();
+
+        Section(T("GRAPHICS CARD"));
         BeginCard("gpu");
         BeginSetting(T("Graphics card"), T("The one the game draws with, from its next start. Automatic takes the fastest: on "
                                            "a laptop the dedicated GPU, not the one in the processor."), true);
@@ -2023,37 +2754,58 @@ private:
         EndSetting();
         GpuStatus();
         EndCard();
-        BeginCard("presets");
-        BeginSetting(T("Quality preset"), T("Sets render scale and texture filtering together."), true);
-        int preset = settings_.render_percent == 75 && settings_.aniso == 0      ? 0
-                     : settings_.render_percent == 100 && settings_.aniso == 0   ? 1
-                     : settings_.render_percent == 150 && settings_.aniso == 8   ? 2
-                     : settings_.render_percent == 200 && settings_.aniso == 16  ? 3
-                                                                                 : -1;
-        if (Segmented<int>("preset", preset, {0, 1, 2, 3}, {T("Low"), T("Original"), T("High"), T("Ultra")})) {
-            static const uint32_t kScale[] = {75, 100, 150, 200}, kAniso[] = {0, 0, 8, 16};
-            settings_.render_percent = kScale[preset];
-            settings_.aniso = kAniso[preset];
+    }
+
+    void ViewPage() {
+        PageTitle(T("View"), T("The picture's shape, where the HUD sits, and how far and wide you see."));
+        Section(T("WIDESCREEN"));
+        BeginCard("wide");
+        BeginSetting(T("Widescreen"), T("More of the world at the sides, nothing stretched: 16:9 for most screens, 16:10 "
+                                        "for 16:10 ones such as 1920x1200. Off shows the game in 4:3, as on an old TV."),
+                     true);
+        {
+            uint32_t wide = settings_.widescreen ? settings_.widescreen_aspect : 0;
+            if (Segmented<uint32_t>("wide", wide, {0, 169, 1610}, {T("Off"), "16:9", "16:10"})) {
+                settings_.widescreen = wide != 0;
+                if (wide) settings_.widescreen_aspect = wide;
+            }
         }
         EndSetting();
-        EndCard();
-        BeginCard("graphics");
-        BeginSetting(T("Widescreen"), T("16:9 with more of the world at the sides, nothing stretched. The HUD, menus and "
-                                        "movies stay 4:3 in the middle. Needs a 16:9 or wider resolution."), true);
-        ToggleRight("wide", settings_.widescreen);
-        EndSetting();
-        BeginSetting(T("Render scale"), T("Of the output height. Above 100% supersamples for a sharper picture; below is "
-                                          "faster on weak GPUs."));
-        Segmented<uint32_t>("scale", settings_.render_percent, {50, 75, 100, 150, 200}, {"50%", "75%", "100%", "150%", "200%"});
-        EndSetting();
-        BeginSetting(T("Anisotropic filtering"), T("Sharper textures on floors and walls seen at an angle."));
-        Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
-        EndSetting();
-        BeginSetting(T("HUD at the screen edges"), T("Widescreen: the health bar and the rest of the HUD in the screen's "
-                                                    "corners rather than at the corners of the 4:3 middle."));
+        bool narrow = !settings_.widescreen;
+        BeginOff(narrow);
+        BeginSetting(T("HUD at the screen edges"), T("The health bar and the rest of the HUD in the screen's corners, "
+                                                    "rather than around the 4:3 middle."));
         ToggleRight("hudedges", settings_.hud_edges);
+        EndOff();
+        if (narrow) ControlNote(kAmber, T("Needs widescreen on."));
+        EndSetting();
+        BeginOff(narrow);
+        BeginSetting(T("Pause menu across the screen"), T("The pause menu's columns spread toward the screen's sides, its "
+                                                         "page buttons in the middle, rather than all of it in the 4:3 "
+                                                         "middle."));
+        ToggleRight("menuspread", settings_.menu_spread);
+        EndOff();
+        if (narrow) ControlNote(kAmber, T("Needs widescreen on."));
         EndSetting();
         EndCard();
+
+        Section(T("MOVIES"));
+        BeginCard("movies");
+        BeginSetting(T("HD movies"), T("The story's movies from an HD movie pack in the movies folder. Off plays the "
+                                       "game's own."),
+                     true);
+        ToggleRight("hdmovies", settings_.hd_movies);
+        ControlNote(files_.movies ? kMuted : kAmber,
+                    files_.movies ? T("Movie pack found in the movies folder.") : T("No movie pack in the movies folder."));
+        EndSetting();
+        BeginSetting(T("Movie size"), T("Fit: the picture as large as the screen shows it whole, without the black bars. "
+                                        "Fill: the whole screen, a little of the picture's top and bottom cut off. "
+                                        "Original: the game's own 4:3 frame."));
+        Segmented<uint32_t>("movieview", settings_.movie_view, {1, 2, 0}, {T("Fit"), T("Fill"), T("Original")});
+        EndSetting();
+        EndCard();
+
+        Section(T("CAMERA AND DISTANCE"));
         BeginCard("view");
         BeginSetting(T("Field of view"), T("How much of the world the camera takes in: 100% is the game's own, which each "
                                            "room's camera sets; more is wider. Story scenes keep the game's."), true);
@@ -2081,14 +2833,16 @@ private:
                             {T("Original"), "1.5x", "2x", "4x", T("None")});
         EndSetting();
         EndCard();
+    }
+
+    void TexturesPage() {
+        PageTitle(T("Textures"), T("An HD texture pack replaces the game's textures with sharper ones. Packs made for "
+                                   "PCSX2 work: put the pack's pictures in the textures folder."));
         BeginCard("texpack");
-        BeginSetting(T("HD texture pack"), T("Texture packs made for PCSX2 replace the game's textures: put a pack's "
-                                             "replacement pictures in the textures folder."), true);
+        BeginSetting(T("HD texture pack"), T("Uses the pack in the textures folder. Off shows the game's own textures."),
+                     true);
         ToggleRight("texpack", settings_.texture_pack);
-        EndSetting();
-        BeginSetting(T("Texture size"), T("The largest side a picture is loaded at. Larger is sharper and needs more video "
-                                          "memory and loading time."));
-        Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", T("Full")});
+        ControlNote(kMuted, T("From the game's next start."));
         EndSetting();
         ImGui::Dummy({0, S(2)});
         if (files_.pictures) Status(kIconCheck, kGreen, F("{} in the textures folder", {words::Pictures(files_.pictures)}));
@@ -2097,6 +2851,33 @@ private:
         if (Button(T("Open textures folder"), {0, 0}, Kind::Secondary)) OpenTextures();
         ImGui::SameLine();
         if (Button(T("Check again"), {0, 0}, Kind::Secondary)) rescan_ = true;
+        EndCard();
+
+        Section(T("PACK OPTIONS"));
+        BeginCard("texdetail");
+        bool pack = settings_.texture_pack, maps = pack && settings_.texture_pack_materials;
+        BeginOff(!pack);
+        BeginSetting(T("Texture size"), T("The largest side a picture is loaded at. Larger is sharper and needs more video "
+                                          "memory and loading time."), true);
+        Segmented<uint32_t>("texsize", settings_.texture_pack_size, {1024, 2048, 0}, {"1024", "2048", T("Full")});
+        EndOff();
+        ControlNote(pack ? kMuted : kAmber, pack ? T("From the game's next start.") : T("Needs the HD texture pack on."));
+        EndSetting();
+        BeginOff(!pack);
+        BeginSetting(T("Material maps"), T("A pack's normal and ORM maps (its materials folder) shade its pictures: relief "
+                                           "that catches the light, darker crevices, shine on metal."));
+        ToggleRight("texmat", settings_.texture_pack_materials);
+        EndOff();
+        if (!pack) ControlNote(kAmber, T("Needs the HD texture pack on."));
+        EndSetting();
+        BeginOff(!maps);
+        BeginSetting(T("Surface depth"), T("With material maps, bricks, mortar, cracks and carvings get real depth that "
+                                           "shifts as the camera moves (parallax), not only shading. Low is shallower and "
+                                           "lighter on the graphics card."));
+        Segmented<uint32_t>("depth", settings_.surface_depth, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
+        EndOff();
+        if (!maps) ControlNote(kAmber, pack ? T("Needs material maps on.") : T("Needs the HD texture pack on."));
+        EndSetting();
         EndCard();
     }
 
@@ -2389,11 +3170,38 @@ private:
     fs::path picked_;  // the dialog's file, for the next frame (Picked)
 #endif
     std::vector<Res> modes_;
+    FrameGenDownload fg_download_;
     std::string status_, saved_, shown_language_;
     double status_time_ = -100;
     bool rescan_ = false;
     int page_ = 0;
 };
+
+Launcher* g_launcher = nullptr;
+bool g_running = true;
+
+#ifdef _WIN32
+// one frame: the scale the window's size gives, the launcher, shown
+void PaintFrame() {
+    if (IsIconic(g_hwnd) || !g_launcher) return;
+    if (g_toggle_full) {
+        g_toggle_full = false;
+        ToggleFullScreen();
+    }
+    Rescale();
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+    if (!g_launcher->Frame()) g_running = false;
+    ImGui::Render();
+    ImVec4 bg = V(kBg);
+    const float clear[4] = {bg.x, bg.y, bg.z, 1};
+    g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
+    g_ctx->ClearRenderTargetView(g_rtv, clear);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    g_swap->Present(1, 0);
+}
+#endif
 
 }  // namespace
 
@@ -2403,6 +3211,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     if (std::wcsstr(GetCommandLineW(), L"--list-gpus")) return ListGpus();
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // WIC, for the pack's logo
+    // --download-framegen 1 (AMD FSR 3) or 2 (NVIDIA DLSS): the Graphics page's download, without the window; exit
+    // code 0 once the files are there
+    if (const wchar_t* at = std::wcsstr(GetCommandLineW(), L"--download-framegen ")) {
+        uint32_t kind = uint32_t(std::wcstoul(at + 20, nullptr, 10));
+        if (kind != 1 && kind != 2) return 2;
+        FrameGenDownload d;
+        d.Start(kind, ExeDir());
+        if (d.worker.joinable()) d.worker.join();
+        return HaveFrameGen(ExeDir(), kind) ? 0 : 1;
+    }
     float scale = float(GetDpiForSystem()) / 96.0f;
     {
         Settings settings;  // the language, for the window's title and an error before the launcher is up
@@ -2418,13 +3236,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
     wc.lpszClassName = L"CastlevaniaLauncher";
     RegisterClassExW(&wc);
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT r{0, 0, LONG(1060 * scale), LONG(690 * scale)};
+    // a window of its own size that can be resized, maximized or made full screen (F11): the layout scales to it.
+    // At 100%, unless the screen's work area is smaller: then as large as fits nine tenths of it
+    DWORD style = WS_OVERLAPPEDWINDOW;
+    RECT work{0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    float zoom = std::min({1.0f, 0.9f * float(work.right - work.left) / (kBaseW * scale),
+                           0.9f * float(work.bottom - work.top) / (kBaseH * scale)});
+    zoom = std::max(zoom, kMinZoom);
+    RECT r{0, 0, LONG(kBaseW * scale * zoom), LONG(kBaseH * scale * zoom)};
     AdjustWindowRectExForDpi(&r, style, FALSE, 0, GetDpiForSystem());
     int w = r.right - r.left, h = r.bottom - r.top;
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, Wide(T("Castlevania: Curse of Darkness - Launcher")).c_str(), style,
-                             (GetSystemMetrics(SM_CXSCREEN) - w) / 2, (GetSystemMetrics(SM_CYSCREEN) - h) / 2, w, h,
-                             nullptr, nullptr, inst, nullptr);
+                             work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2,
+                             w, h, nullptr, nullptr, inst, nullptr);
+    scale *= zoom;
     BOOL dark = TRUE;
     DwmSetWindowAttribute(g_hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
     // Windows 11: the title bar in the menus' navy, its words in the logo's gold, its edge light blue
@@ -2436,7 +3262,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         MessageBoxW(nullptr, Wide(T("Direct3D 11 is not available.")).c_str(), L"Castlevania Launcher", MB_ICONERROR);
         return 1;
     }
-    ShowWindow(g_hwnd, show);
+    if (std::getenv("XBE_BACKGROUND")) {
+        // tests: behind the other windows, without the focus (its clicks are its own, its pictures read from it)
+        ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    } else {
+        ShowWindow(g_hwnd, show);
+    }
     UpdateWindow(g_hwnd);
 
     IMGUI_CHECKVERSION();
@@ -2447,39 +3279,34 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     g_scale = scale;
     Style();
     Fonts();
+    g_font_scale = scale;
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     Launcher launcher;
-    // --page home|display|graphics|game|controls|files opens on that page
-    static const wchar_t* kPageNames[] = {L"home", L"display", L"graphics", L"game", L"controls", L"files"};
-    for (int i = 0; i < 6; i++)
+    // --page home|display|graphics|view|textures|game|controls|files opens on that page
+    static const wchar_t* kPageNames[kPageCount] = {L"home", L"display", L"graphics", L"view",
+                                                    L"textures", L"game", L"controls", L"files"};
+    for (int i = 0; i < kPageCount; i++)
         if (std::wcsstr(GetCommandLineW(), (std::wstring(L"--page ") + kPageNames[i]).c_str())) launcher.ShowPage(i);
-    bool running = true;
-    while (running) {
+    g_launcher = &launcher;
+    g_paint = PaintFrame;
+    while (g_running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
-            if (msg.message == WM_QUIT) running = false;
+            if (msg.message == WM_QUIT) g_running = false;
         }
-        if (!running) break;
+        if (!g_running) break;
         if (IsIconic(g_hwnd)) {
             Sleep(50);
             continue;
         }
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-        if (!launcher.Frame()) running = false;
-        ImGui::Render();
-        ImVec4 bg = V(kBg);
-        const float clear[4] = {bg.x, bg.y, bg.z, 1};
-        g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
-        g_ctx->ClearRenderTargetView(g_rtv, clear);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        g_swap->Present(1, 0);
+        PaintFrame();
     }
+    g_paint = nullptr;
+    g_launcher = nullptr;
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -2537,10 +3364,11 @@ int main(int argc, char** argv) {
     linuxapp::g_nav_pad = [] { return pad; };
 
     Launcher launcher;
-    // --page home|display|graphics|game|controls|files opens on that page
-    static const char* kPageNames[] = {"home", "display", "graphics", "game", "controls", "files"};
+    // --page home|display|graphics|view|textures|game|controls|files opens on that page
+    static const char* kPageNames[kPageCount] = {"home", "display", "graphics", "view",
+                                                 "textures", "game", "controls", "files"};
     for (int a = 1; a + 1 < argc; a++)
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < kPageCount; i++)
             if (!std::strcmp(argv[a], "--page") && !std::strcmp(argv[a + 1], kPageNames[i])) launcher.ShowPage(i);
     bool running = true;
     while (running) {
@@ -2549,6 +3377,9 @@ int main(int argc, char** argv) {
             linuxapp::ImGuiEvent(e);
             if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) running = false;
             if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED) g_activated = true;
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat &&
+                (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))))
+                g_toggle_full = true;
             if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad) pad = SDL_OpenGamepad(e.gdevice.which);
             if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && SDL_GetGamepadID(pad) == e.gdevice.which) {
                 SDL_CloseGamepad(pad);
@@ -2556,6 +3387,10 @@ int main(int argc, char** argv) {
             }
         }
         if (!running) break;
+        if (g_toggle_full) {
+            g_toggle_full = false;
+            ToggleFullScreen();
+        }
         if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_MINIMIZED) {
             SDL_Delay(50);
             continue;

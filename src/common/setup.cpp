@@ -25,7 +25,9 @@ namespace {
 namespace fs = std::filesystem;
 
 void Fail(const std::wstring& text) {
-    MessageBoxW(nullptr, text.c_str(), app::kGame.short_title, MB_ICONWARNING | MB_SETFOREGROUND);
+    // tests (XBE_BACKGROUND): the message in the log, no window taking the focus
+    if (app::Background()) LOGR("message box: %ls", text.c_str());
+    else MessageBoxW(nullptr, text.c_str(), app::kGame.short_title, MB_ICONWARNING | MB_SETFOREGROUND);
     ExitProcess(1);
 }
 
@@ -71,10 +73,15 @@ void AskForGame() {
 
 void WidescreenInit();    // widescreen.cpp
 void TexturePackInit();   // texpack.cpp
+void MoviesInit();        // movies.cpp
 
 // GameInfo::init: settings loaded, nothing of the game touched yet
+void MenuToRenderer();  // menu.cpp
+
 void GameInit() {
+    MenuToRenderer();  // DLSS is loaded with the device, by the setting as the game starts
     AskForGame();
     TexturePackInit();
+    MoviesInit();
     WidescreenInit();
 }

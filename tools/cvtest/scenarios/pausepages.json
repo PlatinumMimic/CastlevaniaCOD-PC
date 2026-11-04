@@ -1,0 +1,19 @@
+{
+  "name": "pausepages",
+  "save": "user",
+  "note": "The pause menu's pages on a wide screen, from a save with an Innocent Devil (out\\test\\saves\\user: the pages cycle only with one): the title's Continue, then the first page and the next ones by the shoulder buttons (the triggers: RB and LB in the PS2 layout), each shot for its backdrop reaching the screen's sides as the first page's does.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "expect": ["not player.active"], "judge": false},
+    {"until": "player.active and not cutscene and not loading and not menu", "timeout": 90,
+     "poll": "0:a,90f:wait", "poll_by": [["cutscene", "0:start,45f:wait"]], "shot": "loaded", "judge": false},
+    {"press": "0f:wait:60f", "shot": "stand", "judge": false},
+    {"press": "0:start,1500:wait", "shot": "page-1", "expect": ["menu"], "judge": false},
+    {"press": "0:rt,1500:wait", "shot": "page-2", "expect": ["menu"], "judge": false},
+    {"press": "0:rt,1500:wait", "shot": "page-3", "expect": ["menu"], "judge": false},
+    {"press": "0:rt,1500:wait", "shot": "page-4", "expect": ["menu"], "judge": false},
+    {"press": "0:lt,1500:wait", "shot": "page-3-again", "expect": ["menu"], "judge": false},
+    {"press": "0:black,1500:wait", "shot": "page-black", "expect": ["menu"], "judge": false},
+    {"press": "0:b,1500:wait", "shot": "closed", "judge": false}
+  ]
+}

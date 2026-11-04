@@ -1,0 +1,16 @@
+{
+  "name": "materials",
+  "after": "newgame.json",
+  "note": "The texture pack's material maps (normal and ORM, materials/manifest.json) on the first courtyard's stone, the drawbridge (5.0) and the rampart of 5.7; run with CV_MATERIALS=0 for the same shots without them.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "texture_pack_size": 0},
+  "steps": [
+    {"press": "0f:wait:180f", "shot": "courtyard"},
+    {"press": "0f:rsl:40f,0f:wait:60f", "shot": "courtyard-turned"},
+    {"press": "0:warp=5.0,10f:wait:20f"},
+    {"until": "room == 0 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "drawbridge"},
+    {"press": "0:warp=5.7,10f:wait:20f"},
+    {"until": "room == 7 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "rampart"}
+  ]
+}

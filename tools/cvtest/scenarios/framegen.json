@@ -1,0 +1,16 @@
+{
+  "name": "framegen",
+  "after": "newgame.json",
+  "note": "Frame generation (frame_generation = 1, AMD FSR 3; --set frame_generation=2 for NVIDIA DLSS) in a room with the camera turning, its libraries from the build folder or CV_FRAMEGEN_DIR: the log says whether it generates. XBE_FG_SHOW_MOTION=1 draws the motion vectors over the frame (grey still, red right, green down), XBE_FG_DEBUG=1 AMD's tear lines on the generated frames.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "frame_generation": 1},
+  "steps": [
+    {"press": "0:warp=3.2,10f:wait:20f"},
+    {"until": "map == 3 and room == 2 and player.active and not loading", "timeout": 30, "shot": "still", "judge": false},
+    {"press": "0f:wait:30f", "shot": "still-2", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-1", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-2", "judge": false},
+    {"press": "0f:rs=0/0.7:20f", "shot": "pan-up", "judge": false},
+    {"press": "0f:ls=0/1:40f", "shot": "walk", "judge": false},
+    {"press": "0f:wait:30f", "shot": "after", "judge": false}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "texpack-live-on",
+  "after": "newgame.json",
+  "note": "A game started without the HD texture pack (--set texture_pack=false: its pictures not indexed) switched to it while it runs: the pack's pictures are indexed on a thread of their own and every texture asks again once they are (texpack.cpp); then off again.",
+  "steps": [
+    {"press": "0f:wait:30f", "shot": "pack-off", "measure": {"left": [0.05, 0.72, 0.33, 0.95]},
+     "expect": ["not texpack.on and not texpack.ready", "texpack.matched == 0", "not found(runlog, r'texpack: \\d+ pictures')"]},
+    {"press": "0:set=texture_pack=true,0f:wait:150f", "shot": "pack-on", "measure": {"left": [0.05, 0.72, 0.33, 0.95]},
+     "expect": ["texpack.on and texpack.ready", "found(runlog, r'texpack: \\d+ pictures')", "texpack.matched > 20",
+                "abs(screen.edges.left / shots['pack-off'].edges.left - 1) > 0.05"]},
+    {"press": "0:set=texture_pack=false,0f:wait:60f", "shot": "pack-off-again", "measure": {"left": [0.05, 0.72, 0.33, 0.95]},
+     "expect": ["texpack.matched == prev.texpack.matched", "abs(screen.edges.left / shots['pack-off'].edges.left - 1) < 0.05"]}
+  ]
+}

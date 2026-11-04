@@ -1,0 +1,29 @@
+{
+  "name": "framegen-long",
+  "after": "newgame.json",
+  "note": "Frame generation over a long stretch of play: 15 s standing, then 10 s with the camera turning, in map 3 room 2, timed (XBE_PERF logs the frames shown). --set frame_generation=1 or 2.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": true,
+    "frame_generation": 2
+  },
+  "perf": true,
+  "steps": [
+    {
+      "press": "0:warp=3.2,10f:wait:20f"
+    },
+    {
+      "until": "map == 3 and room == 2 and player.active and not loading",
+      "timeout": 30
+    },
+    {
+      "press": "0:wait:15000"
+    },
+    {
+      "press": "0:rs=0.7/0:10000",
+      "shot": "turn",
+      "judge": false
+    }
+  ]
+}

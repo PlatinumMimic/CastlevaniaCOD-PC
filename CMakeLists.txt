@@ -59,14 +59,31 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets/eu/default.xbe)
     list(APPEND CV_RELEASES CastlevaniaEU)
 endif()
 xbe_releases(${CMAKE_CURRENT_BINARY_DIR}/releases.cpp ${CV_RELEASES})
+# Linux: movies.cpp's video decoding, FFmpeg's (libavformat, libavcodec, swscale), built beside this or installed; a
+# release carries its libraries (an LGPL build, tools/linux/release.sh)
+if(NOT WIN32)
+    set(CV_FFMPEG_DIR "" CACHE PATH "FFmpeg's install prefix (include, lib)")
+    find_path(CV_FFMPEG_INCLUDE libavcodec/avcodec.h PATHS ${CV_FFMPEG_DIR}/include REQUIRED)
+    foreach(lib avformat avcodec avutil swscale)
+        find_library(CV_FFMPEG_${lib} ${lib} PATHS ${CV_FFMPEG_DIR}/lib REQUIRED)
+        list(APPEND CV_FFMPEG_LIBS ${CV_FFMPEG_${lib}})
+    endforeach()
+    get_filename_component(CV_FFMPEG_LIB_DIR ${CV_FFMPEG_avcodec} DIRECTORY)
+endif()
 foreach(exe ${CV_RELEASES})
     target_sources(${exe} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/releases.cpp)
     # the DLL is linked again whenever the exe is: one older than the exe is built again on the first start
     set_property(TARGET ${exe}_code APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:${exe}>)
     target_include_directories(${exe} SYSTEM PRIVATE ${xxhash_SOURCE_DIR})
-    # the exe names its debug symbols by file name only, not the folder it was built in
     if(WIN32)
+        # the exe names its debug symbols by file name only, not the folder it was built in
         target_link_options(${exe} PRIVATE -Wl,/pdbaltpath:%_PDB%)
+        # movies.cpp: Windows' video decoding, for a movie pack's HD movies
+        target_link_libraries(${exe} PRIVATE mfplat mfreadwrite mfuuid d3d11)
+    else()
+        target_include_directories(${exe} SYSTEM PRIVATE ${CV_FFMPEG_INCLUDE})
+        target_link_libraries(${exe} PRIVATE ${CV_FFMPEG_LIBS})
+        set_property(TARGET ${exe} APPEND PROPERTY BUILD_RPATH ${CV_FFMPEG_LIB_DIR})
     endif()
 endforeach()
 
@@ -89,7 +106,7 @@ target_compile_definitions(CastlevaniaLauncher PRIVATE UNICODE _UNICODE _CRT_SEC
 target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall)  # Dear ImGui's own sources
 # words.h checks every row of its phrases while compiling: more steps than clang allows by default
 target_compile_options(CastlevaniaLauncher PRIVATE -fconstexpr-steps=8388608)
-target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 d3d12 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32
+target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 d3d12 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32 urlmon
                       ole32 windowscodecs)
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 foreach(exe ${CV_RELEASES})

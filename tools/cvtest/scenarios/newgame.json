@@ -10,7 +10,7 @@
      "poll_by": [["cutscene", "0:start,45f:wait"], ["menu", "0:b,30f:wait"],
                  ["name and not player.active and not loading", "0:left,500:a,1500:start,2500:wait"]],
      "shot": "gameplay", "note": "the opening scenes the timed presses missed are skipped with Start; named but not yet playing (a slow start: \"Create new save data?\" came up after the presses for it, No chosen), Yes (left, A), its boxes closed (A) and the movies skipped (Start)"},
-    {"press": "0f:wait:60f", "shot": "stand",
+    {"press": "0f:wait:120f", "shot": "stand", "note": "two seconds: its frame rate an average, not one stall's (a shader compiled)",
      "expect": ["map == 5", "mode == 0", "player.hp == player.hp_max == 100", "player.exp == 0", "not menu", "not modal",
                 "not screen.flat", "step.fps > 50", "audio.frames > 48000 * 20", "audio.loud > 48000 * 5",
                 "window is None or (window.w == settings.width and window.h == settings.height)"]},

@@ -1,0 +1,9 @@
+{
+  "name": "census-rest",
+  "after": "newgame.json",
+  "note": "census.json's sweep for maps 11 to 13 alone, skipping a movie a warp lands in: run with its own CV_TEXPACK_CENSUS folder and merge.",
+  "settings": {"hdr": false, "texture_pack_size": 1024},
+  "steps": [
+    {"sweep": {"maps": [11, 12, 13], "hold": 30, "skip_inactive": true}}
+  ]
+}

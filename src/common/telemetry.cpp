@@ -22,8 +22,9 @@
 // Beside the game's own, for the regression suite (tools/cvtest/SUITE.md): "pad", the buttons and sticks as the game
 // last got them; "audio", the frames the sound output played and those with sound; "window_size", the game window's
 // pixels; "view", the field of view, far plane and fog as the game set them and as drawn (game/view.cpp); "wide",
-// widescreen's moves of the lock-on marker and the HUD and the sky's fogged draws (widescreen.cpp); "settings_menu";
-// "vpad", the virtual controller (XBE_VIRTUAL_PAD).
+// widescreen's moves of the lock-on marker and the HUD and the sky's fogged draws (widescreen.cpp); "texpack", the HD
+// texture pack on, indexed, and the textures that asked it and got a picture (texpack.cpp); "settings_menu"; "vpad",
+// the virtual controller (XBE_VIRTUAL_PAD).
 //
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
 // the pad, with "pad": the buttons held as the game got them; a button pressed or let go also writes the state right
@@ -178,6 +179,7 @@ std::vector<EnemyInfo> Enemies();
 std::string BotJson();   // bot.cpp
 std::string WideJson();  // widescreen.cpp
 std::string ViewJson();  // game/view.cpp
+std::string TexturePackJson();  // texpack.cpp
 bool MenuOpen();         // menu.cpp
 
 // for the bot (bot.cpp), each frame: Hector's position and facing, the camera's heading (the direction stick up
@@ -300,6 +302,8 @@ std::string GameStateJson() {
     // the field of view, far plane and fog, the game's and as drawn; the in-game settings menu
     std::string view = ViewJson();
     if (!view.empty()) out += ",\"view\":" + view;
+    // the HD texture pack: on, indexed, the textures that asked it for a picture and got one
+    out += ",\"texpack\":" + TexturePackJson();
     out += MenuOpen() ? ",\"settings_menu\":true" : ",\"settings_menu\":false";
     // the virtual controller (XBE_VIRTUAL_PAD): plugged in, taken by a port, the motors the game drove it with
     if (input::VirtualOn()) {

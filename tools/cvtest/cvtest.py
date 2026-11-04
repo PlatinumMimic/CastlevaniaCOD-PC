@@ -41,7 +41,8 @@ A step plays one of
                                           table the game wrote (rooms.json), and keeps a screenshot of each; a room
                                           that fails does not stop the sweep. "rooms": ["m.r", ...] warps to those
                                           instead, "hold": <frames> stands that long in each after (with "perf",
-                                          the room's timings)
+                                          the room's timings); "skip_inactive": true presses Start while Hector is
+                                          not in play, for a movie a warp lands in
   "route": "<route>"                      walks routes/<route>.json from its first room: the bot (src/common/bot.cpp)
                                           through each room's points, pressing where the recording pressed and
                                           playing its menus where it played them, out by the way the recording
@@ -56,6 +57,9 @@ and may have
                                           fractions of the window: screen.edges.<name>, the mean brightness step
                                           between neighbouring pixels (render scale and texture filtering move it)
   "luma": {"<name>": [x0, y0, x1, y1]}    the mean brightness (0 to 255) of those parts: screen.luma.<name>
+  "seams": {"<name>": [x0, y0, x1, y1]}   how far the strongest step between two columns there stands out of the
+                                          median one: screen.seams.<name> (a straight seam, 70 and more; a continuous
+                                          picture some 3)
   "click": "<control>" or [...]          clicks the in-game settings menu's controls first, by their names as it
                                           says where they are (CV_MENU_STATE, src/common/menu.cpp): made by the
                                           game as ImGui input (the live entry click=<control>), whatever window
@@ -447,6 +451,28 @@ def luma(w, h, bgra, box):
     return round(total / count / 1000, 1)
 
 
+def seams(w, h, bgra, box):
+    """in box (fractions of the window), the brightness step between neighbouring columns: the strongest column's mean
+    step over the median column's. A straight vertical seam (a card's edge, a smeared block's border) stands out of a
+    continuous picture: a continuous sky some 3, a seam across it 70 and more"""
+    x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+    if x1 - x0 < 3 or y1 <= y0:
+        return None
+    every = max(1, (x1 - x0) * (y1 - y0) // 100000)
+    steps = [0] * (x1 - x0 - 1)
+    rows = 0
+    for y in range(y0, y1, every):
+        i = (y * w + x0) * 4
+        row = [bgra[i + k + 2] * 299 + bgra[i + k + 1] * 587 + bgra[i + k] * 114 for k in range(0, (x1 - x0) * 4, 4)]
+        for x in range(len(steps)):
+            steps[x] += abs(row[x + 1] - row[x])
+        rows += 1
+    ordered = sorted(steps)
+    median = max(ordered[len(ordered) // 2], rows * 500)  # half a brightness level a row at least: a flat box is 0
+    return round(ordered[-1] / median, 2)
+
+
 # --- expressions over the state ---------------------------------------------------------------------------------
 
 class View:
@@ -535,6 +561,13 @@ class Game:
             folder.mkdir(parents=True)
             for f in (self.exe + EXE, self.exe + CODE):
                 shutil.copy2(build / f, folder / f)  # dates kept: the exe takes a DLL that is not older than it
+            # frame generation's libraries, the player's to download: from the build folder, else CV_FRAMEGEN_DIR
+            # (a folder laid out as the game's: the AMD files and a streamline folder)
+            fg = Path(os.environ["CV_FRAMEGEN_DIR"]) if os.environ.get("CV_FRAMEGEN_DIR") else build
+            for f in fg.glob("amd_fidelityfx_*.dll"):
+                shutil.copy2(f, folder / f.name)
+            if (fg / "streamline").is_dir():
+                shutil.copytree(fg / "streamline", folder / "streamline")
         settings = dict(DEFAULT_SETTINGS, **scenario.get("settings", {}))
         lines = [f"{k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}" for k, v in settings.items()]
         (folder / "castlevania.toml").write_text("\n".join(lines) + "\n")
@@ -548,6 +581,7 @@ class Game:
         self.log_pos = 0
         env = dict(os.environ if env is None else env, CV_PAD_LIVE=str(self.live))
         env["XBE_NO_PADS"] = "1"  # a controller plugged into the PC left out: the run's presses alone
+        env["XBE_BACKGROUND"] = "1"  # its windows behind the others, never taking the focus from whoever uses the PC
         env.update(scenario.get("env", {}))
         self.menu_state = folder / "menu-state.json"  # where the settings menu's controls are (src/common/menu.cpp)
         env["CV_MENU_STATE"] = str(self.menu_state)
@@ -715,8 +749,11 @@ def sweep_steps(game, spec):
     for m, room in rooms or [(g["map"], room) for g in table if g["map"] in maps for room in g["rooms"]]:
         out.append({"press": f"0:warp={m}.{room},10f:wait:20f", "note": f"warp {m}.{room}", "stop_on_fail": False})
         # a story scene the room starts is skipped with Start, a menu that opens instead is closed
+        # "skip_inactive": a movie the warp landed in (no cutscene flag, Hector not in play) is skipped with Start too
+        skip = SKIP_SCENES + ([["not player.active and not loading and not menu", "0:start,45f:wait"]]
+                              if spec.get("skip_inactive") else [])
         out.append({"until": f"map == {m} and room == {room} and player.active and not cutscene and not loading "
-                             f"and not menu", "timeout": spec.get("timeout", 30), "poll_by": SKIP_SCENES,
+                             f"and not menu", "timeout": spec.get("timeout", 30), "poll_by": skip,
                     "shot": f"room-{m}-{room}", "expect": ["not screen.flat"], "stop_on_fail": False,
                     "sweep_room": f"{m}.{room}"})
         if spec.get("hold"):
@@ -1074,7 +1111,7 @@ def record(name, build, save):
         shutil.copytree(SAVES / save, folder / "hdd")
     tel = out / "telemetry.jsonl"
     env = dict(os.environ, CV_TELEMETRY=str(tel), CV_TELEMETRY_EVERY="6")
-    for k in ("CV_PAD_LIVE", "CV_PAD_SCRIPT"):
+    for k in ("CV_PAD_LIVE", "CV_PAD_SCRIPT", "XBE_BACKGROUND"):  # played by a person: in front, with the focus
         env.pop(k, None)
     print(f"recording {name}: play, then close the game ({out})")
     subprocess.run([str(folder / ("Castlevania" + EXE))], cwd=folder, env=env)
@@ -1273,6 +1310,8 @@ def play_steps(game, scenario, settings, shots, run, results):
                     screen["edges"] = {k: edges(*img, box) for k, box in step["measure"].items()}
                 if step.get("luma"):
                     screen["luma"] = {k: luma(*img, box) for k, box in step["luma"].items()}
+                if step.get("seams"):
+                    screen["seams"] = {k: seams(*img, box) for k, box in step["seams"].items()}
                 shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
                 write_png(shot, *img)
                 if judge_model and step.get("judge", True):
@@ -1356,8 +1395,9 @@ HOME_POS = (-5000, -4900)
 GAME_DEFAULTS = {"render_percent": 100, "anisotropic_filtering": 0, "vsync": True, "fps_cap": 60, "widescreen": True,
                  "fps_counter": False, "lament_save": False, "ps2_stick": True, "invert_camera_x": False,
                  "invert_camera_y": False, "fov": 100, "draw_distance": 100, "fog_distance": 100, "hud_edges": True}
-# settings the game reads only at its start (keyboard.cpp's live set= refuses the first three): a session's parts
-# have them the same
+# settings a session's parts have the same, from the game's start: those it reads only then (keyboard.cpp's live set=
+# refuses texture_pack_size and button_layout), and texture_pack, live in the game, whose off tests are of a game
+# started without the pack (no index made)
 START_ONLY = ("texture_pack", "texture_pack_size", "button_layout", "game_language", "gpu", "launcher_language")
 # scenario keys about the whole run (its saves, its timings, its shader cache): such a scenario is played alone
 WHOLE_RUN = ("save", "perf", "shader_cache", "telemetry", "dump")

@@ -13,6 +13,7 @@ extern uint32_t g_menu_key;                   // menu.cpp
 extern bool g_launcher_keep_open;             // menu.cpp
 extern bool g_texture_pack;                   // texpack.cpp
 extern uint32_t g_texture_pack_size;          // texpack.cpp
+extern bool g_texture_pack_materials;         // texpack.cpp
 extern uint32_t g_button_layout;              // texpack.cpp
 extern bool g_lament_save;                    // menu.cpp, read by hooks.cpp
 extern bool g_ps2_stick;                      // menu.cpp, read by hooks.cpp and keyboard.cpp
@@ -22,6 +23,14 @@ extern uint32_t g_fov;                        // menu.cpp, read by game/view.cpp
 extern uint32_t g_draw_distance;              // menu.cpp, read by game/view.cpp
 extern uint32_t g_fog_distance;               // menu.cpp, read by game/view.cpp
 extern bool g_hud_edges;                      // menu.cpp, read by widescreen.cpp
+extern bool g_menu_spread;                    // widescreen.cpp
+extern bool g_hd_movies;                      // movies.cpp
+extern uint32_t g_movie_view;                 // movies.cpp
+extern uint32_t g_surface_depth;              // menu.cpp, read by the SDK's renderer (gpu::g_surface_depth)
+extern uint32_t g_antialias;                  // menu.cpp, read by the SDK's renderer (gpu::g_antialias)
+extern uint32_t g_upscale;                    // menu.cpp, read by the SDK's renderer (gpu::g_upscale)
+extern uint32_t g_sharpening;                 // menu.cpp, read by the SDK's renderer (gpu::g_aa_sharpness)
+extern uint32_t g_ambient_occlusion;          // menu.cpp, read by the SDK's renderer (gpu::g_ambient_occlusion)
 void GameInit();                              // setup.cpp
 extern const app::GameInfo::Release kReleases[];  // each release's xbe and executable, written by CMake
 extern const unsigned kReleaseCount;
@@ -53,6 +62,7 @@ const app::GameInfo app::kGame = {
                 {"launcher_keep_open", &g_launcher_keep_open, nullptr},
                 {"texture_pack", &g_texture_pack, nullptr},
                 {"texture_pack_size", nullptr, &g_texture_pack_size},
+                {"texture_pack_materials", &g_texture_pack_materials, nullptr},
                 {"button_layout", nullptr, &g_button_layout},
                 {"lament_save", &g_lament_save, nullptr},
                 {"game_language", nullptr, &g_game_language},
@@ -62,7 +72,15 @@ const app::GameInfo app::kGame = {
                 {"fov", nullptr, &g_fov},
                 {"draw_distance", nullptr, &g_draw_distance},
                 {"fog_distance", nullptr, &g_fog_distance},
-                {"hud_edges", &g_hud_edges, nullptr}},
+                {"hud_edges", &g_hud_edges, nullptr},
+                {"menu_spread", &g_menu_spread, nullptr},
+                {"hd_movies", &g_hd_movies, nullptr},
+                {"movie_view", nullptr, &g_movie_view},
+                {"surface_depth", nullptr, &g_surface_depth},
+                {"antialiasing", nullptr, &g_antialias},
+                {"upscaling", nullptr, &g_upscale},
+                {"sharpening", nullptr, &g_sharpening},
+                {"ambient_occlusion", nullptr, &g_ambient_occlusion}},
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
     .init = GameInit,                     // after the settings load, before the window and boot: game files, game code, renderer extension

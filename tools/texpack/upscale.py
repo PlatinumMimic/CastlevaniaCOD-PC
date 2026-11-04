@@ -1,7 +1,9 @@
 """HD pictures for the textures an HD pack has none for, from the game's own: the pictures CV_TEXPACK_MISSES saves,
 each upscaled 4x (the pack's scale) by an AI model. Where the pack has the PS2's picture of one in the same colours
 and the Xbox changed part of it (HARD DISK for MEMORY CARD), the result is the pack's picture with that part alone
-taken from the upscale, so the pack's redrawn art stays.
+taken from the upscale, so the pack's redrawn art stays. Where the pack has PCSX2 region pictures in the same colours
+(a part of a texture a PS2 draw clamped to, hashed alone, which the game cannot find), each goes where it fits in
+the upscale, found by its picture shrunk against the texture: the pack's HUD pieces ("Player", HP, the emblems).
 
 usage: python -I tools/texpack/upscale.py make --misses <folder> --pack <textures> --out <folder> <model>
        python -I tools/texpack/upscale.py calibrate --misses <folder> --pack <textures> --out <folder> <model>...
@@ -20,13 +22,16 @@ and a model file:
   venv\\Scripts\\python -m pip install --no-deps spandrel
   venv\\Scripts\\python -m pip install numpy pillow safetensors einops
   RealESRGAN_x4plus.pth: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
-(spandrel installs with no dependencies, or it would put a CPU PyTorch in place of the CUDA one.) The pictures are
-made from the game's textures, so like a pack they are the game's art: keep them out of this repository.
+(spandrel installs with no dependencies, or it would put a CPU PyTorch in place of the CUDA one.) Or the model as
+ONNX (a .onnx file in place of the .pth), run by ONNX Runtime with no PyTorch: onnxruntime-directml uses any GPU on
+Windows, as make_materials.py's DeepBump does. The pictures are made from the game's textures, so like a pack they
+are the game's art: keep them out of this repository.
 
 Pictures are RGBA with the PS2's alpha (128 opaque), as PCSX2 dumps and the game reads them."""
 import argparse
 import glob
 import os
+import re
 import sys
 
 import numpy as np
@@ -95,32 +100,42 @@ def resize(a, w, h, how=Image.LANCZOS):
 
 class Model:
     def __init__(self, path, tile=192):
-        import torch
-        from spandrel import ImageModelDescriptor, ModelLoader
-        self.torch = torch
-        m = ModelLoader().load_from_file(path)
-        assert isinstance(m, ImageModelDescriptor) and m.scale == S, (path, m.scale)
-        self.dev = "cuda" if torch.cuda.is_available() and not os.environ.get("CV_UPSCALE_CPU") else "cpu"
-        self.m = m.to(self.dev).eval()
+        cpu = bool(os.environ.get("CV_UPSCALE_CPU"))
+        if path.lower().endswith(".onnx"):
+            import onnxruntime as ort
+            gpu = [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider") if p in ort.get_available_providers()]
+            s = ort.InferenceSession(path, providers=([] if cpu else gpu) + ["CPUExecutionProvider"])
+            name = s.get_inputs()[0].name
+            self.run = lambda x: s.run(None, {name: x})[0]
+        else:
+            import torch
+            from spandrel import ImageModelDescriptor, ModelLoader
+            m = ModelLoader().load_from_file(path)
+            assert isinstance(m, ImageModelDescriptor) and m.scale == S, (path, m.scale)
+            dev = "cuda" if torch.cuda.is_available() and not cpu else "cpu"
+            m = m.to(dev).eval()
+
+            def run(x):
+                with torch.no_grad():
+                    return m(torch.from_numpy(x).to(dev)).float().cpu().numpy()
+            self.run = run
         self.name = os.path.splitext(os.path.basename(path))[0]
         self.tile = tile
 
     def rgb(self, a):
         """HxWx3 0..1 to (4H)x(4W)x3, in tiles with a margin each, cut away after"""
-        torch = self.torch
-        x = torch.from_numpy(np.ascontiguousarray(a.transpose(2, 0, 1)))[None]
+        x = np.ascontiguousarray(a.transpose(2, 0, 1)[None], dtype=np.float32)
         _, _, H, W = x.shape
-        out = torch.zeros(1, 3, H * S, W * S)
+        out = np.zeros((1, 3, H * S, W * S), np.float32)
         T, O = self.tile, 16
-        with torch.no_grad():
-            for y in range(0, H, T):
-                for xx in range(0, W, T):
-                    y0, x0, y1, x1 = max(y - O, 0), max(xx - O, 0), min(y + T + O, H), min(xx + T + O, W)
-                    t = self.m(x[:, :, y0:y1, x0:x1].to(self.dev)).float().cpu()
-                    hh, ww = (min(y + T, H) - y) * S, (min(xx + T, W) - xx) * S
-                    ty, tx = (y - y0) * S, (xx - x0) * S
-                    out[:, :, y * S:y * S + hh, xx * S:xx * S + ww] = t[:, :, ty:ty + hh, tx:tx + ww]
-        return out[0].numpy().transpose(1, 2, 0).clip(0, 1)
+        for y in range(0, H, T):
+            for xx in range(0, W, T):
+                y0, x0, y1, x1 = max(y - O, 0), max(xx - O, 0), min(y + T + O, H), min(xx + T + O, W)
+                t = self.run(np.ascontiguousarray(x[:, :, y0:y1, x0:x1]))
+                hh, ww = (min(y + T, H) - y) * S, (min(xx + T, W) - xx) * S
+                ty, tx = (y - y0) * S, (xx - x0) * S
+                out[:, :, y * S:y * S + hh, xx * S:xx * S + ww] = t[:, :, ty:ty + hh, tx:tx + ww]
+        return out[0].transpose(1, 2, 0).clip(0, 1)
 
 
 def upscale(model, a):
@@ -247,13 +262,13 @@ def stray(hd, own):
     return (hd[..., 3] > 0.05) & (own[..., 3] > 0.05) & (c1 > 0.25) & ((c2 < 0.12) | (dh > 60))
 
 
-def composite(model, low, ps2_hd, m):
+def composite(model, low, ps2_hd, m, up=None):
     h, w = low.shape[:2]
     im = Image.fromarray((m * 255).astype(np.uint8))
     frac = m.mean()
     big = im.resize((w * S, h * S), Image.NEAREST).filter(ImageFilter.GaussianBlur(S))
     mk = np.asarray(big, dtype=np.float32)[..., None] / 255
-    up = upscale(model, low)
+    up = upscale(model, low) if up is None else up
     # the pack's upscale let the key colour under the PS2's transparent texels (a green) into the edges by them, a
     # green fringe on the HUD: where its colour is no mix of the colours seen around it in the Xbox's texture and
     # the upscale's (made without the key) is, the upscale's, its colours carried a few pixels out for the pack's
@@ -277,6 +292,70 @@ def composite(model, low, ps2_hd, m):
     bad = stray(out, own)
     out[bad, :3] = np.where(stray(smooth, own)[..., None], own[..., :3], smooth[..., :3])[bad]
     return out, frac, (fringe | bad).mean()
+
+
+REGION = re.compile(r"^([0-9a-f]+)-([0-9a-f]+)-r(\d+)x(\d+)-[0-9a-f]{8}\.(png|dds)$", re.I)
+
+
+def region_index(pack):
+    """the pack's PCSX2 region pictures (<texture>-<palette>-r<w>x<h>-<TEX0>, a part of a texture a draw clamped
+    to, hashed alone: the game cannot find them, its textures being hashed whole), by palette"""
+    found = {}
+    for f in glob.glob(os.path.join(pack, "**", "*.*"), recursive=True):
+        m = REGION.match(os.path.basename(f))
+        if m:
+            found.setdefault(f"{int(m.group(2), 16):016x}", []).append(f)
+    return found
+
+
+def sqdiff(img, tpl):
+    """the mean squared difference of tpl at every place in img (both HxWxC), by FFT"""
+    H, W = img.shape[:2]
+    h, w = tpl.shape[:2]
+    ii = np.pad((img ** 2).sum(-1), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+    box = ii[h:, w:] - ii[:-h, w:] - ii[h:, :-w] + ii[:-h, :-w]
+    fi = np.fft.rfft2(img, axes=(0, 1))
+    ft = np.fft.rfft2(tpl[::-1, ::-1], s=(H, W), axes=(0, 1))
+    corr = np.fft.irfft2(fi * ft, s=(H, W), axes=(0, 1)).sum(-1)[h - 1:, w - 1:]
+    return np.maximum(box - 2 * corr + (tpl ** 2).sum(), 0) / (h * w * img.shape[2])
+
+
+def place_regions(low, files, worst=0.17):
+    """where in the texture each region picture (in the texture's colours) is: its picture shrunk to the texture's
+    scale against every place, kept where it is close (the pack's upscale and redrawing differ a little: its RMS
+    difference, colour by alpha and alpha, under worst) and in few places at most (a plain one fits anywhere); one
+    picture a place, the closest. [(x, y, w, h, rms, file)]"""
+    pm = lambda a: np.concatenate([a[..., :3] * a[..., 3:], a[..., 3:] * 1.5], axis=2)
+    img = pm(low)
+    best = {}
+    for f in files:
+        hd = load(f)
+        h, w = hd.shape[0] // S, hd.shape[1] // S
+        if not h or not w or h > low.shape[0] or w > low.shape[1]:
+            continue
+        small = hd[:h * S, :w * S].reshape(h, S, w, S, 4).mean((1, 3))
+        d = sqdiff(img, pm(small))
+        mn = float(d.min())
+        if mn ** 0.5 > worst or (d <= max(mn * 1.5, mn + 6e-5)).sum() > 16:
+            continue
+        y, x = np.unravel_index(int(d.argmin()), d.shape)
+        k = (int(x), int(y), w, h)
+        if k not in best or mn ** 0.5 < best[k][4]:
+            best[k] = (int(x), int(y), w, h, mn ** 0.5, f)
+    return sorted(best.values(), key=lambda r: -r[4])  # the closest last, over the others
+
+
+def paste_regions(up, placed, changed=None):
+    """the upscale with the region pictures in place, but where the Xbox changed the texture"""
+    hd = up.copy()
+    for x, y, w, h, _, f in placed:
+        r = load(f)[:h * S, :w * S]
+        sl = (slice(y * S, (y + h) * S), slice(x * S, (x + w) * S))
+        keep = np.ones((h * S, w * S), bool)
+        if changed is not None:
+            keep = ~np.repeat(np.repeat(changed[y:y + h, x:x + w], S, 0), S, 1)
+        hd[sl][keep] = r[keep]
+    return hd
 
 
 def used(a):
@@ -346,6 +425,7 @@ def calibrate(args):
 
 def make(args):
     pack = pack_index(args.pack)
+    regions = region_index(args.pack)
     model = Model(args.models[0])
     os.makedirs(args.out, exist_ok=True)
     files = sorted(glob.glob(os.path.join(args.misses, "*.png")))
@@ -363,9 +443,16 @@ def make(args):
             continue
         low = load(f)
         ps2 = pack.get(f"{CHANGED[t]}-{p}") if t in CHANGED else None
+        placed = [] if ps2 else place_regions(low, regions.get(p, []))
         if ps2:
             out, frac, fringe = composite(model, low, load(ps2), masks[t])
             how = (f"the pack's PS2 picture, {100 * frac:.1f}% upscaled where the Xbox changed it, "
+                   f"{100 * fringe:.2f}% of its pixels cleaned")
+        elif placed:
+            up = upscale(model, low)
+            hd = paste_regions(up, placed, masks.get(t))
+            out, _, fringe = composite(model, low, hd, np.zeros(low.shape[:2], np.float32), up)
+            how = (f"upscaled, with {len(placed)} of the pack's region pictures in place, "
                    f"{100 * fringe:.2f}% of its pixels cleaned")
         else:
             out, how = upscale(model, low), "upscaled"

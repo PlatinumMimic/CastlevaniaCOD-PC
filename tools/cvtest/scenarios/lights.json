@@ -1,0 +1,18 @@
+{
+  "name": "lights",
+  "after": "newgame.json",
+  "note": "The purple lamps' glow while the camera turns: a room lit by them (map 3 room 2), the camera panned with a shot every few frames, for the frames to be compared (a glow that trails or flickers as the view moves). --set any setting to rule it out.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "render_percent": 150},
+  "steps": [
+    {"press": "0:warp=3.2,10f:wait:20f", "note": "warp to map 3 room 2"},
+    {"until": "map == 3 and room == 2 and player.active", "timeout": 30, "shot": "still", "judge": false},
+    {"press": "0f:wait:30f", "shot": "still-2", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-1", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-2", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-3", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-4", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-5", "judge": false},
+    {"press": "0f:rs=0.7/0:20f", "shot": "pan-6", "judge": false},
+    {"press": "0f:wait:30f", "shot": "after", "judge": false}
+  ]
+}

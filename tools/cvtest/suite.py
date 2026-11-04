@@ -122,11 +122,11 @@ def scenario(name, *args, test=None, quick=False, needs=(), before=None, env=Non
 # lockon and widescreen never share a game: the first-save route kills the Executioner lockon locks on to for good,
 # and once lockon has let him out of his wall that route is stuck in his corridor
 SESSIONS = {
-    "usa": ["newgame", "texpack", "fps", "fps-uncapped", "stick", "widescreen", "route", "moai-off", "moai-on", "bot",
+    "usa": ["newgame", "texpack", "texpack-live", "fps", "fps-uncapped", "stick", "widescreen", "route", "moai-off", "moai-on", "bot",
             "buttons-xbox", "shadow", "warp", "rooms", "keyboard", "menu"],
     "wide": ["filters-pack", "qol", "lockon"],
     "eu": ["newgame-eu", "widescreen-eu", "rooms-eu"],
-    "pack-off": ["filters-nopack", "texpack-off"],
+    "pack-off": ["filters-nopack", "texpack-off", "texpack-live-on"],
 }
 
 
@@ -168,6 +168,9 @@ def tests():
         scenario("texpack", needs=["textures"]),
         scenario("texpack", "--set", "texture_pack=false", test="texpack-off"),
         scenario("texpack", "--set", "texture_pack_size=1024", test="texpack-1024", needs=["textures"]),
+        # the pack switched off and on while the game runs, and on in a game started without it
+        scenario("texpack-live", needs=["textures"]),
+        scenario("texpack-live-on", "--set", "texture_pack=false", needs=["textures"]),
         scenario("shadercache-cold", before=empty_shader_cache),
         scenario("shadercache-warm"),
         scenario("stick"),
