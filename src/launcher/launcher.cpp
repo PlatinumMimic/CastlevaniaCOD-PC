@@ -698,7 +698,7 @@ struct Settings {
     uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
     uint32_t sharpening = 30;           // percent, AMD FSR's
     uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
-    uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion ray traced (DXR 1.1; menu.cpp, the SDK's renderer)
+    uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion, 2 reflections, 3 both (DXR 1.1; menu.cpp)
     uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     toml::table rest;
@@ -747,7 +747,7 @@ struct Settings {
         upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
         sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
         ambient_occlusion = std::min(rest["ambient_occlusion"].value_or(ambient_occlusion), 2u);
-        ray_tracing = std::min(rest["ray_tracing"].value_or(ray_tracing), 1u);
+        ray_tracing = std::min(rest["ray_tracing"].value_or(ray_tracing), 3u);
         surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
     }
@@ -2186,15 +2186,20 @@ private:
         EndSetting();
         {
             bool rays = TracesRays(settings_.gpu);
-            BeginOff(!aa || !settings_.ambient_occlusion || !rays);
-            BeginSetting(T("Ray tracing"), T("Ambient occlusion found by rays through the room itself rather than from "
-                                             "what the screen shows, so it holds at the screen's edges and behind "
-                                             "things. Needs a graphics card with DirectX ray tracing."),
+            BeginOff(!aa || !rays);
+            BeginSetting(T("Ray tracing"), T("Rays through the room itself. Ambient occlusion: found from the room "
+                                             "rather than from what the screen shows, so it holds at the screen's "
+                                             "edges and behind things. Reflections: iron and dressed stone mirror the "
+                                             "room, with a texture pack's material maps. Needs a graphics card with "
+                                             "DirectX ray tracing."),
                          true);
-            Segmented<uint32_t>("rt", settings_.ray_tracing, {0, 1}, {T("Off"), T("Ambient occlusion")});
+            Segmented<uint32_t>("rt", settings_.ray_tracing, {0, 1, 2, 3},
+                                {T("Off"), T("Ambient occlusion"), T("Reflections"), T("Both")});
             EndOff();
             if (!rays) ControlNote(kAmber, T("This graphics card has no DirectX ray tracing."));
-            else if (!aa || !settings_.ambient_occlusion) ControlNote(kAmber, T("Needs anti-aliasing and ambient occlusion on."));
+            else if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+            else if ((settings_.ray_tracing & 1) && !settings_.ambient_occlusion)
+                ControlNote(kAmber, T("Ambient occlusion is off: only reflections are traced."));
             EndSetting();
         }
         BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "
