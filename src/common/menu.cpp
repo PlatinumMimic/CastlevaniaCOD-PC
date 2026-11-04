@@ -26,6 +26,7 @@
 #include "core/log.h"
 #include "core/input.h"
 #include "gpu/backend.h"
+#include "gpu/raytrace.h"
 
 // game settings beside the runtime's, in the settings file (game_info.cpp lists them)
 bool g_fps_counter = false;
@@ -50,6 +51,14 @@ uint32_t g_upscale = 0;
 uint32_t g_sharpening = 30;
 // the 3D darkened where surfaces meet: 0 off, 1 low, 2 high (gpu::g_ambient_occlusion)
 uint32_t g_ambient_occlusion = 1;
+// ray tracing over the frame's 3D (gpu::g_ray_tracing), bits: 1 its ambient occlusion ray traced, 2 reflections, 4
+// bounce lighting. The menus offer 0 off, 1 ambient occlusion, 5 lighting (with it) and 7 lighting and reflections
+uint32_t g_ray_tracing = 0;
+// how strongly ray tracing's bounce lighting shows, percent (gpu::g_rt_lighting_strength): 100 keeps each room as bright
+// as the game made it, its light from where the rays say; 0 none of it
+uint32_t g_rt_lighting = 100;
+// how much ray tracing does a frame (gpu::g_rt_quality): 0 low, 1 medium, 2 high
+uint32_t g_rt_quality = 2;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern bool g_hd_movies;         // movies.cpp: a movie pack's HD movies drawn
 extern uint32_t g_movie_view;    // movies.cpp: 0 the game's 4:3, 1 the picture whole as large as it goes, 2 filled
@@ -338,6 +347,52 @@ void GraphicsTab(bool& save) {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
         save |= Choice<uint32_t>("##ao", g_ambient_occlusion, {0, 1, 2}, {"Off", "Low", "High"});
     }
+    Row("Ray tracing", "On a graphics card with ray tracing (DXR 1.1: NVIDIA RTX, AMD Radeon RX 6000 and later), rays "
+                       "through the room's own 3D. Ambient occlusion: traced rather than worked out from the screen, "
+                       "so what is off screen or behind something shades too, and characters cast soft shadows "
+                       "(needs ambient occlusion on). Lighting: with it, the light the room's surfaces throw onto each "
+                       "other, water's on the stone beside it, a torch's on its wall, the sky's outdoors, and the light "
+                       "the air catches. Reflections: water, iron, dressed stone and the characters' armour mirror the "
+                       "room too. Needs anti-aliasing on.");
+    {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##rt", g_ray_tracing, {0, 1, 5, 7},
+                                 {"Off", "Ambient occlusion", "Lighting", "Lighting and reflections"});
+        if (g_ray_tracing && !gpu::g_ray_tracing_ready.load(std::memory_order_relaxed)) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("not on this graphics card");
+        } else if (g_ray_tracing && !g_antialias) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("needs anti-aliasing");
+        } else if ((g_ray_tracing & 1) && !g_ambient_occlusion) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("ambient occlusion is off");
+        }
+    }
+    Row("Lighting strength", "How strongly ray tracing's lighting shows: the light the room's surfaces throw onto each "
+                             "other, in place of the flat fill the game lit each room with. 100% keeps each room as "
+                             "bright as the game made it; more brings out the glow and the shade.");
+    {
+        int pct = int(g_rt_lighting);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        if (SliderI("##rtlight", &pct, 0, 200, pct ? "%d%%" : "Off", ImGuiSliderFlags_AlwaysClamp)) {
+            g_rt_lighting = uint32_t(pct);
+            save = true;
+        }
+        if (!(g_ray_tracing & 4)) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("needs ray tracing's Lighting");
+        }
+    }
+    Row("Ray tracing quality", "How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it.");
+    {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        save |= Choice<uint32_t>("##rtq", g_rt_quality, {0, 1, 2}, {"Low", "Medium", "High"});
+        if (!g_ray_tracing) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("ray tracing is off");
+        }
+    }
     // DLSS turned into multi frame generation by the NVIDIA app slows the game (FrameGenSeen): said in its help too
     static std::string fg_help;
     bool fg_slow = g_fg_seen.kind == 2 && g_fg_seen.game_fps > 1 && g_fg_seen.game_fps < 57 &&
@@ -549,6 +604,9 @@ void Defaults() {
     g_upscale = 0;
     g_sharpening = 30;
     g_ambient_occlusion = 1;
+    g_ray_tracing = 0;
+    g_rt_lighting = 100;
+    g_rt_quality = 2;
     app::ApplyDisplay();
 }
 
@@ -666,6 +724,10 @@ void MenuToRenderer() {
     gpu::g_upscale.store(std::min<uint32_t>(g_upscale, 3), std::memory_order_relaxed);
     gpu::g_aa_sharpness.store(std::min<uint32_t>(g_sharpening, 100), std::memory_order_relaxed);
     gpu::g_ambient_occlusion.store(std::min<uint32_t>(g_ambient_occlusion, 2), std::memory_order_relaxed);
+    gpu::g_ray_tracing.store(g_ray_tracing & (gpu::kRtAmbientOcclusion | gpu::kRtReflections | gpu::kRtLighting),
+                             std::memory_order_relaxed);
+    gpu::g_rt_lighting_strength.store(float(std::min<uint32_t>(g_rt_lighting, 200)) / 100.0f, std::memory_order_relaxed);
+    gpu::g_rt_quality.store(std::min<uint32_t>(g_rt_quality, 2), std::memory_order_relaxed);
 }
 
 void MenuUi(double fps) {

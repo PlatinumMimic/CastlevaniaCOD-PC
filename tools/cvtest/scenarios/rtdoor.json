@@ -1,0 +1,170 @@
+{
+  "name": "rtdoor",
+  "after": "newgame.json",
+  "perf": true,
+  "note": "Ray tracing through a door: from the first courtyard down the corridor to the door out of 5.1, then walking through it in 6 frame steps with a shot after each (the room transition), then in 5.0.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  },
+  "steps": [
+    {
+      "press": "0:walk=-5000/-8000:15000"
+    },
+    {
+      "press": "0:walk=-5000/-12000:15000"
+    },
+    {
+      "press": "0:walk=-5000/-16000:15000,30f:a:10f"
+    },
+    {
+      "press": "0:walk=-5000/-22800:15000"
+    },
+    {
+      "press": "0:walk=-5000/-29500:15000",
+      "shot": "near-door",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d00",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d01",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d02",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d03",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d04",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d05",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d06",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d07",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d08",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d09",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d10",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d11",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d12",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d13",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d14",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d15",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d16",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d17",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d18",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d19",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d20",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d21",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d22",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:6f",
+      "shot": "d23",
+      "judge": false
+    },
+    {
+      "until": "room == 0 and player.active and not loading and not cutscene",
+      "timeout": 30,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ],
+      "shot": "in-5-0",
+      "judge": false
+    }
+  ]
+}

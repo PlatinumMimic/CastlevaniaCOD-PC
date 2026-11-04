@@ -293,6 +293,7 @@ private:
 struct MaterialEntry {
     fs::path normal, orm, height;
     float params[3][4];
+    float gloss[2];  // gpu::Material::gloss
 };
 
 class Pack {
@@ -440,7 +441,7 @@ private:
                 std::error_code ec;
                 return inside && fs::is_regular_file(path, ec) ? path : fs::path();
             };
-            MaterialEntry e{map("normal"), map("orm"), map("height"), {}};
+            MaterialEntry e{map("normal"), map("orm"), map("height"), {}, {}};
             if (e.normal.empty() || e.orm.empty()) {
                 missing++;
                 continue;
@@ -465,6 +466,14 @@ private:
                  float(q.Num("metalness_scale", 1.0)), float(q.Num("parallax_strength", parallax))},
             };
             std::memcpy(e.params, params, sizeof(params));
+            // ray traced reflections' gloss (gpu::Material::gloss): the pack's ORM maps are rough all over (about 0.8,
+            // metalness 0), too rough for any reflection, so a family the castle has polished or forged is given its
+            // own: iron (railings, gates, candelabra) as metal, dressed stone as a worn polish that shows at a low
+            // angle. A manifest's reflect_roughness and reflect_metalness say it themselves
+            float gr = family == "iron" ? 0.35f : family == "stone" ? 0.45f : family == "stone_masonry" ? 0.5f : 0.0f;
+            float gm = family == "iron" ? 0.85f : 0.0f;
+            e.gloss[0] = float(q.Num("reflect_roughness", gr));
+            e.gloss[1] = float(q.Num("reflect_metalness", gm));
             auto it = Find(Key{t, p});
             if (it == index_.end()) continue;
             if (material_of_[it->second] < 0) {
@@ -543,6 +552,12 @@ public:
             c.maps |= 1u << ((room >> 8) & 31);
             if (c.room < 0) c.room = room;
         }
+    }
+
+    // the census's name of the texture at data (a pack's picture's name for it), empty without the census
+    std::string NameOf(uint32_t data) {
+        auto it = census_by_data_.find(data);
+        return it == census_by_data_.end() ? std::string() : census_list_[size_t(it->second)].name;
     }
 
     void CensusFlush() {
@@ -730,6 +745,7 @@ private:
                 bool ok = LoadPicture(codec, e.normal, false, m->normal) && LoadPicture(codec, e.orm, false, m->orm);
                 if (ok) {
                     std::memcpy(m->params, e.params, sizeof(m->params));
+                    std::memcpy(m->gloss, e.gloss, sizeof(m->gloss));
                     // the height map into the ORM map's alpha, each level from its own (the ORM map's colours are
                     // averaged unweighted, its alpha 255 as they were); the parallax's share made negative says so
                     if (!e.height.empty()) {
@@ -921,4 +937,5 @@ uint64_t TexturePackReplace(const gpu::TextureDesc& d, const uint8_t* guest, con
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id) { return g_pack.Replaced(id); }
 bool TexturePackCensus() { return !Pack::CensusDir().empty(); }
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive) { g_pack.Used(data, world, skinned, additive); }
+std::string TexturePackName(uint32_t data) { return g_pack.NameOf(data); }
 void TexturePackCensusFlush() { g_pack.CensusFlush(); }

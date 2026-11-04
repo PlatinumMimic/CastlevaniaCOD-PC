@@ -1,0 +1,44 @@
+{
+  "name": "watersweep",
+  "save": "julian",
+  "note": "Every room of every map with ray tracing on and CV_WATER_LIST=2: each 3D draw's texture logged once with its vertex program and the room it was first seen in (to find the game's water), and a screenshot of each room.",
+  "settings": {
+    "width": 960,
+    "height": 540,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 1,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "sweep": {
+        "hold": 20,
+        "skip_inactive": true
+      },
+      "judge": false
+    }
+  ]
+}

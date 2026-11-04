@@ -31,6 +31,9 @@ extern uint32_t g_antialias;                  // menu.cpp, read by the SDK's ren
 extern uint32_t g_upscale;                    // menu.cpp, read by the SDK's renderer (gpu::g_upscale)
 extern uint32_t g_sharpening;                 // menu.cpp, read by the SDK's renderer (gpu::g_aa_sharpness)
 extern uint32_t g_ambient_occlusion;          // menu.cpp, read by the SDK's renderer (gpu::g_ambient_occlusion)
+extern uint32_t g_ray_tracing;                // menu.cpp, read by the SDK's renderer (gpu::g_ray_tracing)
+extern uint32_t g_rt_lighting;                // menu.cpp, read by the SDK's renderer (gpu::g_rt_lighting_strength)
+extern uint32_t g_rt_quality;                 // menu.cpp, read by the SDK's renderer (gpu::g_rt_quality)
 void GameInit();                              // setup.cpp
 extern const app::GameInfo::Release kReleases[];  // each release's xbe and executable, written by CMake
 extern const unsigned kReleaseCount;
@@ -80,7 +83,10 @@ const app::GameInfo app::kGame = {
                 {"antialiasing", nullptr, &g_antialias},
                 {"upscaling", nullptr, &g_upscale},
                 {"sharpening", nullptr, &g_sharpening},
-                {"ambient_occlusion", nullptr, &g_ambient_occlusion}},
+                {"ambient_occlusion", nullptr, &g_ambient_occlusion},
+                {"ray_tracing", nullptr, &g_ray_tracing},
+                {"ray_tracing_lighting", nullptr, &g_rt_lighting},
+                {"ray_tracing_quality", nullptr, &g_rt_quality}},
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
     .init = GameInit,                     // after the settings load, before the window and boot: game files, game code, renderer extension

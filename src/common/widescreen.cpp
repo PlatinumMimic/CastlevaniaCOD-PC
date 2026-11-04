@@ -68,6 +68,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "app/app.h"
@@ -83,6 +85,8 @@ uint32_t SceneWord();     // telemetry.cpp
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);                              // texpack.cpp
 bool TexturePackCensus();                                                                // texpack.cpp
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive);            // texpack.cpp
+std::string TexturePackName(uint32_t data);  // texpack.cpp: the census's name of a texture (CV_TEXPACK_CENSUS)
+int RoomId();  // telemetry.cpp: map * 256 + room, -1 before the game has one
 void TexturePackCensusFlush();                                                           // texpack.cpp
 uint32_t TexturePackEpoch();  // texpack.cpp: moves on when the pack is switched on or off
 // the game's movies (movies.cpp): their frames from a movie pack's HD versions, and drawn larger
@@ -194,6 +198,11 @@ public:
     }
 };
 
+// the water textures' names (Widescreen::Name): the Abandoned Castle courtyard's pool (found by hiding the room's
+// draws a few at a time, CV_WATER_HIDE; its caustics, d569d26d69e71f2a, drawn over the stone around it after the frame
+// is anti-aliased, are light on stone, not water)
+constexpr uint64_t kWater[] = {0x0b0b643ecc9b58ddull};
+
 class Widescreen : public gpu::Extension {
 public:
     const gpu::ShaderHooks* Shaders() const override { return &hooks_; }
@@ -202,6 +211,9 @@ public:
         d_ = {};
         // adds to what is there (a glow, a spark): blending on, the target's colour kept whole
         d_.additive = s.simple[gpu::kMBlendEnable >> 2] && s.simple[gpu::kMDestBlend >> 2] == 1;
+        // for the trace (CV_WIDE_TRACE): how it blends, whether it writes depth
+        d_.blend = s.simple[gpu::kMBlendEnable >> 2] ? (s.simple[gpu::kMSrcBlend >> 2] << 16 | s.simple[gpu::kMDestBlend >> 2]) : 0;
+        d_.zwrite = s.simple[gpu::kMZWriteEnable >> 2] != 0;
     }
 
     void Vertices(const gpu::State& s, const gpu::Assembled& a) override {
@@ -213,8 +225,10 @@ public:
         d_.world = !prog && !a.pretransformed;
         if (d_.world) return;
         Program p = prog ? Classify(*s.vs) : Program{};
+        if (prog) d_.program = gpu::Hash(s.vs->program.data(), s.vs->program.size() * 4);
         d_.world = p.camera;
         d_.skinned = p.skinned;
+        if (p.camera) d_.matrix = p.world ? kCameraWorld : kCamera;
         if (p.camera) {
             Distance(s, a, p);
             // frame generation's view (View): the draws of the world matrix, found again in the next frame by what
@@ -367,6 +381,45 @@ public:
     // menus and the frame pass, never
     bool Jitter() override { return back_buffer_ && d_.world; }
 
+    // ray tracing's lights drawn flat (the SDK's ScreenLight): a flame, a torch's fire, a glow the game draws as a 2D
+    // sprite adding its light over the 3D world (before its UI), which ray tracing puts back into the room by its depth
+    bool ScreenLight() override {
+        return back_buffer_ && !d_.world && d_.additive && !d_.whole && !d_.target && !ui_ && world_ >= kWorld;
+    }
+
+    // ray tracing's characters (the SDK's Character): a 3D draw by a skinned program (Program::skinned), Hector, the
+    // enemies and the Innocent Devils, whose shadows it casts and whose armour and blades it lets shine
+    bool Character() override { return d_.world && d_.skinned; }
+
+    // ray tracing's water (the SDK's Water): a 3D draw of the pools, fountains and moats, by its texture's name (kWater,
+    // and CV_WATER's: names in hex by commas, to try others), which ray tracing reflects the room in
+    bool Water() override {
+        if (!d_.world || !d_.name) return false;
+        // CV_WATER_LIST: each blended 3D draw (not adding light), once by its texture, to find the water's among
+        // (CV_WATER_LIST=2: each 3D draw)
+        static const int list = std::getenv("CV_WATER_LIST") ? std::atoi(std::getenv("CV_WATER_LIST")) : 0;
+        if (list && (list == 2 || (d_.blend && !d_.additive)) && listed_.insert(d_.name).second)
+            LOGR("water? %016llx tex %ux%u blend %03x %03x%s, %u vertices, program %016llx, %d textures, room %d.%d, "
+                 "pack %s", (unsigned long long)d_.name, d_.tex.width, d_.tex.height, d_.blend >> 16, d_.blend & 0xFFFF,
+                 d_.zwrite ? " writes depth" : "", d_.count, (unsigned long long)d_.program, d_.ntex, RoomId() >> 8,
+                 RoomId() & 0xFF, d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "");
+        static const std::vector<uint64_t> extra = [] {
+            std::vector<uint64_t> v;
+            if (const char* e = std::getenv("CV_WATER"))
+                for (const char* c = e; *c;) {
+                    char* end = nullptr;
+                    uint64_t n = std::strtoull(c, &end, 16);
+                    if (end == c) break;
+                    v.push_back(n);
+                    c = *end == ',' ? end + 1 : end;
+                }
+            return v;
+        }();
+        for (uint64_t n : kWater)
+            if (n == d_.name) return true;
+        return std::find(extra.begin(), extra.end(), d_.name) != extra.end();
+    }
+
     // the anti-aliasing's reactive mask (the SDK's Reactive), for a blended draw that writes no depth: the frame's
     // effects, sparks, fire, magic and the light flares drawn as 2D sprites over the world, which have no motion of their
     // own and would smear. Not a tint over the whole frame, nor the frame drawn back over itself
@@ -492,7 +545,10 @@ public:
         ext[4] = placed ? d_.move[1] : 0.0f;
         ext[5] = placed && squeeze && d_.tex.linear ? 1.0f : 0.0f;
         ext[6] = ext[7] = 0;
+        // CV_WATER_HIDE: the water's draws (Water) left out, to see which they are
+        static const bool hide_water = std::getenv("CV_WATER_HIDE") != nullptr;
         if (Backdrop(vsc)) ext[0] = ext[1] = ext[3] = ext[4] = 0;  // not drawn: every vertex at the centre
+        else if (hide_water && Water()) ext[0] = ext[1] = ext[3] = ext[4] = 0;
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
         if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty()) {
             std::lock_guard lock(g_seen_m);
@@ -501,8 +557,9 @@ public:
         }
         // CV_WIDE_TRACE=<n>: every draw of a frame in n, the target it goes into ("device": the back buffer)
         if (trace_now_ && d_.world)
-            LOGR("wide %llu: into %08x%s 3D, n %u", (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "",
-                 d_.count);
+            LOGR("wide %llu: into %08x%s 3D, n %u tex %ux%u %016llx blend %08x%s", (unsigned long long)frame_, trace_rt_,
+                 trace_device_ ? " device" : "", d_.count, d_.tex.width, d_.tex.height, (unsigned long long)d_.name,
+                 d_.blend, d_.zwrite ? " zwrite" : "");
         else if (trace_now_ && d_.squeeze)
             LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g%s blend %u: %s%s",
                  (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
@@ -597,9 +654,19 @@ public:
             float up[3] = {-(m[4] - d * fwd[0]), -(m[5] - d * fwd[1]), -(m[6] - d * fwd[2])};  // screen y runs down
             if (Normalize(up)) {
                 std::copy(up, up + 3, v.up);
-                v.right[0] = up[1] * fwd[2] - up[2] * fwd[1];
-                v.right[1] = up[2] * fwd[0] - up[0] * fwd[2];
-                v.right[2] = up[0] * fwd[1] - up[1] * fwd[0];
+                // the screen's x as the matrix has it, square to the others (ray tracing turns its normals into the
+                // world by these three); else the one square to both
+                float dx = m[0] * fwd[0] + m[1] * fwd[1] + m[2] * fwd[2];
+                float rx[3] = {m[0] - dx * fwd[0], m[1] - dx * fwd[1], m[2] - dx * fwd[2]};
+                float ux = rx[0] * up[0] + rx[1] * up[1] + rx[2] * up[2];
+                for (int i = 0; i < 3; i++) rx[i] -= ux * up[i];
+                if (Normalize(rx)) {
+                    std::copy(rx, rx + 3, v.right);
+                } else {
+                    v.right[0] = up[1] * fwd[2] - up[2] * fwd[1];
+                    v.right[1] = up[2] * fwd[0] - up[0] * fwd[2];
+                    v.right[2] = up[0] * fwd[1] - up[1] * fwd[0];
+                }
             }
             // where rows 0, 1 and 3 are all 0: the camera (a 3 x 3 solve, written as a 4 x 4 one)
             float inv[16];
@@ -1056,6 +1123,7 @@ private:
     }
 
     bool trace_now_ = false;  // this frame's draws logged
+    std::set<uint64_t> listed_;  // CV_WATER_LIST's, logged
     static inline const uint64_t kTrace =
         std::getenv("CV_WIDE_TRACE") ? std::max(1, std::atoi(std::getenv("CV_WIDE_TRACE"))) : 0;
 
@@ -1066,6 +1134,10 @@ private:
         bool card = false;     // samples a target smaller than the frame
         bool skinned = false;  // a skinned program's (Program::skinned)
         bool additive = false;
+        uint64_t program = 0;  // its vertex program's (Classify's key), for CV_WATER_LIST
+        uint32_t matrix = 0;  // the first of the constants its vertices are put on the PS2's screen by (0: none)
+        uint32_t blend = 0;   // its blend's source and destination factors (0: none), for the trace
+        bool zwrite = false;  // it writes depth, for the trace
         uint32_t texs[4] = {};  // the textures it samples, for the census (texpack.cpp)
         int ntex = 0;
         uint64_t name = 0;  // the first texture's (Name), 0 for a target or one not seen uploaded

@@ -375,6 +375,41 @@ DisplayHdr PrimaryHdr() {
     return last;
 }
 
+// Whether a graphics card traces rays as the game's renderer does (runtime/gpu/raytrace.cpp): DXR 1.1 and shader
+// model 6.5. Asked once a card, by its name (empty: the fastest). CV_NO_RAYS=1 pretends none does
+bool TracesRays(const std::string& name) {
+    static std::vector<std::pair<std::string, bool>> known;
+    for (auto& k : known)
+        if (k.first == name) return k.second;
+    bool yes = false;
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> f6;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> a;
+    if (!GetEnvironmentVariableW(L"CV_NO_RAYS", nullptr, 0) && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        factory.As(&f6);
+        for (UINT i = 0;; i++) {
+            HRESULT hr = f6 ? f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&a))
+                            : factory->EnumAdapters1(i, &a);
+            if (FAILED(hr)) break;
+            Gpu g = Describe(a.Get(), true);
+            if (g.software || (!name.empty() && g.name != name)) continue;
+            Microsoft::WRL::ComPtr<ID3D12Device> dev;
+            if (SUCCEEDED(D3D12CreateDevice(a.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) {
+                D3D12_FEATURE_DATA_D3D12_OPTIONS5 o5{};
+                D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_5};
+                yes = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &o5, sizeof(o5))) &&
+                      o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1 &&
+                      SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm))) &&
+                      sm.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+                break;
+            }
+            if (!name.empty()) break;
+        }
+    }
+    known.push_back({name, yes});
+    return yes;
+}
+
 // what the game takes with no card named: the fastest, else the default adapter
 Gpu Automatic() {
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
@@ -700,16 +735,18 @@ uint32_t GameLanguageFor(const std::string& launcher) {
 // Frame generation's libraries (the SDK's runtime/gpu/framegen.h), which this game's download does not carry: the
 // player's own copy, downloaded from the vendor's official GitHub release into the game's folder with their licences.
 // AMD FSR 3: its signed DLLs beside the game, the loader, frame generation and the upscaler (the game's
-// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G and DLSS files in streamline\ (frame generation, and
-// the game's anti-aliasing and upscaling).
+// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G, DLSS and DLSS-RR files in streamline\ (frame
+// generation, the game's anti-aliasing and upscaling, and its Ray Reconstruction with ray tracing on).
 constexpr const wchar_t* kFsrRaw = L"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/";
 constexpr const char* kFsrLicence = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/v2.3.0/Kits/FidelityFX/docs/license.md";
 constexpr const wchar_t* kDlssZip = L"https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip";
 constexpr const char* kDlssLicence = "https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/license.txt";
 const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll",
                                     L"amd_fidelityfx_upscaler_dx12.dll"};
-const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
-                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
+// the last two DLSS Ray Reconstruction's (ray tracing's light denoised by DLSS)
+const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll",   L"sl.dlss_g.dll", L"sl.reflex.dll",
+                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll",
+                                     L"sl.dlss_d.dll",    L"nvngx_dlssd.dll"};
 
 // all of a kind's files there, beside the game (FSR) or in its streamline folder (DLSS)
 // AMD's and NVIDIA's files to download: Windows only, their libraries being Windows ones
@@ -983,6 +1020,9 @@ struct Settings {
     uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
     uint32_t sharpening = 30;           // percent, AMD FSR's
     uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
+    uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion, 5 lighting, 7 lighting and reflections (menu.cpp)
+    uint32_t rt_lighting = 100;         // percent, how strongly its lighting shows (menu.cpp)
+    uint32_t rt_quality = 2;            // 0 low, 1 medium, 2 high: how much ray tracing a frame does (menu.cpp)
     uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     std::string release;                // the release played, by its executable's name, when there are more (the SDK's)
@@ -1033,6 +1073,11 @@ struct Settings {
         upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
         sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
         ambient_occlusion = std::min(rest["ambient_occlusion"].value_or(ambient_occlusion), 2u);
+        // bits (1 ambient occlusion, 2 reflections, 4 lighting) as the choices offer them
+        uint32_t rt = rest["ray_tracing"].value_or(ray_tracing);
+        ray_tracing = (rt & 2) ? 7u : (rt & 4) ? 5u : (rt & 1);
+        rt_lighting = std::min(rest["ray_tracing_lighting"].value_or(rt_lighting), 200u);
+        rt_quality = std::min(rest["ray_tracing_quality"].value_or(rt_quality), 2u);
         surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
         release = rest["release"].value_or(release);
@@ -1076,6 +1121,9 @@ struct Settings {
         rest.insert_or_assign("upscaling", int64_t(upscaling));
         rest.insert_or_assign("sharpening", int64_t(sharpening));
         rest.insert_or_assign("ambient_occlusion", int64_t(ambient_occlusion));
+        rest.insert_or_assign("ray_tracing", int64_t(ray_tracing));
+        rest.insert_or_assign("ray_tracing_lighting", int64_t(rt_lighting));
+        rest.insert_or_assign("ray_tracing_quality", int64_t(rt_quality));
         rest.insert_or_assign("surface_depth", int64_t(surface_depth));
         rest.insert_or_assign("gpu", gpu);
         rest.insert_or_assign("release", release);
@@ -2305,7 +2353,7 @@ private:
                std::to_string(s.fog_distance) + "|" + s.release + "|" +
                std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
                std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
-               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + "|" +
+               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + std::to_string(s.ray_tracing) + "|" + std::to_string(s.rt_lighting) + std::to_string(s.rt_quality) + "|" +
                std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view);
     }
 
@@ -2823,6 +2871,41 @@ private:
                      true);
         Segmented<uint32_t>("ao", settings_.ambient_occlusion, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
         EndSetting();
+        {
+            bool rays = TracesRays(settings_.gpu);
+            BeginOff(!aa || !rays);
+            BeginSetting(T("Ray tracing"), T("Rays through the room itself. Ambient occlusion: found from the room "
+                                             "rather than from what the screen shows, so it holds at the screen's "
+                                             "edges and behind things. Lighting adds the light the room's surfaces "
+                                             "throw onto each other: water's on the stone beside it, a torchlit wall's "
+                                             "on the floor. Reflections: iron and dressed stone mirror the room too, "
+                                             "with a texture pack's material maps. Needs a graphics card with DirectX "
+                                             "ray tracing."),
+                         true);
+            Segmented<uint32_t>("rt", settings_.ray_tracing, {0, 1, 5, 7},
+                                {T("Off"), T("Ambient occlusion"), T("Lighting"), T("Lighting and reflections")});
+            EndOff();
+            if (!rays) ControlNote(kAmber, T("This graphics card has no DirectX ray tracing."));
+            else if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+            else if ((settings_.ray_tracing & 1) && !settings_.ambient_occlusion)
+                ControlNote(kAmber, T("Ambient occlusion is off: only the lighting is traced."));
+            EndSetting();
+            BeginOff(!aa || !rays || !(settings_.ray_tracing & 4));
+            BeginSetting(T("Lighting strength"),
+                         T("How strongly ray tracing's lighting shows: the light the room's surfaces throw onto each "
+                           "other, in place of the flat fill the game lit each room with. 100% keeps each room as "
+                           "bright as the game made it; more brings out the glow and the shade."));
+            Slider("rtlight", settings_.rt_lighting, 0, 200,
+                   settings_.rt_lighting ? std::to_string(settings_.rt_lighting) + "%" : std::string(T("Off")));
+            EndOff();
+            if (rays && aa && !(settings_.ray_tracing & 4)) ControlNote(kMuted, T("Needs ray tracing's Lighting."));
+            EndSetting();
+            BeginOff(!aa || !rays || !settings_.ray_tracing);
+            BeginSetting(T("Ray tracing quality"), T("How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it."));
+            Segmented<uint32_t>("rtq", settings_.rt_quality, {0, 1, 2}, {T("Low"), T("Medium"), T("High")});
+            EndOff();
+            EndSetting();
+        }
         BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "
                                                    "little."));
         Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
