@@ -60,6 +60,7 @@
 #include <memory>
 #include <unordered_map>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "app/app.h"
@@ -75,6 +76,7 @@ uint32_t SceneWord();     // telemetry.cpp
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);                              // texpack.cpp
 bool TexturePackCensus();                                                                // texpack.cpp
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive);            // texpack.cpp
+std::string TexturePackName(uint32_t data);  // texpack.cpp: the census's name of a texture (CV_TEXPACK_CENSUS)
 int RoomId();  // telemetry.cpp: map * 256 + room, -1 before the game has one
 void TexturePackCensusFlush();                                                           // texpack.cpp
 // the game's movies (movies.cpp): their frames from a movie pack's HD versions, and drawn larger
@@ -342,10 +344,10 @@ public:
         // (CV_WATER_LIST=2: each 3D draw)
         static const int list = std::getenv("CV_WATER_LIST") ? std::atoi(std::getenv("CV_WATER_LIST")) : 0;
         if (list && (list == 2 || (d_.blend && !d_.additive)) && listed_.insert(d_.name).second)
-            LOGR("water? %016llx tex %ux%u blend %03x %03x%s, %u vertices, program %016llx, %d textures, room %d.%d",
-                 (unsigned long long)d_.name, d_.tex.width, d_.tex.height, d_.blend >> 16, d_.blend & 0xFFFF,
+            LOGR("water? %016llx tex %ux%u blend %03x %03x%s, %u vertices, program %016llx, %d textures, room %d.%d, "
+                 "pack %s", (unsigned long long)d_.name, d_.tex.width, d_.tex.height, d_.blend >> 16, d_.blend & 0xFFFF,
                  d_.zwrite ? " writes depth" : "", d_.count, (unsigned long long)d_.program, d_.ntex, RoomId() >> 8,
-                 RoomId() & 0xFF);
+                 RoomId() & 0xFF, d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "");
         static const std::vector<uint64_t> extra = [] {
             std::vector<uint64_t> v;
             if (const char* e = std::getenv("CV_WATER"))

@@ -630,7 +630,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..8561cc1 100644
+index fe65837..501f05d 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,6 +17,7 @@
@@ -2843,7 +2843,7 @@ index fe65837..8561cc1 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4519,1934 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4519,1936 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3936,8 +3936,10 @@ index fe65837..8561cc1 100644
 +    float tan_y = std::tan(0.5f * ao_view_.fov_y);
 +    float up[3];
 +    WorldUpInView(ao_view_, up);
++    // the scene's own lights only (a torch, a fire, a spell drawn in 3D, first in the list): those drawn flat (a
++    // fountain's spray, motes, a glow's sprite) filled whole rooms with a grainy haze that sparkled frame to frame
 +    const std::vector<uint32_t>& em = rt_.Emissive();
-+    uint32_t lights = uint32_t(std::min<size_t>(em.size() / 2, kMaxLights));
++    uint32_t lights = std::min<uint32_t>(rt_.EmissiveSolid(), kMaxLights);
 +    for (uint32_t i = 0; i < lights; i++) {
 +        c.list[i][0] = em[i * 2];
 +        c.list[i][1] = em[i * 2 + 1];
@@ -4783,7 +4785,7 @@ index fe65837..8561cc1 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +6455,203 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +6457,203 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -4988,7 +4990,7 @@ index fe65837..8561cc1 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +6661,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +6663,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -4999,7 +5001,7 @@ index fe65837..8561cc1 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +6681,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +6683,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -5020,7 +5022,7 @@ index fe65837..8561cc1 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +6705,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +6707,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -5053,7 +5055,7 @@ index fe65837..8561cc1 100644
      }
  }
  
-@@ -3317,12 +6743,14 @@ void LogPerf() {
+@@ -3317,12 +6745,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -5072,7 +5074,7 @@ index fe65837..8561cc1 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +6759,120 @@ void LogPerf() {
+@@ -3331,25 +6761,120 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -5198,7 +5200,7 @@ index fe65837..8561cc1 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +6883,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +6885,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -5229,7 +5231,7 @@ index fe65837..8561cc1 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +6924,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +6926,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -5275,7 +5277,7 @@ index fe65837..8561cc1 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +6968,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +6970,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6695,10 +6697,10 @@ index 0000000..2c20ca0
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/raytrace.cpp b/runtime/gpu/raytrace.cpp
 new file mode 100644
-index 0000000..6dfb215
+index 0000000..e3b9338
 --- /dev/null
 +++ b/runtime/gpu/raytrace.cpp
-@@ -0,0 +1,790 @@
+@@ -0,0 +1,795 @@
 +#include "gpu/raytrace.h"
 +
 +#include <algorithm>
@@ -6966,6 +6968,7 @@ index 0000000..6dfb215
 +    has_water_ = false;
 +    characters_ = 0;
 +    emissive_.clear();
++    emissive_solid_ = 0;
 +    // its late water starts again (the frame it held was taken by the frame after it, long done)
 +    s.late_geoms.clear();
 +    s.late_used = 0;
@@ -7149,6 +7152,7 @@ index 0000000..6dfb215
 +        if (l.emissive) {
 +            emissive_.push_back(uint32_t(i));
 +            emissive_.push_back((g.indices ? g.index_count : g.vertex_count) / 3);
++            if (!l.screen) emissive_solid_++;
 +        }
 +    }
 +    std::vector<Geometry> wgeoms;
@@ -7432,6 +7436,9 @@ index 0000000..6dfb215
 +        b.LogicOp = D3D12_LOGIC_OP_NOOP;
 +        b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN |
 +                                  D3D12_COLOR_WRITE_ENABLE_BLUE;
++        // the light shafts as a screen lays light over: what the frame already lit takes less of them (added, the
++        // glow round a fountain's bright water washed it white)
++        if (pass == Pass::ShaftsOver) b.SrcBlend = D3D12_BLEND_INV_DEST_COLOR;
 +    }
 +    pd.SampleMask = UINT_MAX;
 +    pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -7491,10 +7498,10 @@ index 0000000..6dfb215
 +}  // namespace gpu::rt
 diff --git a/runtime/gpu/raytrace.h b/runtime/gpu/raytrace.h
 new file mode 100644
-index 0000000..dddd2c0
+index 0000000..adc025f
 --- /dev/null
 +++ b/runtime/gpu/raytrace.h
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,260 @@
 +#pragma once
 +// Ray tracing over a title's own 3D (DXR 1.1 inline ray queries): each frame, the triangles its world's draws put on
 +// the screen are gathered into an acceleration structure, which passes after the frame's 3D trace rays through.
@@ -7733,6 +7740,7 @@ index 0000000..dddd2c0
 +    uint32_t characters_ = 0;  // the characters' draws in their own instance
 +    uint64_t begun_ = 0;  // the frames begun (Begin), each slot's late water's frame by it
 +    std::vector<uint32_t> emissive_;  // Emissive's
++    uint32_t emissive_solid_ = 0;     // EmissiveSolid's
 +
 +public:
 +    // the frame's scene holds water (the frame before's, LateCapture), which the water pass reflects the room in
@@ -7741,6 +7749,8 @@ index 0000000..dddd2c0
 +    bool HasCharacters() const { return built_ && characters_ > 0; }
 +    // its lights (Look::emissive), once built: each draw's index among the scene's and its triangles, two by two
 +    const std::vector<uint32_t>& Emissive() const { return emissive_; }
++    // how many of them, first in the list, are the scene's own (drawn in 3D), before those drawn flat (Look::screen)
++    uint32_t EmissiveSolid() const { return emissive_solid_; }
 +
 +private:
 +    uint32_t used_ = 0, want_ = 0;  // vertices this frame, and the most a frame asked for
@@ -9195,19 +9205,20 @@ index 0000000..af08efe
 +}
 diff --git a/runtime/gpu/rt_shafts.hlsl b/runtime/gpu/rt_shafts.hlsl
 new file mode 100644
-index 0000000..842997c
+index 0000000..25f0e59
 --- /dev/null
 +++ b/runtime/gpu/rt_shafts.hlsl
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,158 @@
 +// Ray traced light shafts (d3d12.cpp's Shafts): the light the air catches on its way to the eye. Each texel of a quarter
 +// of the frame's size marches along its ray from the eye to what the frame drew (no farther than a reach), a few steps
 +// a frame at places that move each frame, and at each step asks how much light reaches that bit of air: the sky's (a
 +// ray toward the light above, the shadow ray of rt_ao.hlsl's characters' light: where it leaves the scene the sky's
 +// colour comes in, so the open air under an arch, between trees, past a window's bars is lit and the rest is not) and
-+// the scene's lights' (a torch, a fire, a spell: a point on one of them at random, its light falling off with distance,
-+// a ray toward it for its shadow), the air thinning the light it passes on with distance. Three steps: the march into
-+// a target of its own, gathered over the frames with the one before (moved by the frame's motion, held within what this
-+// frame's neighbours span), and laid over the frame at its full size, added (the game's own fog stays as it was).
++// the scene's lights' (a torch, a fire, a spell drawn in 3D, the only ones d3d12.cpp lists here: a point on one of them
++// at random, its light falling off with distance, a ray toward it for its shadow), the air thinning the light it passes
++// on with distance. Three steps: the march into a target of its own, gathered over the frames with the one before
++// (smoothed, moved by the frame's motion, held within what this frame's neighbours span), and laid over the frame at its
++// full size as a screen lays light, a glow at most (the game's own fog stays as it was).
 +cbuffer P : register(b0) {
 +    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
 +    float4 part;  // the 3D's size in depth texels (rw, rh), the shafts' target's part (sw, sh)
@@ -9276,20 +9287,32 @@ index 0000000..842997c
 +        float2 at = clamp(pos.xy / part.xy * part.zw, 0.5f, part.zw - 0.5f);
 +        float3 c = Tex(ix.y).SampleLevel(wrap, at / size.xy, 0).rgb;
 +        if (mode.y == 16) return float4(c * 4, 1);  // XBE_RT_VIEW 16: the shafts alone, brightened
-+        return float4(c * fog.w, 0);
++        // a glow, never a fog: at most about 0.15 however much light the air holds (a fountain's falling water, a
++        // ghost's body, drawn added, are large lights, and their air washed the room out), and laid over as a screen
++        // is (raytrace.cpp: the less the more the frame is lit there)
++        c *= fog.w;
++        c /= 1 + dot(c, float3(0.2126f, 0.7152f, 0.0722f)) / 0.15f;
++        return float4(c, 0);
 +    }
 +    if (mode.x == 1) {
-+        // gathered: this frame's march with the frames before's, moved by the frame's motion and held within what this
-+        // frame's neighbours span
++        // gathered: this frame's march smoothed over its 3 x 3 (a light's one sample a step is grainy), with the frames
++        // before's moved by the frame's motion and held within what this frame's 5 x 5 neighbours span by their mean
++        // and spread (held within the 3 x 3's least and most, a few bright texels among dark ones threw the gathered
++        // light away each frame: it sparkled)
 +        int2 size = int2(part.zw);
-+        float3 cur = Tex(ix.y).Load(int3(id, 0)).rgb;
-+        float3 lo = cur, hi = cur;
-+        [unroll] for (int y = -1; y <= 1; y++)
-+            [unroll] for (int x = -1; x <= 1; x++) {
++        float3 cur = 0, m1 = 0, m2 = 0;
++        [unroll] for (int y = -2; y <= 2; y++)
++            [unroll] for (int x = -2; x <= 2; x++) {
 +                float3 a = Tex(ix.y).Load(int3(clamp(int2(id) + int2(x, y), int2(0, 0), size - 1), 0)).rgb;
-+                lo = min(lo, a);
-+                hi = max(hi, a);
++                m1 += a;
++                m2 += a * a;
++                if (abs(x) <= 1 && abs(y) <= 1) cur += a * float((2 - abs(x)) * (2 - abs(y)));
 +            }
++        cur /= 16;
++        m1 /= 25;
++        m2 /= 25;
++        float3 spread = sqrt(max(m2 - m1 * m1, 0));
++        float3 lo = max(m1 - 2 * spread, 0) - 0.002f, hi = m1 + 2 * spread + 0.002f;
 +        if (mode.w != 0) return float4(cur, 1);
 +        int2 px = int2((float2(id) + 0.5f) * part.xy / part.zw);
 +        float2 uv = (float2(px) + 0.5f) / part.xy + Tex(ix.w).Load(int3(px, 0)).xy;
@@ -9303,8 +9326,8 @@ index 0000000..842997c
 +            float w = ((k & 1) ? f.x : 1 - f.x) * ((k >> 1) ? f.y : 1 - f.y);
 +            h += Tex(ix.z).Load(int3(t, 0)).rgb * w;
 +        }
-+        h = clamp(h, lo - 0.002f, hi + 0.002f);
-+        return float4(lerp(h, cur, 0.12f), 1);
++        h = clamp(h, lo, hi);
++        return float4(lerp(h, cur, 0.08f), 1);
 +    }
 +    // the march: from the eye to what the frame drew there, or the reach
 +    int2 px = int2((float2(id) + 0.5f) * part.xy / part.zw);

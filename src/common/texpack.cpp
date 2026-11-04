@@ -518,6 +518,12 @@ public:
         }
     }
 
+    // the census's name of the texture at data (a pack's picture's name for it), empty without the census
+    std::string NameOf(uint32_t data) {
+        auto it = census_by_data_.find(data);
+        return it == census_by_data_.end() ? std::string() : census_list_[size_t(it->second)].name;
+    }
+
     void CensusFlush() {
         if (CensusDir().empty() || census_list_.empty()) return;
         std::error_code ec;
@@ -834,4 +840,5 @@ uint64_t TexturePackReplace(const gpu::TextureDesc& d, const uint8_t* guest, con
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id) { return g_pack.Replaced(id); }
 bool TexturePackCensus() { return !Pack::CensusDir().empty(); }
 void TexturePackUsed(uint32_t data, bool world, bool skinned, bool additive) { g_pack.Used(data, world, skinned, additive); }
+std::string TexturePackName(uint32_t data) { return g_pack.NameOf(data); }
 void TexturePackCensusFlush() { g_pack.CensusFlush(); }

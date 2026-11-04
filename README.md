@@ -310,9 +310,13 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
       arch or a ledge shades what lies under it.
     - *Light shafts*: the air catches the lights' light on its way to the eye: a torch's glow in the air, cut by the
-      bars before it. Marched at a quarter of the frame's size, gathered over the frames and added over the frame;
-      the game's own fog stays as it was (the sky's light in the air is left out: outdoors it laid a haze over every
-      open place, which washed the courtyards out and turned the door's blur white).
+      bars before it. Only lights drawn in 3D light the air (a fountain's spray, motes and a glow's sprite drawn flat
+      filled whole rooms with a grainy, sparkling haze). Marched at a quarter of the frame's size, smoothed, gathered
+      over the frames and laid over the frame as a glow, never a fog: a little light at most, and less where the frame
+      is already bright (a fountain's falling water and a ghost's body are large lights, and their air washed the
+      room out). The game's own fog stays as it was (the sky's light in the air is
+      left out: outdoors it laid a haze over every open place, which washed the courtyards out and turned the door's
+      blur white).
   - *Reflections*: a surface with a texture pack's material maps reflects what its mirror direction meets, that
     draw's picture lit as the game lit it, blurred as its roughness spreads the rays. The HD pack's maps are rough all
     over (about 0.8, no metal), too rough to reflect anything, so the port gives the pack's iron (railings, gates)
