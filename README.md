@@ -296,6 +296,14 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
     over (about 0.8, no metal), too rough to reflect anything, so the port gives the pack's iron (railings, gates)
     a metal's gloss and its dressed stone a worn polish that shows at a low angle; a manifest's `reflect_roughness`
     and `reflect_metalness` set a material's own.
+  - *Denoising*: with anti-aliasing on NVIDIA DLSS (any GeForce RTX), DLSS Ray Reconstruction takes over from it and
+    cleans the rays' grain as it anti-aliases. Each frame it is given what every pixel's surface is, traced through
+    the room at the 3D's full size: its picture's colour, its normal (bent by a texture pack's normal map), roughness
+    and specular colour, and how far its reflection's ray went. It takes the light as the frame's colour over the
+    surface's own, so the bounce lighting's haze is smoothed while the stone's carving stays as sharp as its picture.
+    It needs Streamline's DLSS-RR files (`sl.dlss_d.dll`, `nvngx_dlssd.dll`), which the launcher's DLSS download now
+    brings with the rest (a download from before asks to be made again); without them, or with AMD FSR, the
+    anti-aliasing gathers the grain over the frames as before.
 
   All three cost about 1.5 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms).
   The shaders are compiled to DXIL by the Windows SDK's `dxc` when the port is built; a build without it, or a card

@@ -529,9 +529,19 @@ public:
             float up[3] = {-(m[4] - d * fwd[0]), -(m[5] - d * fwd[1]), -(m[6] - d * fwd[2])};  // screen y runs down
             if (Normalize(up)) {
                 std::copy(up, up + 3, v.up);
-                v.right[0] = up[1] * fwd[2] - up[2] * fwd[1];
-                v.right[1] = up[2] * fwd[0] - up[0] * fwd[2];
-                v.right[2] = up[0] * fwd[1] - up[1] * fwd[0];
+                // the screen's x as the matrix has it, square to the others (ray tracing turns its normals into the
+                // world by these three); else the one square to both
+                float dx = m[0] * fwd[0] + m[1] * fwd[1] + m[2] * fwd[2];
+                float rx[3] = {m[0] - dx * fwd[0], m[1] - dx * fwd[1], m[2] - dx * fwd[2]};
+                float ux = rx[0] * up[0] + rx[1] * up[1] + rx[2] * up[2];
+                for (int i = 0; i < 3; i++) rx[i] -= ux * up[i];
+                if (Normalize(rx)) {
+                    std::copy(rx, rx + 3, v.right);
+                } else {
+                    v.right[0] = up[1] * fwd[2] - up[2] * fwd[1];
+                    v.right[1] = up[2] * fwd[0] - up[0] * fwd[2];
+                    v.right[2] = up[0] * fwd[1] - up[1] * fwd[0];
+                }
             }
             // where rows 0, 1 and 3 are all 0: the camera (a 3 x 3 solve, written as a 4 x 4 one)
             float inv[16];

@@ -494,16 +494,18 @@ struct Import {
 // Frame generation's libraries (the SDK's runtime/gpu/framegen.h), which this game's download does not carry: the
 // player's own copy, downloaded from the vendor's official GitHub release into the game's folder with their licences.
 // AMD FSR 3: its signed DLLs beside the game, the loader, frame generation and the upscaler (the game's
-// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G and DLSS files in streamline\ (frame generation, and
-// the game's anti-aliasing and upscaling).
+// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G, DLSS and DLSS-RR files in streamline\ (frame
+// generation, the game's anti-aliasing and upscaling, and its Ray Reconstruction with ray tracing on).
 constexpr const wchar_t* kFsrRaw = L"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/";
 constexpr const char* kFsrLicence = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/v2.3.0/Kits/FidelityFX/docs/license.md";
 constexpr const wchar_t* kDlssZip = L"https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip";
 constexpr const char* kDlssLicence = "https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/license.txt";
 const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll",
                                     L"amd_fidelityfx_upscaler_dx12.dll"};
-const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
-                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
+// the last two DLSS Ray Reconstruction's (ray tracing's light denoised by DLSS)
+const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll",   L"sl.dlss_g.dll", L"sl.reflex.dll",
+                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll",
+                                     L"sl.dlss_d.dll",    L"nvngx_dlssd.dll"};
 
 // all of a kind's files there, beside the game (FSR) or in its streamline folder (DLSS)
 bool HaveFrameGen(const fs::path& game, uint32_t kind) {

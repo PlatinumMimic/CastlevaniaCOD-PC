@@ -1,0 +1,17 @@
+{
+  "name": "rtmotion",
+  "save": "julian",
+  "perf": true,
+  "note": "Ray tracing in motion in the gargoyle fountain courtyard (the room the play folder starts in): shots while the camera pans and while walking, for ghosting and smearing behind moving things (DLSS Ray Reconstruction against DLSS's own anti-aliasing: XBE_DLSS_RR=0).",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "frame_generation": 0, "antialiasing": 2, "ambient_occlusion": 2},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "expect": ["not player.active"], "judge": false},
+    {"until": "player.active and not cutscene and not loading and not menu", "timeout": 90,
+     "poll": "0:a,90f:wait", "poll_by": [["cutscene", "0:start,45f:wait"]], "shot": "loaded", "judge": false},
+    {"press": "0f:wait:180f", "shot": "still", "judge": false},
+    {"press": "0f:rs=0.7/0:30f", "shot": "pan", "judge": false},
+    {"press": "0f:rs=-0.7/0:45f", "shot": "pan-back", "judge": false},
+    {"press": "0f:ls=0/1:40f", "shot": "walk", "judge": false},
+    {"press": "0f:wait:30f", "shot": "after", "judge": false}
+  ]
+}

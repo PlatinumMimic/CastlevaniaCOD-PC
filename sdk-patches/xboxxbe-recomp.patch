@@ -1,5 +1,5 @@
 diff --git a/THIRD_PARTY.txt b/THIRD_PARTY.txt
-index d4d3144..f2e4702 100644
+index d4d3144..9929e42 100644
 --- a/THIRD_PARTY.txt
 +++ b/THIRD_PARTY.txt
 @@ -64,3 +64,44 @@ freely, subject to the following restrictions:
@@ -30,8 +30,8 @@ index d4d3144..f2e4702 100644
 +
 +
 +NVIDIA Streamline v2.14.1 headers (https://github.com/NVIDIA-RTX/Streamline), in third_party/streamline: only the
-+headers, which describe the DLSS frame generation libraries the game loads at run time when the player put them
-+beside it. Those libraries are not part of this software; they come from NVIDIA under NVIDIA's own licences.
++headers, which describe the DLSS libraries (frame generation, anti-aliasing and upscaling, Ray Reconstruction) the
++game loads at run time when the player put them beside it. Those libraries are not part of this software; they come from NVIDIA under NVIDIA's own licences.
 +
 +Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved
 +
@@ -630,7 +630,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..bd14b18 100644
+index fe65837..490a5ab 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,6 +17,7 @@
@@ -654,7 +654,7 @@ index fe65837..bd14b18 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +56,30 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +56,31 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -679,13 +679,14 @@ index fe65837..bd14b18 100644
 +constexpr uint32_t kAaRxRtv = kAaRtv + 2;            // its reactive mask (AntiAlias::Frame::reactive)
 +constexpr uint32_t kAoRtv = kAaRxRtv + 1;            // ambient occlusion's (AmbientOcclusion)
 +constexpr uint32_t kGiRtv = kAoRtv + 1;              // ray traced bounce lighting's (Lighting)
-+constexpr uint32_t kGuideRtv = kGiRtv + 1;           // ray tracing's two guides (Guides), last
++constexpr uint32_t kGuideRtv = kGiRtv + 1;           // ray tracing's four guides (Guides), last
++constexpr uint32_t kGuides = 4;
 +// the motion target's clear and MotionOut's value where a pixel has no motion of its own: the camera's from depth
 +constexpr float kNoMotion = 1024;
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +96,7 @@ struct Perf {
+@@ -72,6 +97,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -693,7 +694,7 @@ index fe65837..bd14b18 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,10 +119,37 @@ struct Perf {
+@@ -94,10 +120,37 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
@@ -731,7 +732,7 @@ index fe65837..bd14b18 100644
  struct PerfScope {
      double& acc;
      bool on = diag::Perf();
-@@ -140,6 +192,63 @@ float4 psmain(O i) : SV_Target {
+@@ -140,6 +193,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -795,7 +796,7 @@ index fe65837..bd14b18 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -148,6 +257,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+@@ -148,6 +258,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
  constexpr float kDepthFar = 0;
  
  const char* kDepthHlsl = R"(
@@ -803,7 +804,7 @@ index fe65837..bd14b18 100644
  Texture2D<float> img : register(t0);
  SamplerState ps : register(s1);
  struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
-@@ -157,7 +267,7 @@ O vs(uint id : SV_VertexID) {
+@@ -157,7 +268,7 @@ O vs(uint id : SV_VertexID) {
      o.p = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
      return o;
  }
@@ -812,7 +813,7 @@ index fe65837..bd14b18 100644
  )";
  
  const char* kClearHlsl = R"(
-@@ -215,6 +325,22 @@ D3D12_BLEND_OP BlendOp(uint32_t v) {
+@@ -215,6 +326,22 @@ D3D12_BLEND_OP BlendOp(uint32_t v) {
      }
  }
  
@@ -835,7 +836,7 @@ index fe65837..bd14b18 100644
  // D3DCMP_NEVER 0x200 to D3DCMP_ALWAYS 0x207, D3D12's order from 1
  D3D12_COMPARISON_FUNC Cmp(uint32_t v) {
      uint32_t n = v >= 0x200 && v <= 0x207 ? v - 0x200 : 7;
-@@ -345,6 +471,18 @@ struct Tex {
+@@ -345,6 +472,18 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -854,7 +855,7 @@ index fe65837..bd14b18 100644
  };
  
  struct PsoKey {
-@@ -377,6 +515,8 @@ struct PsoKey {
+@@ -377,6 +516,8 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
@@ -863,7 +864,7 @@ index fe65837..bd14b18 100644
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +527,7 @@ struct BlitOptions {
+@@ -387,6 +528,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -871,7 +872,7 @@ index fe65837..bd14b18 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +542,16 @@ struct ShrinkOptions {
+@@ -401,11 +543,16 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -890,7 +891,7 @@ index fe65837..bd14b18 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -460,6 +606,8 @@ public:
+@@ -460,6 +607,8 @@ public:
      void Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) override;
      void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects, uint32_t dst_points) override;
      void Present(const Surface& front) override;
@@ -899,7 +900,7 @@ index fe65837..bd14b18 100644
      void WaitGpuFrame(uint64_t n) override;
      void Sync(uint32_t data, uint32_t size) override;
      void SyncLate(uint32_t data) override;
-@@ -549,6 +697,8 @@ private:
+@@ -549,6 +698,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -908,7 +909,7 @@ index fe65837..bd14b18 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -565,10 +715,10 @@ private:
+@@ -565,10 +716,10 @@ private:
      ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
      void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
      void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
@@ -921,7 +922,7 @@ index fe65837..bd14b18 100644
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,10 +733,12 @@ private:
+@@ -583,10 +734,12 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -936,7 +937,7 @@ index fe65837..bd14b18 100644
      void UploadVertexBuffers(const Assembled& a);
      // visibility tests
      bool EnsureQueries();
-@@ -598,6 +750,7 @@ private:
+@@ -598,6 +751,7 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -944,7 +945,7 @@ index fe65837..bd14b18 100644
      D3D12_GRAPHICS_PIPELINE_STATE_DESC FullScreenPipelineDesc(ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv) const;
      // Init, in order, each callee right after its caller
      bool CreateDevice();
-@@ -613,10 +766,56 @@ private:
+@@ -613,10 +767,56 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -1001,7 +1002,7 @@ index fe65837..bd14b18 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -665,6 +864,7 @@ private:
+@@ -665,6 +865,7 @@ private:
          uint32_t color;
          float z;
          uint32_t stencil;
@@ -1009,7 +1010,7 @@ index fe65837..bd14b18 100644
      };
      void ClearTarget(Target& t, const State& s, const ClearArgs& c, std::vector<D3D12_RECT>& rs);
      void ClearChannels(Target& t, const float col[4], uint8_t mask, const std::vector<D3D12_RECT>& rs);
-@@ -675,8 +875,9 @@ private:
+@@ -675,8 +876,9 @@ private:
          uint32_t src_rects;
          uint32_t dst_points;
      };
@@ -1020,7 +1021,7 @@ index fe65837..bd14b18 100644
      void CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state, Target& dst_t,
                        const CopyList& l);
      // the target as a guest sized BGRA copy source, and the shrunk copy that holds it when it is not one already
-@@ -708,6 +909,9 @@ private:
+@@ -708,6 +910,9 @@ private:
      // the constants last uploaded in this command list, reused while a draw's are the same; 0 after a submit
      decltype(State::vsc) last_vsc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_vsc_gpu_ = 0;
@@ -1030,7 +1031,7 @@ index fe65837..bd14b18 100644
      DrawConstants last_dc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_dc_gpu_ = 0;
      ComPtr<ID3D12GraphicsCommandList> cl_;
-@@ -766,6 +970,10 @@ private:
+@@ -766,6 +971,10 @@ private:
      uint32_t bb_w_ = 0;
      uint32_t bb_h_ = 0;
      float scale_ = 1.0f;
@@ -1041,7 +1042,7 @@ index fe65837..bd14b18 100644
      // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
      struct Late {
          ComPtr<ID3D12Resource> rb[kFrames];
-@@ -801,6 +1009,145 @@ private:
+@@ -801,6 +1010,149 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -1155,12 +1156,16 @@ index fe65837..bd14b18 100644
 +    D3D12_RESOURCE_STATES gi_state_{};
 +    uint32_t gi_w_ = 0, gi_h_ = 0;
 +    bool gi_said_ = false;
-+    // ray tracing's guides (Guides, rt_guide.hlsl): the surfaces' albedo (RGBA8) and normals and roughness (RGB10A2) at
-+    // the frame target's size, drawn once a frame
-+    ComPtr<ID3D12Resource> guide_[2];
-+    D3D12_RESOURCE_STATES guide_state_[2] = {};
++    // ray tracing's guides (Guides, rt_guide.hlsl) at the frame target's size, drawn once a frame: the surfaces' albedo
++    // (RGBA8), world normals and roughness (RGBA16F), specular albedo (RGBA8) and the reflections' hit distance (R16F),
++    // and the view space their normals were turned into the world from (the view's, as its projection has it: x, y, z
++    // and the camera's place, rows)
++    ComPtr<ID3D12Resource> guide_[kGuides];
++    D3D12_RESOURCE_STATES guide_state_[kGuides] = {};
 +    uint32_t guide_w_ = 0, guide_h_ = 0;
 +    uint64_t guide_frame_ = UINT64_MAX;
++    float guide_view_[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
++    bool rr_said_ = false, guide_said_ = false;
 +    // ray tracing (raytrace.h): the frame's scene, whether this frame gathers one, the capture constants bound (rtc:
 +    // first slot, on), a buffer bound in the capture's place when there is no ray tracing
 +    rt::Scene rt_;
@@ -1187,7 +1192,7 @@ index fe65837..bd14b18 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -814,11 +1161,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -814,11 +1166,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      HWND hwnd = static_cast<HWND>(app::Window());
      if (!CreateDevice()) return false;
      if (!CreateSwapChain(hwnd)) return false;
@@ -1209,7 +1214,7 @@ index fe65837..bd14b18 100644
      ImGui_ImplDX12_Init(dev_.Get(), kFrames, DXGI_FORMAT_B8G8R8A8_UNORM, ui_heap_.Get(),
                          ui_heap_->GetCPUDescriptorHandleForHeapStart(), ui_heap_->GetGPUDescriptorHandleForHeapStart());
      LoadSettings();
-@@ -827,19 +1184,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -827,19 +1189,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      return true;
  }
  
@@ -1273,7 +1278,7 @@ index fe65837..bd14b18 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -847,9 +1244,17 @@ bool D3D12Backend::CreateDevice() {
+@@ -847,9 +1249,17 @@ bool D3D12Backend::CreateDevice() {
      DXGI_ADAPTER_DESC1 ad{};
      if (adapter) adapter->GetDesc1(&ad);
      LOGR("D3D12 adapter: %ls", adapter ? ad.Description : L"default");
@@ -1291,7 +1296,7 @@ index fe65837..bd14b18 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -871,6 +1276,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1281,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -1303,7 +1308,7 @@ index fe65837..bd14b18 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -899,9 +1309,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1314,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -1312,11 +1317,11 @@ index fe65837..bd14b18 100644
 +    srv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvCount + kMaterialViews, true, srv_heap_);
      smp_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, kSamplerCount, true, smp_heap_);
 -    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames, false, rtv_heap_);
-+    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kGuideRtv + 2, false, rtv_heap_);
++    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kGuideRtv + kGuides, false, rtv_heap_);
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,10 +1322,10 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,10 +1327,10 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -1329,7 +1334,7 @@ index fe65837..bd14b18 100644
      params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
      params[0].Descriptor.ShaderRegister = 0;
      params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-@@ -925,8 +1336,15 @@ bool D3D12Backend::CreateRootSignature() {
+@@ -925,8 +1341,15 @@ bool D3D12Backend::CreateRootSignature() {
          params[2 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
          params[2 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
      }
@@ -1346,7 +1351,7 @@ index fe65837..bd14b18 100644
      rsd.pParameters = params;
      rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
      ComPtr<ID3DBlob> rs;
-@@ -958,8 +1376,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1381,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -1359,7 +1364,7 @@ index fe65837..bd14b18 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -972,10 +1394,21 @@ void D3D12Backend::Begin() {
+@@ -972,10 +1399,21 @@ void D3D12Backend::Begin() {
      ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get(), smp_heap_.Get()};
      cl_->SetDescriptorHeaps(2, heaps);
      cl_->SetGraphicsRootSignature(root_.Get());
@@ -1381,7 +1386,7 @@ index fe65837..bd14b18 100644
  void D3D12Backend::Submit(bool wait) {
      last_vsc_gpu_ = 0;
      last_dc_gpu_ = 0;
-@@ -1063,12 +1496,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1501,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
      b.Transition.StateBefore = cur;
      b.Transition.StateAfter = want;
      cl_->ResourceBarrier(1, &b);
@@ -1397,7 +1402,7 @@ index fe65837..bd14b18 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1515,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1520,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -1406,7 +1411,7 @@ index fe65837..bd14b18 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,6 +1633,13 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,6 +1638,13 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -1420,7 +1425,7 @@ index fe65837..bd14b18 100644
      if (rt) {
          if (LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
          Transition(rt->res.Get(), rt->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-@@ -1205,17 +1648,151 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1205,17 +1653,151 @@ bool D3D12Backend::BindTargets(const State& s) {
      if (ds) {
          Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          ds->drawn = true;
@@ -1478,10 +1483,10 @@ index fe65837..bd14b18 100644
 +        float none[4] = {};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kAaRxRtv, rtv_inc_), none, 0, nullptr);
 +        aa_rx_frame_ = presents_;
-     }
-     return true;
- }
- 
++    }
++    return true;
++}
++
 +// the motion target at the frame target's size, cleared to kNoMotion once a frame; false when it can't be made
 +bool D3D12Backend::EnsureObjectMotion(const Target& rt) {
 +    if (!fg_objmv_ || fg_objmv_w_ != rt.w || fg_objmv_h_ != rt.h) {
@@ -1508,10 +1513,10 @@ index fe65837..bd14b18 100644
 +        float none[4] = {kNoMotion, kNoMotion, 0, 0};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_), none, 0, nullptr);
 +        fg_objmv_frame_ = presents_;
-+    }
-+    return true;
-+}
-+
+     }
+     return true;
+ }
+ 
 +// A 3D draw found again in the next frame by what it draws, as the game streams its meshes into buffers that move from
 +// frame to frame: its program, its first vertices and indices, its counts and first texture. A skinned mesh's vertices
 +// are its pose at rest, so it is found as its bones move.
@@ -1575,7 +1580,7 @@ index fe65837..bd14b18 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1260,6 +1837,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,6 +1842,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -1584,7 +1589,7 @@ index fe65837..bd14b18 100644
      DrawFullScreen(pso, cb.gpu, slot);
      dst.drawn = true;
      bound_rt_ = bound_ds_ = nullptr;
-@@ -1282,6 +1861,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +1866,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -1592,7 +1597,7 @@ index fe65837..bd14b18 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +1907,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +1912,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -1600,7 +1605,7 @@ index fe65837..bd14b18 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1397,23 +1978,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +1983,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -1631,8 +1636,8 @@ index fe65837..bd14b18 100644
 -    DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
 +    ID3D12PipelineState* pso = o.hdr ? EnsureHdrPipeline(o.hdr) : EnsureBlitPipeline(o.rtv, o.over);
 +    if (pso) DrawFullScreen(pso, cb.gpu, slot, si);
-+}
-+
+ }
+ 
 +namespace {
 +
 +constexpr UINT kCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL1;
@@ -1687,14 +1692,14 @@ index fe65837..bd14b18 100644
 +    std::error_code ec;
 +    if (ok) std::filesystem::rename(tmp, file, ec);
 +    if (!ok || ec) std::filesystem::remove(tmp, ec);
- }
- 
++}
++
 +}  // namespace
 +
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +2068,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +2073,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -1716,7 +1721,7 @@ index fe65837..bd14b18 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +2087,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +2092,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -1724,7 +1729,7 @@ index fe65837..bd14b18 100644
      return code.Get();
  }
  
-@@ -1477,6 +2131,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +2136,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -1754,7 +1759,7 @@ index fe65837..bd14b18 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2287,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2292,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -1789,7 +1794,7 @@ index fe65837..bd14b18 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2353,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +2358,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -1801,7 +1806,7 @@ index fe65837..bd14b18 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,6 +2377,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +2382,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -1809,7 +1814,7 @@ index fe65837..bd14b18 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1692,6 +2396,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +2401,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -1819,7 +1824,7 @@ index fe65837..bd14b18 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2410,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +2415,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -1834,7 +1839,7 @@ index fe65837..bd14b18 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2440,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +2445,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -1845,7 +1850,7 @@ index fe65837..bd14b18 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2560,69 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +2565,69 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -1915,7 +1920,7 @@ index fe65837..bd14b18 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,8 +2650,47 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,7 +2655,46 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -1934,8 +1939,8 @@ index fe65837..bd14b18 100644
 +                }
 +                tx.repl_id = id;
 +            }
-         }
-     }
++        }
++    }
 +    if (tx.repl_id && !tx.repl && repl_budget_) MakeReplacement(tx);
 +    // an extension's replacement is drawn before the texture pack's image
 +    if (tx.repl) {
@@ -1956,14 +1961,13 @@ index fe65837..bd14b18 100644
 +            }
 +            std::memcpy(stages.mat, tx.mat_params, sizeof(stages.mat));
 +            std::memcpy(stages.gloss, tx.mat_gloss, sizeof(stages.gloss));
-+        }
+         }
 +        if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
 +        return tx.repl.Get();
-+    }
+     }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
-     const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1969,7 +2788,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+@@ -1969,7 +2793,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
  constexpr uint32_t kTaddressWrap = 1;
  constexpr uint32_t kTaddressClamp = 3;
  
@@ -1975,7 +1979,7 @@ index fe65837..bd14b18 100644
      D3D12_SAMPLER_DESC sd = {};
      const auto& t = s.tss[size_t(i)];
      uint32_t mag = t[kTssMagFilter];
-@@ -1982,8 +2804,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2809,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -1993,7 +1997,7 @@ index fe65837..bd14b18 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2822,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2827,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -2004,7 +2008,7 @@ index fe65837..bd14b18 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2009,7 +2840,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -2009,7 +2845,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
  uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
      D3D12_SAMPLER_DESC sd[4];
      uint32_t aniso = app::Get().aniso;
@@ -2014,7 +2018,7 @@ index fe65837..bd14b18 100644
      uint64_t key = Hash(sd, sizeof(sd));
      auto it = samplers_.find(key);
      if (it != samplers_.end()) return it->second;
-@@ -2144,9 +2976,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2144,9 +2981,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -2027,7 +2031,7 @@ index fe65837..bd14b18 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +2997,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +3002,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -2036,7 +2040,7 @@ index fe65837..bd14b18 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +3050,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +3055,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -2059,7 +2063,7 @@ index fe65837..bd14b18 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +3088,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +3093,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -2070,7 +2074,7 @@ index fe65837..bd14b18 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2433,28 +3285,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +3290,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
      c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
@@ -2149,7 +2153,7 @@ index fe65837..bd14b18 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2469,6 +3362,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+@@ -2469,6 +3367,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
      if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
      binds_.vsc = last_vsc_gpu_;
      binds_.dc = last_dc_gpu_;
@@ -2157,7 +2161,7 @@ index fe65837..bd14b18 100644
  }
  
  void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
-@@ -2577,6 +3471,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +3476,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -2181,7 +2185,7 @@ index fe65837..bd14b18 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3505,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3510,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -2192,7 +2196,7 @@ index fe65837..bd14b18 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3520,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3525,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -2249,7 +2253,7 @@ index fe65837..bd14b18 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2676,21 +3603,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
+@@ -2676,21 +3608,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
      cl_->IASetVertexBuffers(0, a.buffer_count, vbv);
  }
  
@@ -2279,7 +2283,7 @@ index fe65837..bd14b18 100644
  }
  
  // calls the extension's EndDraw on every return from Draw once made
-@@ -2808,6 +3736,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +3741,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -2287,7 +2291,7 @@ index fe65837..bd14b18 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +3744,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +3749,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -2300,7 +2304,7 @@ index fe65837..bd14b18 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +3762,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +3767,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -2389,7 +2393,7 @@ index fe65837..bd14b18 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +3851,87 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +3856,87 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -2482,7 +2486,7 @@ index fe65837..bd14b18 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +3947,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +3952,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -2498,7 +2502,7 @@ index fe65837..bd14b18 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2961,7 +4028,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +4033,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -2509,7 +2513,7 @@ index fe65837..bd14b18 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +4112,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +4117,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -2529,7 +2533,7 @@ index fe65837..bd14b18 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +4130,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +4135,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -2538,7 +2542,7 @@ index fe65837..bd14b18 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,7 +4139,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,7 +4144,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -2548,7 +2552,7 @@ index fe65837..bd14b18 100644
          uint32_t taps = uint32_t(std::ceil(std::max(src_scale / dst_scale, 1.0f) - kTapsSlack));
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
-@@ -3084,7 +4157,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +4162,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -2557,7 +2561,7 @@ index fe65837..bd14b18 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +4167,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +4172,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -2576,7 +2580,7 @@ index fe65837..bd14b18 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3136,6 +4209,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +4214,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -2592,7 +2596,7 @@ index fe65837..bd14b18 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3155,16 +4237,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -3155,16 +4242,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -2683,7 +2687,7 @@ index fe65837..bd14b18 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +4333,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +4338,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -2693,7 +2697,7 @@ index fe65837..bd14b18 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +4343,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +4348,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -2703,7 +2707,7 @@ index fe65837..bd14b18 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4379,1110 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4384,1159 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3005,13 +3009,17 @@ index fe65837..bd14b18 100644
 +    bound_rt_ = bound_ds_ = nullptr;
 +}
 +
-+// Ray tracing's guides at the frame's full size (rt_guide.hlsl), once a frame: each pixel's surface albedo, normal and
-+// roughness, which the bounce lighting's smoothing takes (and a denoiser would)
++// the guides' formats (Guides)
++static const DXGI_FORMAT kGuideFmt[kGuides] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
++                                               DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16_FLOAT};
++
++// Ray tracing's guides at the frame's full size (rt_guide.hlsl), once a frame: each pixel's surface albedo, normal,
++// roughness and specular albedo, which the bounce lighting's smoothing takes and DLSS Ray Reconstruction denoises with
 +bool D3D12Backend::Guides(const Target& t, uint32_t rw, uint32_t rh) {
 +    if (guide_frame_ == presents_) return true;
-+    static const DXGI_FORMAT kFmt[2] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM};
++    const DXGI_FORMAT* kFmt = kGuideFmt;
 +    if (!guide_[0] || guide_w_ != t.w || guide_h_ != t.h) {
-+        for (int i = 0; i < 2; i++) {
++        for (uint32_t i = 0; i < kGuides; i++) {
 +            if (guide_[i]) Release(std::move(guide_[i]));
 +            D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
 +            D3D12_RESOURCE_DESC td = Texture2DDesc(kFmt[i], t.w, t.h);
@@ -3021,7 +3029,7 @@ index fe65837..bd14b18 100644
 +            guide_state_[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
 +            if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, guide_state_[i], &cv,
 +                                                     IID_PPV_ARGS(&guide_[i])))) {
-+                guide_[0] = guide_[1] = nullptr;
++                for (auto& g : guide_) g = nullptr;
 +                guide_w_ = guide_h_ = 0;
 +                return false;
 +            }
@@ -3038,16 +3046,42 @@ index fe65837..bd14b18 100644
 +    sv.Texture2D.MipLevels = 1;
 +    dev_->CreateShaderResourceView(aa_depth_.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
 +    float tan_y = std::tan(0.5f * ao_view_.fov_y);
-+    float p[16] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y, float(rw), float(rh)};
++    // the view in the world: the ray tracing's view space (x right, y up, z ahead on the screen) for the normals, and
++    // the view's own as its projection has it (each axis turned round where the projection turns it) for the denoiser
++    const FrameView& v = ao_view_;
++    const float* axes[3] = {v.right, v.up, v.forward};
++    float flip[3] = {v.view_to_clip[0] < 0 ? -1.0f : 1.0f, v.view_to_clip[5] < 0 ? -1.0f : 1.0f,
++                     v.view_to_clip[14] < 0 ? -1.0f : 1.0f};
++    float p[20] = {v.near_w, v.far_w, tan_y * float(rw) / float(rh), tan_y, float(rw), float(rh)};
++    for (int a = 0; a < 3; a++)
++        for (int k = 0; k < 3; k++) {
++            p[8 + a * 4 + k] = axes[a][k];
++            guide_view_[a * 3 + k] = flip[a] * axes[a][k];
++        }
++    std::copy(v.position, v.position + 3, guide_view_ + 9);
++    if (!guide_said_ && v.valid) {
++        // the view's handedness against the world's: the screen's x against up across ahead
++        const float* r = v.right;
++        const float* u = v.up;
++        const float* f = v.forward;
++        float hand = r[0] * (u[1] * f[2] - u[2] * f[1]) + r[1] * (u[2] * f[0] - u[0] * f[2]) + r[2] * (u[0] * f[1] - u[1] * f[0]);
++        LOGR("ray tracing: guides' normals in the world (right %.2f %.2f %.2f, %s-handed), the view's projection's axes "
++             "%+.0f %+.0f %+.0f", double(r[0]), double(r[1]), double(r[2]), hand < 0 ? "right" : "left",
++             double(flip[0]), double(flip[1]), double(flip[2]));
++        guide_said_ = true;
++    }
 +    Alloc cb = Upload(256, 256);
 +    std::memcpy(cb.cpu, p, sizeof(p));
-+    for (int i = 0; i < 2; i++) Transition(guide_[i].Get(), guide_state_[i], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    for (uint32_t i = 0; i < kGuides; i++) Transition(guide_[i].Get(), guide_state_[i], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    rt::Scene::Out more[kGuides - 1];
++    for (uint32_t i = 1; i < kGuides; i++) more[i - 1] = {Cpu(rtv_heap_.Get(), kGuideRtv + i, rtv_inc_), kFmt[i]};
 +    bool drawn = rt_.Trace(rt::Scene::Pass::Guides, cb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
 +                           Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kGuideRtv, rtv_inc_), kFmt[0], rw,
-+                           rh, Cpu(rtv_heap_.Get(), kGuideRtv + 1, rtv_inc_), kFmt[1]);
++                           rh, more, kGuides - 1);
 +    const D3D12_RESOURCE_STATES kRead =
 +        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-+    for (int i = 0; i < 2; i++) Transition(guide_[i].Get(), guide_state_[i], kRead);
++    // the hit distance stays a target for the reflections (Reflections), the rest are read
++    for (uint32_t i = 0; i + 1 < kGuides; i++) Transition(guide_[i].Get(), guide_state_[i], kRead);
 +    EndRtPass();
 +    if (drawn) guide_frame_ = presents_;
 +    return drawn;
@@ -3088,8 +3122,7 @@ index fe65837..bd14b18 100644
 +    // smoothing's)
 +    uint32_t slot = AllocSrvSlots(4);
 +    ID3D12Resource* src[4] = {aa_depth_.Get(), gi_.Get(), guide_[0].Get(), guide_[1].Get()};
-+    DXGI_FORMAT fmt[4] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
-+                          DXGI_FORMAT_R10G10B10A2_UNORM};
++    DXGI_FORMAT fmt[4] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, kGuideFmt[0], kGuideFmt[1]};
 +    for (int i = 0; i < 4; i++) {
 +        D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
 +        sv.Format = fmt[i];
@@ -3157,8 +3190,13 @@ index fe65837..bd14b18 100644
 +    sv.Texture2D.MipLevels = 1;
 +    dev_->CreateShaderResourceView(aa_depth_.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
 +    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    // each ray's length into the guides' hit distance, when they were drawn this frame (for the denoiser)
++    bool hits = guide_frame_ == presents_ && guide_[kGuides - 1] && guide_w_ == t.w && guide_h_ == t.h;
++    rt::Scene::Out hit{Cpu(rtv_heap_.Get(), kGuideRtv + kGuides - 1, rtv_inc_), kGuideFmt[kGuides - 1]};
++    if (hits) Transition(guide_[kGuides - 1].Get(), guide_state_[kGuides - 1], D3D12_RESOURCE_STATE_RENDER_TARGET);
 +    bool drawn = rt_.Trace(rt::Scene::Pass::Reflections, rcb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
-+                           Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), t.view, rtv_inc_), t.fmt, rw, rh);
++                           Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), t.view, rtv_inc_), t.fmt, rw, rh,
++                           hits ? &hit : nullptr, hits ? 1 : 0);
 +    EndRtPass();
 +    if (!refl_said_) {
 +        LOGR("ray tracing: reflections %s over the 3D at %ux%u (its target %ux%u, format %d), strength %.2f, smooth "
@@ -3300,7 +3338,7 @@ index fe65837..bd14b18 100644
 +    if (!have) {
 +        // no camera move found: each draw's own motion only, the rest still
 +        view = {};
-+        for (int i = 0; i < 16; i++) view.clip_to_prev[i] = i % 5 == 0 ? 1.0f : 0.0f;
++        for (int i = 0; i < 16; i++) view.clip_to_prev[i] = view.view_to_clip[i] = i % 5 == 0 ? 1.0f : 0.0f;
 +    }
 +    Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 +    bool own = fg_objmv_ && fg_objmv_frame_ == presents_ && fg_objmv_w_ == t.w && fg_objmv_h_ == t.h;
@@ -3344,12 +3382,15 @@ index fe65837..bd14b18 100644
 +    }
 +    // the ray tracing scene built first, before any pass draws: built after the screen space passes, a later build
 +    // over it hung the GPU when a room changed
-+    BuildRtScene(rw, rh);
++    // and the guides when DLSS Ray Reconstruction denoises with them (the bounce lighting draws them too)
++    if (BuildRtScene(rw, rh) && aa_->Denoises()) Guides(t, rw, rh);
 +    AmbientOcclusion(t, rw, rh, view.valid ? view : FrameView{}, rx);
 +    Lighting(t, rw, rh);
 +    Reflections(t, rw, rh);
 +    GpuMark(kGpuVendor);
 +    Transition(t.res.Get(), t.state, kRead);
++    bool guided = guide_frame_ == presents_ && guide_w_ == t.w && guide_h_ == t.h && guide_[0];
++    if (guided) Transition(guide_[kGuides - 1].Get(), guide_state_[kGuides - 1], kRead);
 +    if (rx) Transition(aa_rx_.Get(), aa_rx_state_, kRead);
 +    Transition(aa_out_.Get(), aa_out_state_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 +    auto now = std::chrono::steady_clock::now();
@@ -3372,6 +3413,18 @@ index fe65837..bd14b18 100644
 +    f.view = view;
 +    f.frame_ms = float(std::chrono::duration<double, std::milli>(now - aa_t_).count());
 +    f.sharpness = float(std::min<uint32_t>(g_aa_sharpness.load(std::memory_order_relaxed), 100)) / 100.0f;
++    if (guided && aa_->Denoises()) {
++        f.albedo = guide_[0].Get();
++        f.normals = guide_[1].Get();
++        f.specular = guide_[2].Get();
++        f.hit_distance = guide_[3].Get();
++        std::copy(guide_view_, guide_view_ + 12, f.view_to_world);
++        if (!rr_said_) {
++            LOGR("ray tracing: its guides given to %s's denoiser (Ray Reconstruction) at %ux%u",
++                 framegen::AntiAliasName(aa_->Kind()), rw, rh);
++            rr_said_ = true;
++        }
++    }
 +    aa_t_ = now;
 +    aa_had_view_ = have;
 +    bool ran = aa_->Run(cl_.Get(), f);
@@ -3819,7 +3872,7 @@ index fe65837..bd14b18 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +5491,203 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5545,203 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -4024,7 +4077,7 @@ index fe65837..bd14b18 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +5697,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5751,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -4035,7 +4088,7 @@ index fe65837..bd14b18 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +5717,19 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5771,19 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -4055,7 +4108,7 @@ index fe65837..bd14b18 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +5740,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +5794,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -4088,7 +4141,7 @@ index fe65837..bd14b18 100644
      }
  }
  
-@@ -3317,12 +5778,14 @@ void LogPerf() {
+@@ -3317,12 +5832,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -4107,7 +4160,7 @@ index fe65837..bd14b18 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +5794,120 @@ void LogPerf() {
+@@ -3331,25 +5848,120 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -4233,7 +4286,7 @@ index fe65837..bd14b18 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +5918,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +5972,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -4264,7 +4317,7 @@ index fe65837..bd14b18 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +5959,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +6013,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -4310,7 +4363,7 @@ index fe65837..bd14b18 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +6003,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +6057,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -4421,10 +4474,10 @@ index ce6acda..7ab0a1a 100644
  inline std::unique_ptr<Extension> g_extension;
 diff --git a/runtime/gpu/framegen.cpp b/runtime/gpu/framegen.cpp
 new file mode 100644
-index 0000000..1ddf311
+index 0000000..a762721
 --- /dev/null
 +++ b/runtime/gpu/framegen.cpp
-@@ -0,0 +1,1008 @@
+@@ -0,0 +1,1136 @@
 +// Frame generation by AMD FSR 3 or NVIDIA DLSS, and anti-aliasing and upscaling by AMD FSR or NVIDIA DLSS (framegen.h). Each vendor's library is loaded at run time from beside
 +// the executable, never linked: without the files the game runs as it did.
 +#include "gpu/framegen.h"
@@ -4450,6 +4503,7 @@ index 0000000..1ddf311
 +#include "upscalers/include/ffx_upscale.h"
 +#include "sl.h"
 +#include "sl_dlss.h"
++#include "sl_dlss_d.h"
 +#include "sl_dlss_g.h"
 +#include "sl_pcl.h"
 +#include "sl_reflex.h"
@@ -4800,6 +4854,14 @@ index 0000000..1ddf311
 +                 missing.c_str());
 +            dlss = false;
 +        }
++        // Ray Reconstruction with DLSS when its files are there too (an older download has DLSS alone), else DLSS's
++        // own anti-aliasing over the rays' light as over the rest
++        bool rr = dlss && Have(dir_, {L"sl.dlss_d.dll", L"nvngx_dlssd.dll"}, missing);
++        if (dlss && !rr)
++            LOGR("antialias: NVIDIA DLSS Ray Reconstruction needs streamline\\%ls beside the game (the launcher's "
++                 "Graphics page downloads it from NVIDIA again with it): ray tracing's light is anti-aliased as the "
++                 "rest is",
++                 missing.c_str());
 +        if (!fg && !dlss) return false;
 +        fs::path interposer = dir_ / L"sl.interposer.dll";
 +        if (!Signed(interposer)) {
@@ -4823,7 +4885,7 @@ index 0000000..1ddf311
 +            LOGR("streamline: sl.interposer.dll lacks the Streamline API");
 +            return false;
 +        }
-+        static sl::Feature features[4];
++        static sl::Feature features[5];
 +        uint32_t n = 0;
 +        if (fg) {
 +            features[n++] = sl::kFeatureDLSS_G;
@@ -4831,6 +4893,7 @@ index 0000000..1ddf311
 +            features[n++] = sl::kFeaturePCL;
 +        }
 +        if (dlss) features[n++] = sl::kFeatureDLSS;
++        if (rr) features[n++] = sl::kFeatureDLSS_RR;
 +        static std::wstring plugins;
 +        plugins = dir_.wstring();
 +        static const wchar_t* paths[1];
@@ -4862,8 +4925,10 @@ index 0000000..1ddf311
 +        }
 +        fg_ = fg;
 +        dlss_ = dlss;
-+        LOGR("streamline: loaded from %ls, for %s%s%s", dir_.c_str(), fg ? "DLSS frame generation" : "",
-+             fg && dlss ? " and " : "", dlss ? "DLSS anti-aliasing and upscaling" : "");
++        rr_ = rr;
++        LOGR("streamline: loaded from %ls, for %s%s%s%s", dir_.c_str(), fg ? "DLSS frame generation" : "",
++             fg && dlss ? " and " : "", dlss ? "DLSS anti-aliasing and upscaling" : "",
++             rr ? " with Ray Reconstruction" : "");
 +        return true;
 +    }
 +
@@ -4880,7 +4945,7 @@ index 0000000..1ddf311
 +        ready_ = true;
 +        if (set_device_(dev) != sl::Result::eOk) {
 +            LOGR("streamline: does not take the device");
-+            fg_ = dlss_ = false;
++            fg_ = dlss_ = rr_ = false;
 +            return;
 +        }
 +        LUID luid = dev->GetAdapterLuid();
@@ -4899,6 +4964,13 @@ index 0000000..1ddf311
 +                 "and a recent driver; AMD FSR works on any card",
 +                 int(r));
 +            dlss_ = false;
++        }
++        if (rr_ && (!dlss_ || (r = supported_(sl::kFeatureDLSS_RR, ai)) != sl::Result::eOk)) {
++            if (dlss_)
++                LOGR("antialias: NVIDIA DLSS Ray Reconstruction is not supported on this graphics card or driver (%d): "
++                     "ray tracing's light is anti-aliased as the rest is",
++                     int(r));
++            rr_ = false;
 +        }
 +    }
 +
@@ -4925,6 +4997,7 @@ index 0000000..1ddf311
 +    PFun_slSetConstants* constants_ = nullptr;
 +    PFun_slEvaluateFeature* evaluate_ = nullptr;
 +    bool fg_ = false, dlss_ = false;  // loaded, and after DeviceReady supported
++    bool rr_ = false;                 // DLSS Ray Reconstruction (kFeatureDLSS_RR) too
 +    bool fg_counts_ = false;          // DLSS frame generation counts the frames (NextFrame), else DLSS does
 +
 +private:
@@ -5265,8 +5338,16 @@ index 0000000..1ddf311
 +            LOGR("antialias: Streamline's DLSS functions are missing");
 +            return false;
 +        }
++        // Ray Reconstruction, unless XBE_DLSS_RR=0 (to see DLSS's anti-aliasing alone over the rays' light)
++        const char* e = std::getenv("XBE_DLSS_RR");
++        if (g_sl->rr_ && !(e && std::atoi(e) == 0)) {
++            rr_ok_ = g_sl->Function(rr_options_, sl::kFeatureDLSS_RR, "slDLSSDSetOptions");
++            if (!rr_ok_) LOGR("antialias: Streamline's DLSS Ray Reconstruction functions are missing");
++        }
 +        return true;
 +    }
++
++    bool Denoises() const override { return rr_ok_; }
 +
 +    // DLSS's own size for the mode (slDLSSGetOptimalSettings), else AMD's ratios
 +    void RenderSize(uint32_t w, uint32_t h, uint32_t quality, uint32_t& rw, uint32_t& rh) override {
@@ -5302,6 +5383,17 @@ index 0000000..1ddf311
 +        if (!f.color || !f.depth || !f.motion || !f.output || !f.w || !f.h || !f.rw || !f.rh) return false;
 +        sl::FrameToken* token = g_sl->Token();
 +        if (!token) return false;
++        // the rays' light denoised with the guides when ray tracing drew them this frame (Ray Reconstruction, its own
++        // viewport), else DLSS's anti-aliasing; on a frame Ray Reconstruction fails, DLSS's from then on
++        if (rr_ok_ && f.albedo && f.specular && f.normals && f.hit_distance) {
++            if (RunRr(cl, f, *token)) {
++                rr_last_ = true;
++                return true;
++            }
++            rr_ok_ = false;
++        }
++        bool after_rr = rr_last_;
++        rr_last_ = false;
 +        sl::DLSSOptions o = Options(f.w, f.h, f.quality);
 +        if (o.mode != mode_ || f.w != w_ || f.h != h_) {
 +            sl::Result r = options_(viewport_, o);
@@ -5317,7 +5409,8 @@ index 0000000..1ddf311
 +            h_ = f.h;
 +        }
 +        sl::Constants c{};
-+        FillConstants(c, f.view, f.jitter, float(f.rw) / float(f.rh), f.reset);
++        // its history is of the frames before Ray Reconstruction took over, when it did
++        FillConstants(c, f.view, f.jitter, float(f.rw) / float(f.rh), f.reset || after_rr);
 +        sl::Result r = g_sl->constants_(c, *token, viewport_);
 +        if (r != sl::Result::eOk) {
 +            FG_FIRST(4, "antialias: DLSS constants %d", int(r));
@@ -5359,6 +5452,88 @@ index 0000000..1ddf311
 +    }
 +
 +private:
++    // DLSS Ray Reconstruction: the frame's colour with the rays' light in it, denoised and anti-aliased together, the
++    // guides telling it each pixel's surface (the light is the colour over the albedo, which keeps the pictures sharp)
++    bool RunRr(ID3D12GraphicsCommandList* cl, const Frame& f, sl::FrameToken& token) {
++        sl::DLSSDOptions o{};
++        sl::DLSSMode mode = Options(f.w, f.h, f.quality).mode;
++        o.mode = mode;
++        o.outputWidth = f.w;
++        o.outputHeight = f.h;
++        // it takes HDR colour only: the game's 8 bit colour is that, its values within 0 to 1
++        o.colorBuffersHDR = sl::Boolean::eTrue;
++        o.preExposure = 1;
++        o.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;  // the roughness in the normals' w
++        // the view's: from the world into the view space the normals came from (row vectors, as Streamline's are)
++        const float* b = f.view_to_world;  // right, up, forward, place
++        for (int r = 0; r < 3; r++) {
++            o.cameraViewToWorld.setRow(r, sl::float4(b[r * 3], b[r * 3 + 1], b[r * 3 + 2], 0));
++            o.worldToCameraView.setRow(r, sl::float4(b[r], b[3 + r], b[6 + r], 0));
++        }
++        o.cameraViewToWorld.setRow(3, sl::float4(b[9], b[10], b[11], 1));
++        auto dot = [&](int axis) { return b[axis * 3] * b[9] + b[axis * 3 + 1] * b[10] + b[axis * 3 + 2] * b[11]; };
++        o.worldToCameraView.setRow(3, sl::float4(-dot(0), -dot(1), -dot(2), 1));
++        // set each frame: the matrices change as the camera does
++        sl::Result r = rr_options_(rr_viewport_, o);
++        if (r != sl::Result::eOk) {
++            LOGR("antialias: DLSS Ray Reconstruction options %d (%ux%u): DLSS anti-aliasing instead", int(r), f.w, f.h);
++            return false;
++        }
++        if (mode != rr_mode_ || f.w != rr_w_ || f.h != rr_h_) {
++            static const char* const kNames[] = {"off", "Performance", "Balanced", "Quality", "Ultra Performance",
++                                                 "Ultra Quality", "DLAA"};
++            LOGR("antialias: NVIDIA DLSS Ray Reconstruction %s at %ux%u from %ux%u", kNames[uint32_t(mode) % 7], f.w,
++                 f.h, f.rw, f.rh);
++            rr_mode_ = mode;
++            rr_w_ = f.w;
++            rr_h_ = f.h;
++        }
++        sl::Constants c{};
++        FillConstants(c, f.view, f.jitter, float(f.rw) / float(f.rh), f.reset || !rr_last_);
++        r = g_sl->constants_(c, token, rr_viewport_);
++        if (r != sl::Result::eOk) {
++            LOGR("antialias: DLSS Ray Reconstruction constants %d: DLSS anti-aliasing instead", int(r));
++            return false;
++        }
++        const uint32_t kRead = uint32_t(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++        sl::Resource color(sl::ResourceType::eTex2d, f.color, kRead);
++        sl::Resource depth(sl::ResourceType::eTex2d, f.depth, kRead);
++        sl::Resource motion(sl::ResourceType::eTex2d, f.motion, kRead);
++        sl::Resource reactive(sl::ResourceType::eTex2d, f.reactive, kRead);
++        sl::Resource albedo(sl::ResourceType::eTex2d, f.albedo, kRead);
++        sl::Resource specular(sl::ResourceType::eTex2d, f.specular, kRead);
++        sl::Resource normals(sl::ResourceType::eTex2d, f.normals, kRead);
++        sl::Resource hit(sl::ResourceType::eTex2d, f.hit_distance, kRead);
++        sl::Resource out(sl::ResourceType::eTex2d, f.output, uint32_t(D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
++        sl::Extent drawn{0, 0, f.rw, f.rh}, whole{0, 0, f.w, f.h};
++        const auto kUntil = sl::ResourceLifecycle::eValidUntilEvaluate;
++        sl::ResourceTag tags[] = {
++            sl::ResourceTag(&color, sl::kBufferTypeScalingInputColor, kUntil, &drawn),
++            sl::ResourceTag(&out, sl::kBufferTypeScalingOutputColor, kUntil, &whole),
++            sl::ResourceTag(&depth, sl::kBufferTypeDepth, kUntil, &drawn),
++            sl::ResourceTag(&motion, sl::kBufferTypeMotionVectors, kUntil, &drawn),
++            sl::ResourceTag(&albedo, sl::kBufferTypeAlbedo, kUntil, &drawn),
++            sl::ResourceTag(&specular, sl::kBufferTypeSpecularAlbedo, kUntil, &drawn),
++            sl::ResourceTag(&normals, sl::kBufferTypeNormalRoughness, kUntil, &drawn),
++            // where the reflections' rays went, which it moves them by (no specular motion vectors of their own)
++            sl::ResourceTag(&hit, sl::kBufferTypeSpecularHitDistance, kUntil, &drawn),
++            sl::ResourceTag(&reactive, sl::kBufferTypeBiasCurrentColorHint, kUntil, &drawn),
++        };
++        r = g_sl->tag_(token, rr_viewport_, tags, f.reactive ? 9 : 8, cl);
++        if (r != sl::Result::eOk) {
++            LOGR("antialias: DLSS Ray Reconstruction tags %d: DLSS anti-aliasing instead", int(r));
++            return false;
++        }
++        const sl::BaseStructure* inputs[] = {&rr_viewport_};
++        r = g_sl->evaluate_(sl::kFeatureDLSS_RR, token, inputs, 1, cl);
++        if (r != sl::Result::eOk) {
++            LOGR("antialias: DLSS Ray Reconstruction evaluate %d at %ux%u from %ux%u: DLSS anti-aliasing instead",
++                 int(r), f.w, f.h, f.rw, f.rh);
++            return false;
++        }
++        return true;
++    }
++
 +    // the game's 8 bit gamma-encoded colour, its exposure as it is; the mode by the quality, DLAA at the frame's size
 +    static sl::DLSSOptions Options(uint32_t w, uint32_t h, uint32_t quality) {
 +        sl::DLSSOptions o{};
@@ -5376,7 +5551,13 @@ index 0000000..1ddf311
 +
 +    PFun_slDLSSSetOptions* options_ = nullptr;
 +    PFun_slDLSSGetOptimalSettings* optimal_ = nullptr;
++    PFun_slDLSSDSetOptions* rr_options_ = nullptr;
 +    sl::ViewportHandle viewport_{1u};
++    sl::ViewportHandle rr_viewport_{2u};  // Ray Reconstruction's
++    bool rr_ok_ = false;                  // loaded, supported and not failed
++    bool rr_last_ = false;                // the frame before was Ray Reconstruction's
++    sl::DLSSMode rr_mode_ = sl::DLSSMode::eOff;
++    uint32_t rr_w_ = 0, rr_h_ = 0;
 +    sl::DLSSMode mode_ = sl::DLSSMode::eOff;  // as last set: none yet
 +    uint32_t w_ = 0, h_ = 0;
 +    uint32_t size_w_ = 0, size_h_ = 0, size_q_ = 0, size_rw_ = 0, size_rh_ = 0;  // RenderSize's last
@@ -5435,10 +5616,10 @@ index 0000000..1ddf311
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/framegen.h b/runtime/gpu/framegen.h
 new file mode 100644
-index 0000000..24d3f74
+index 0000000..2c20ca0
 --- /dev/null
 +++ b/runtime/gpu/framegen.h
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,151 @@
 +// Frame generation: a frame made between each two the title draws, by AMD FidelityFX Super Resolution 3 frame
 +// generation (any Direct3D 12 card) or NVIDIA DLSS frame generation through Streamline (GeForce RTX 40 and 50). And
 +// the frame's anti-aliasing and upscaling (AntiAlias), by AMD FSR or NVIDIA DLSS.
@@ -5447,7 +5628,8 @@ index 0000000..24d3f74
 +// put them there (the launcher downloads them from AMD's and NVIDIA's own releases, with their licences):
 +//   FSR 3:  amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_framegeneration_dx12.dll, amd_fidelityfx_upscaler_dx12.dll
 +//   DLSS:   streamline\sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, sl.reflex.dll, sl.pcl.dll, nvngx_dlssg.dll;
-+//           for DLSS anti-aliasing and upscaling sl.dlss.dll and nvngx_dlss.dll too
++//           for DLSS anti-aliasing and upscaling sl.dlss.dll and nvngx_dlss.dll too, and for its Ray Reconstruction
++//           (ray tracing's light denoised as it upscales) sl.dlss_d.dll and nvngx_dlssd.dll
 +// Without them, or on a card that cannot, the setting does nothing and the log says why.
 +//
 +// Both take the frame as the back buffer has it, its depth and motion vectors at the same size, and the frame as it
@@ -5557,6 +5739,17 @@ index 0000000..24d3f74
 +        FrameView view;
 +        float frame_ms = 16.7f;
 +        float sharpness = 0.3f;  // AMD's sharpening after, 0 none
++        // ray tracing's guides, the colour's size, ALL_SHADER_RESOURCE, when ray tracing drew this frame (else null):
++        // each pixel's surface albedo (RGBA8), its specular albedo (RGBA8), its world normal with its roughness in w
++        // (RGBA16F) and its reflection's hit distance. DLSS denoises the rays' light with them (Ray Reconstruction)
++        // where it can
++        ID3D12Resource* albedo = nullptr;
++        ID3D12Resource* specular = nullptr;
++        ID3D12Resource* normals = nullptr;
++        ID3D12Resource* hit_distance = nullptr;  // R16F: the reflections' rays' length, 0 where none was sent
++        // the view's space as its projection (view.view_to_clip) has it, in the world: its x, y and z and the camera's
++        // place, rows (Ray Reconstruction turns the normals and the reflections' rays into it)
++        float view_to_world[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
 +    };
 +    virtual ~AntiAlias() = default;
 +    virtual uint32_t Kind() const = 0;  // AntiAliasKind
@@ -5569,6 +5762,8 @@ index 0000000..24d3f74
 +    virtual bool Run(ID3D12GraphicsCommandList* cl, const Frame& f) = 0;
 +    // after each present: Streamline's frame, when DLSS frame generation does not count them
 +    virtual void FrameDone() {}
++    // it takes the guides (Frame::albedo, specular, normals) and denoises the rays' light with them
++    virtual bool Denoises() const { return false; }
 +};
 +
 +// AntiAliasKind's, null when its files are not there or the card cannot (logged)
@@ -5578,10 +5773,10 @@ index 0000000..24d3f74
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/raytrace.cpp b/runtime/gpu/raytrace.cpp
 new file mode 100644
-index 0000000..7eb3a41
+index 0000000..8b93e18
 --- /dev/null
 +++ b/runtime/gpu/raytrace.cpp
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,503 @@
 +#include "gpu/raytrace.h"
 +
 +#include <algorithm>
@@ -5689,7 +5884,8 @@ index 0000000..7eb3a41
 +        LOGW("ray tracing: its root signature was not made");
 +        return false;
 +    }
-+    if (!Pipeline(Pass::AmbientOcclusion, DXGI_FORMAT_R8_UNORM)) return false;
++    const DXGI_FORMAT r8 = DXGI_FORMAT_R8_UNORM;
++    if (!Pipeline(Pass::AmbientOcclusion, &r8, 1)) return false;
 +    slots_.resize(frames);
 +    for (Slot& s : slots_) {
 +        D3D12_HEAP_PROPERTIES up{D3D12_HEAP_TYPE_UPLOAD};
@@ -5983,9 +6179,10 @@ index 0000000..7eb3a41
 +}
 +
 +// a pass's pipeline for a target format, made the first time it is asked for (null when it could not be)
-+ID3D12PipelineState* Scene::Pipeline(Pass pass, DXGI_FORMAT fmt, DXGI_FORMAT fmt2) {
++ID3D12PipelineState* Scene::Pipeline(Pass pass, const DXGI_FORMAT* fmts, uint32_t n) {
++    if (n == 0 || n > kMaxOut) return nullptr;
 +    for (Made& m : psos_)
-+        if (m.pass == pass && m.fmt == fmt && m.fmt2 == fmt2) return m.pso.Get();
++        if (m.pass == pass && m.n == n && std::equal(fmts, fmts + n, m.fmt)) return m.pso.Get();
 +    ComPtr<ID3D12PipelineState> made;
 +#if XBE_RAYTRACING
 +    D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
@@ -6032,25 +6229,36 @@ index 0000000..7eb3a41
 +    pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 +    pd.RasterizerState.DepthClipEnable = TRUE;
 +    pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-+    pd.NumRenderTargets = fmt2 != DXGI_FORMAT_UNKNOWN ? 2 : 1;
-+    pd.RTVFormats[0] = fmt;
-+    pd.RTVFormats[1] = fmt2;
-+    pd.BlendState.RenderTarget[1].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++    // the targets after the first written as they are
++    pd.BlendState.IndependentBlendEnable = n > 1;
++    pd.NumRenderTargets = n;
++    for (uint32_t i = 0; i < n; i++) {
++        pd.RTVFormats[i] = fmts[i];
++        if (i) pd.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++    }
 +    pd.SampleDesc.Count = 1;
 +    if (FAILED(dev_->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&made)))) {
-+        LOGW("ray tracing: pass %d's pipeline was not made for format %d", int(pass), int(fmt));
++        LOGW("ray tracing: pass %d's pipeline was not made for format %d (%u targets)", int(pass), int(fmts[0]), n);
 +        made = nullptr;
 +    }
 +#endif
-+    psos_.push_back({pass, fmt, fmt2, made});
++    Made m{pass, n, {}, made};
++    std::copy(fmts, fmts + n, m.fmt);
++    psos_.push_back(m);
 +    return made.Get();
 +}
 +
 +bool Scene::Trace(Pass pass, D3D12_GPU_VIRTUAL_ADDRESS cb, D3D12_GPU_DESCRIPTOR_HANDLE depth,
 +                  D3D12_GPU_DESCRIPTOR_HANDLE pictures, D3D12_CPU_DESCRIPTOR_HANDLE rtv, DXGI_FORMAT fmt, uint32_t w,
-+                  uint32_t h, D3D12_CPU_DESCRIPTOR_HANDLE rtv2, DXGI_FORMAT fmt2) {
-+    if (!built_) return false;
-+    ID3D12PipelineState* pso = Pipeline(pass, fmt, fmt2);
++                  uint32_t h, const Out* more, uint32_t n_more) {
++    if (!built_ || n_more >= kMaxOut) return false;
++    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[kMaxOut] = {rtv};
++    DXGI_FORMAT fmts[kMaxOut] = {fmt};
++    for (uint32_t i = 0; i < n_more; i++) {
++        rtvs[1 + i] = more[i].rtv;
++        fmts[1 + i] = more[i].fmt;
++    }
++    ID3D12PipelineState* pso = Pipeline(pass, fmts, 1 + n_more);
 +    if (!pso) return false;
 +    cl_->SetGraphicsRootSignature(ao_root_.Get());
 +    cl_->SetPipelineState(pso);
@@ -6061,8 +6269,7 @@ index 0000000..7eb3a41
 +    cl_->SetGraphicsRootShaderResourceView(4, Vertices());
 +    cl_->SetGraphicsRootShaderResourceView(5, Indices());
 +    cl_->SetGraphicsRootShaderResourceView(6, GeometryTable());
-+    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv, rtv2};
-+    cl_->OMSetRenderTargets(fmt2 != DXGI_FORMAT_UNKNOWN ? 2 : 1, rtvs, FALSE, nullptr);
++    cl_->OMSetRenderTargets(1 + n_more, rtvs, FALSE, nullptr);
 +    D3D12_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
 +    D3D12_RECT sc{0, 0, LONG(w), LONG(h)};
 +    cl_->RSSetViewports(1, &vp);
@@ -6075,10 +6282,10 @@ index 0000000..7eb3a41
 +}  // namespace gpu::rt
 diff --git a/runtime/gpu/raytrace.h b/runtime/gpu/raytrace.h
 new file mode 100644
-index 0000000..22dcc6a
+index 0000000..4c434f3
 --- /dev/null
 +++ b/runtime/gpu/raytrace.h
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,177 @@
 +#pragma once
 +// Ray tracing over a title's own 3D (DXR 1.1 inline ray queries): each frame, the triangles its world's draws put on
 +// the screen are gathered into an acceleration structure, which passes after the frame's 3D trace rays through.
@@ -6201,14 +6408,21 @@ index 0000000..22dcc6a
 +    // The passes, each a full screen triangle's pixel shader into a w x h part of a render target (rtv, of format fmt)
 +    // from its top left: ambient occlusion (rt_ao.hlsl) into its R8 target; reflections (rt_refl.hlsl) over the frame's
 +    // 3D, premultiplied; bounce lighting (rt_gi.hlsl) into its RGBA16F target, and its smoothing (rt_giapply.hlsl)
-+    // added over the frame's 3D; the guides (rt_guide.hlsl) into two targets, the surfaces' albedo (RGBA8) and normals
-+    // and roughness (RGB10A2): rtv2 and fmt2 the second. cb is the pass's P, depth the depth's table (one SRV), pictures
-+    // the renderer's SRV heap's start (the draws' pictures by their Look, and any texture a pass is told the index of).
-+    // False when its pipeline was not made for that format
++    // added over the frame's 3D; the guides (rt_guide.hlsl) into four targets, the surfaces' albedo (RGBA8), their
++    // world normals and roughness (RGBA16F), their specular albedo (RGBA8) and the reflections' hit distance (R16F, 0
++    // there, written by the reflections where they trace: their second target). The targets after the first are more
++    // (n_more of them, kept apart from the first's blending). cb is the pass's P, depth the depth's table (one SRV),
++    // pictures the renderer's SRV heap's start (the draws' pictures by their Look, and any texture a pass is told the
++    // index of). False when its pipeline was not made for those formats
 +    enum class Pass { AmbientOcclusion, Reflections, Bounce, BounceApply, Guides };
++    struct Out {
++        D3D12_CPU_DESCRIPTOR_HANDLE rtv;
++        DXGI_FORMAT fmt;
++    };
++    static constexpr uint32_t kMaxOut = 4;
 +    bool Trace(Pass pass, D3D12_GPU_VIRTUAL_ADDRESS cb, D3D12_GPU_DESCRIPTOR_HANDLE depth,
 +               D3D12_GPU_DESCRIPTOR_HANDLE pictures, D3D12_CPU_DESCRIPTOR_HANDLE rtv, DXGI_FORMAT fmt, uint32_t w,
-+               uint32_t h, D3D12_CPU_DESCRIPTOR_HANDLE rtv2 = {}, DXGI_FORMAT fmt2 = DXGI_FORMAT_UNKNOWN);
++               uint32_t h, const Out* more = nullptr, uint32_t n_more = 0);
 +
 +private:
 +    struct Slot {
@@ -6227,11 +6441,12 @@ index 0000000..22dcc6a
 +
 +    Microsoft::WRL::ComPtr<ID3D12Device5> dev_;
 +    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList4> cl_;
-+    ID3D12PipelineState* Pipeline(Pass pass, DXGI_FORMAT fmt, DXGI_FORMAT fmt2 = DXGI_FORMAT_UNKNOWN);
++    ID3D12PipelineState* Pipeline(Pass pass, const DXGI_FORMAT* fmts, uint32_t n);
 +    Microsoft::WRL::ComPtr<ID3D12RootSignature> ao_root_;  // every pass's
 +    struct Made {
 +        Pass pass;
-+        DXGI_FORMAT fmt, fmt2;
++        uint32_t n;
++        DXGI_FORMAT fmt[kMaxOut];
 +        Microsoft::WRL::ComPtr<ID3D12PipelineState> pso;  // null: tried, not made
 +    };
 +    std::vector<Made> psos_;
@@ -6462,10 +6677,10 @@ index 0000000..a5e9374
 +}
 diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
 new file mode 100644
-index 0000000..e1b3093
+index 0000000..f3603d3
 --- /dev/null
 +++ b/runtime/gpu/rt_giapply.hlsl
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,50 @@
 +// Ray traced bounce lighting's second step (rt_gi.hlsl): the light arriving at each surface, gathered by a few rays a
 +// pixel at a part of the frame's size, smoothed across a 5x5 of its texels that lie on the same surface as the pixel
 +// (by their depth and their normal, rt_guide.hlsl's), then thrown back in the surface's own colour at the frame's full
@@ -6480,13 +6695,6 @@ index 0000000..e1b3093
 +#include "rt_scene.hlsli"
 +
 +float ViewZ(float d) { return cam.x * cam.y / (d * cam.x + (1 - d) * cam.y); }
-+float3 Unfold(float2 e) {
-+    e = e * 2 - 1;
-+    float3 n = float3(e, 1 - abs(e.x) - abs(e.y));
-+    float t = saturate(-n.z);
-+    n.xy += float2(n.x >= 0 ? -t : t, n.y >= 0 ? -t : t);
-+    return normalize(n);
-+}
 +
 +float4 ps(float4 pos : SV_Position) : SV_Target {
 +    Texture2D<float4> depth = pictures[NonUniformResourceIndex(uint(ap.x))];
@@ -6497,7 +6705,7 @@ index 0000000..e1b3093
 +    float4 a = albedo.Load(int3(px, 0));
 +    if (a.a == 0) return 0;  // not the scene's surface: as the game drew it
 +    float zc = ViewZ(depth.Load(int3(px, 0)).r);
-+    float3 nc = Unfold(normals.Load(int3(px, 0)).rg);
++    float3 nc = normals.Load(int3(px, 0)).xyz;  // in the world: only their angle to each other counts here
 +    // the pixel's place in the bounce target
 +    float2 g = (float2(px) + 0.5) * part.zw / part.xy - 0.5;
 +    int2 g0 = int2(floor(g));
@@ -6509,7 +6717,7 @@ index 0000000..e1b3093
 +            // the tap's surface where the bounce pass found it (its texel's middle)
 +            int2 dp = int2((float2(q) + 0.5) * part.xy / part.zw);
 +            float z = ViewZ(depth.Load(int3(dp, 0)).r);
-+            float3 n = Unfold(normals.Load(int3(dp, 0)).rg);
++            float3 n = normals.Load(int3(dp, 0)).xyz;
 +            float2 dg = float2(q) - g;
 +            float w = exp(-abs(z - zc) / (0.03f * zc)) * pow(saturate(dot(n, nc)), 8) *
 +                      exp(-dot(dg, dg) / (2 * 2.5f * 2.5f * ap.z * ap.z));
@@ -6525,21 +6733,25 @@ index 0000000..e1b3093
 +}
 diff --git a/runtime/gpu/rt_guide.hlsl b/runtime/gpu/rt_guide.hlsl
 new file mode 100644
-index 0000000..6de6059
+index 0000000..ebe209e
 --- /dev/null
 +++ b/runtime/gpu/rt_guide.hlsl
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,101 @@
 +// Ray tracing's guides (raytrace.cpp): what each pixel of the frame's 3D is, at its full size, for the passes that
-+// smooth what the rays gathered and for a denoiser that takes them (DLSS Ray Reconstruction). A ray from the eye
++// smooth what the rays gathered and for the denoiser that takes them (DLSS Ray Reconstruction). A ray from the eye
 +// through the pixel meets the scene where the frame drew it, and its draw tells the surface: its picture's colour there
-+// (its albedo, without the game's light), its normal (the face's, bent by a texture pack's normal map) and roughness
-+// (the material's, 1 without one). Where the scene is not what the frame drew (an effect, the sky), the albedo's alpha
-+// is 0 and the passes leave the pixel as the game drew it.
++// (its albedo, without the game's light), its normal (the face's, bent by a texture pack's normal map) turned into the
++// world, its roughness (the material's, 1 without one) and its specular albedo (the share of the light a mirror
++// direction's rays bring that it gives back: a texture pack's materials only, the game's own surfaces reflect nothing).
++// Where the scene is not what the frame drew (an effect, the sky), the albedo is white with alpha 0 (the passes leave
++// the pixel as the game drew it, and the denoiser takes its colour as light). The fourth target, the reflections' hit
++// distance, is 0 here and written by rt_refl.hlsl where it traces.
 +cbuffer P : register(b0) {
-+    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
-+    float4 part;  // the 3D's size in depth texels (rw, rh), unused
-+    float4 gd;    // unused
-+    float4 fr;    // unused
++    float4 cam;    // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
++    float4 part;   // the 3D's size in depth texels (rw, rh), unused
++    float4 right;  // the view's x (right), y (up) and z (ahead) in the world
++    float4 up;
++    float4 ahead;
 +};
 +#include "rt_scene.hlsli"
 +Texture2D<float> depth : register(t1);
@@ -6550,22 +6762,31 @@ index 0000000..6de6059
 +    float z = ViewZ(d);
 +    return float3((uv.x * 2 - 1) * cam.z * z, (1 - uv.y * 2) * cam.w * z, z);
 +}
-+// a unit vector folded onto an octahedron and that onto a square, 0 to 1 (as DLSS and AMD's denoisers read normals)
-+float2 Octahedral(float3 n) {
-+    n /= abs(n.x) + abs(n.y) + abs(n.z);
-+    float2 o = n.z >= 0 ? n.xy : (1 - abs(n.yx)) * float2(n.x >= 0 ? 1 : -1, n.y >= 0 ? 1 : -1);
-+    return o * 0.5f + 0.5f;
++// the split sum's share of a mirror's light a surface gives back (Karis's fit), none at a reflectance of 0
++float3 SpecularAlbedo(float3 f0, float rough, float nv) {
++    const float4 c0 = float4(-1, -0.0275f, -0.572f, 0.022f);
++    const float4 c1 = float4(1, 0.0425f, 1.04f, -0.04f);
++    float4 r = rough * c0 + c1;
++    float a004 = min(r.x * r.x, exp2(-9.28f * nv)) * r.x + r.y;
++    float2 ab = float2(-1.04f, 1.04f) * a004 + r.zw;
++    ab.y *= saturate(50 * f0.g);
++    return saturate(f0 * ab.x + ab.y);
 +}
++float3 ToWorld(float3 n) { return normalize(right.xyz * n.x + up.xyz * n.y + ahead.xyz * n.z); }
 +
 +struct Guide {
-+    float4 albedo : SV_Target0;  // the picture's colour, alpha 1 where the surface is the scene's
-+    float4 normal : SV_Target1;  // octahedral view space normal, roughness, 1 metal
++    float4 albedo : SV_Target0;    // the picture's colour, alpha 1 where the surface is the scene's
++    float4 normal : SV_Target1;    // world normal, roughness
++    float4 specular : SV_Target2;  // specular albedo
++    float hit : SV_Target3;        // the reflections' hit distance, theirs to write
 +};
 +
 +Guide ps(float4 pos : SV_Position) {
 +    Guide o;
-+    o.albedo = 0;
-+    o.normal = float4(0.5f, 0.5f, 1, 0);
++    o.albedo = float4(1, 1, 1, 0);
++    o.normal = float4(-ahead.xyz, 1);  // toward the eye
++    o.specular = 0;
++    o.hit = 0;
 +    int2 px = int2(pos.xy);
 +    float3 p = ViewPos(px, depth.Load(int3(px, 0)));
 +    if (p.z >= 0.999 * max(cam.x, cam.y)) return o;
@@ -6611,15 +6832,18 @@ index 0000000..6de6059
 +        }
 +    }
 +    o.albedo = float4(albedo, 1);
-+    o.normal = float4(Octahedral(n), rough, metal > 0.5f ? 1 : 0);
++    o.normal = float4(ToWorld(n), rough);
++    if (g.b.x != kNone)
++        o.specular = float4(SpecularAlbedo(lerp(float3(0.04f, 0.04f, 0.04f), saturate(albedo), metal), rough,
++                                           saturate(dot(n, -dir))), 1);
 +    return o;
 +}
 diff --git a/runtime/gpu/rt_refl.hlsl b/runtime/gpu/rt_refl.hlsl
 new file mode 100644
-index 0000000..4f32686
+index 0000000..95621e8
 --- /dev/null
 +++ b/runtime/gpu/rt_refl.hlsl
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,130 @@
 +// Ray traced reflections (raytrace.cpp, DXR 1.1 inline ray queries, compiled to DXIL when the runtime is built): each
 +// pixel of the frame's 3D whose surface has a texture pack's material (its ORM map: roughness, metalness) and is
 +// smooth enough sends one ray into the frame's scene (the world's draws as drawn, raytrace.h) along its mirror
@@ -6627,7 +6851,8 @@ index 0000000..4f32686
 +// point, times its vertices' colour (the light the game gave them). The share is the surface's Fresnel reflectance,
 +// its picture's colour on metal, faded out as roughness grows; a ray that meets nothing leaves the pixel as it was.
 +// Drawn over the frame's 3D before anti-aliasing, which gathers its noise over the frames as it does ambient
-+// occlusion's: the colour added (premultiplied), metal's own colour taken out by the alpha.
++// occlusion's: the colour added (premultiplied), metal's own colour taken out by the alpha. Its second target, when
++// the guides are drawn (rt_guide.hlsl), takes each ray's length, which DLSS Ray Reconstruction moves the reflection by.
 +cbuffer P : register(b0) {
 +    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
 +    float4 part;  // the 3D's size in depth texels (rw, rh), its size drawn (w, h)
@@ -6653,20 +6878,31 @@ index 0000000..4f32686
 +    return float(v.x & 0xFFFFFF) / 16777216.0f;
 +}
 +
-+float4 ps(float4 pos : SV_Position) : SV_Target {
++struct Out {
++    float4 color : SV_Target0;
++    float hit : SV_Target1;  // how far the ray went, 0 where none was sent or it met nothing
++};
++Out Done(float4 c, float hit) {
++    Out o;
++    o.color = c;
++    o.hit = hit;
++    return o;
++}
++
++Out ps(float4 pos : SV_Position) {
 +    uint2 id = uint2(pos.xy);
 +    int2 px = int2((float2(id) + 0.5) * part.xy / part.zw);
 +    float3 p = ViewPos(px, Depth(px));
-+    if (p.z >= 0.999 * max(cam.x, cam.y)) return 0;  // nothing drawn there
++    if (p.z >= 0.999 * max(cam.x, cam.y)) return Done(0, 0);  // nothing drawn there
 +    // the surface: the scene's, where the frame drew it
 +    float len = length(p);
 +    float3 dir = p / len;
 +    uint geom, prim;
 +    float2 bary;
 +    float t = TraceScene(0, dir, 0, 1e30f, 32, geom, prim, bary);
-+    if (t < 0 || abs(t - len) > 0.02f * len) return 0;
++    if (t < 0 || abs(t - len) > 0.02f * len) return Done(0, 0);
 +    Draw g = geo[geom];
-+    if (g.b.x == kNone) return 0;  // no material: the game's own surfaces stay as it drew them
++    if (g.b.x == kNone) return Done(0, 0);  // no material: the game's own surfaces stay as it drew them
 +    Spot s = SpotOf(geom, prim, bary);
 +    float pixel = 2 * cam.w / part.y;  // a pixel's height at a distance of one
 +    Texture2D<float4> orm = pictures[NonUniformResourceIndex(g.b.x)];
@@ -6676,13 +6912,13 @@ index 0000000..4f32686
 +    float rough = rf.w > 0 ? rf.w : clamp(g.c.x > 0 ? g.c.x + m.g - 0.8f : m.g + asfloat(g.b.z), 0.04f, 1);
 +    float metal = max(saturate(m.b * asfloat(g.b.w)), g.c.y);
 +    // XBE_RT_VIEW 6: the roughness (black smooth), 7: the metalness
-+    if (fr.y == 6) return float4(rough.xxx, 1);
-+    if (fr.y == 7) return float4(metal.xxx, 1);
++    if (fr.y == 6) return Done(float4(rough.xxx, 1), 0);
++    if (fr.y == 7) return Done(float4(metal.xxx, 1), 0);
 +    float fade = saturate((rf.y - rough) / (0.5f * rf.y));  // whole below half the limit, none at it
-+    if (fade <= 0) return 0;
++    if (fade <= 0) return Done(0, 0);
 +    // its normal: the face's, bent by its normal map (tangent space, x along u, y along v)
 +    float3 n = Facing(s.p[0], s.p[1], s.p[2], dir);
-+    if (all(n == 0)) return 0;
++    if (all(n == 0)) return Done(0, 0);
 +    if (g.b.y != kNone) {
 +        float3 e1 = s.p[1] - s.p[0], e2 = s.p[2] - s.p[0];
 +        float2 d1 = s.uv[1] - s.uv[0], d2 = s.uv[2] - s.uv[0];
@@ -6715,7 +6951,7 @@ index 0000000..4f32686
 +    uint g2, p2;
 +    float2 b2;
 +    float t2 = TraceScene(o, r, 0, rf.z, 16, g2, p2, b2);
-+    if (t2 < 0) return 0;  // nothing within reach: the frame keeps its own
++    if (t2 < 0) return Done(0, 0);  // nothing within reach: the frame keeps its own
 +    // what it meets: its picture there times its vertices' colour, its picture read as blurred as the cone is wide
 +    Spot hs = SpotOf(g2, p2, b2);
 +    float3 seen = hs.tint.rgb;
@@ -6725,7 +6961,7 @@ index 0000000..4f32686
 +        float cone = (t + t2) * pixel + t2 * a;
 +        seen *= pt.SampleLevel(wrap, hs.at, LevelOf(pt, hs, cone)).rgb;
 +    }
-+    if (fr.y == 5) return float4(seen, 1);  // XBE_RT_VIEW 5: what the rays meet alone
++    if (fr.y == 5) return Done(float4(seen, 1), t2);  // XBE_RT_VIEW 5: what the rays meet alone
 +    // Fresnel's reflectance (Schlick's), metal's tinted by its own picture
 +    float3 base = s.tint.rgb;
 +    if (g.a.z != kNone) {
@@ -6736,7 +6972,7 @@ index 0000000..4f32686
 +    float3 f = f0 + (1 - f0) * pow(1 - saturate(dot(-dir, h)), 5);
 +    // fading as the ray nears its reach, so where it ends does not draw a line
 +    float w = rf.x * fade * saturate(4 * (1 - t2 / rf.z));
-+    return float4(seen * f * w, metal * w * max(f.r, max(f.g, f.b)));
++    return Done(float4(seen * f * w, metal * w * max(f.r, max(f.g, f.b))), t2);
 +}
 diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
 new file mode 100644
@@ -10972,6 +11208,200 @@ index 0000000..3aac47b
 +{
 +    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS, slDLSSSetOptions);
 +    return s_slDLSSSetOptions(viewport, options);
++}
+diff --git a/third_party/streamline/include/sl_dlss_d.h b/third_party/streamline/include/sl_dlss_d.h
+new file mode 100644
+index 0000000..e5ec8ec
+--- /dev/null
++++ b/third_party/streamline/include/sl_dlss_d.h
+@@ -0,0 +1,188 @@
++/*
++* Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved
++*
++* Permission is hereby granted, free of charge, to any person obtaining a copy
++* of this software and associated documentation files (the "Software"), to deal
++* in the Software without restriction, including without limitation the rights
++* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++* copies of the Software, and to permit persons to whom the Software is
++* furnished to do so, subject to the following conditions:
++*
++* The above copyright notice and this permission notice shall be included in all
++* copies or substantial portions of the Software.
++*
++* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++* SOFTWARE.
++*/ 
++
++#pragma once
++
++#include "sl_dlss.h"
++
++namespace sl
++{
++
++enum class DLSSDPreset : uint32_t
++{
++    //! Default behavior, may or may not change after an OTA
++    eDefault,
++                    // ePresetA removed, use preset D, E or F
++                    // ePresetB removed, use preset D, E or F
++                    // ePresetC removed, use preset D, E or F
++    ePresetD = 4,   // Transformer model
++    ePresetE = 5,   // Transformer model
++    ePresetF = 6,   // Latest and default transformer model
++    ePresetG = 7,   // Reverts to default
++    ePresetH = 8,   // Reverts to default
++    ePresetI = 9,   // Reverts to default
++    ePresetJ = 10,  // Reverts to default
++    ePresetK = 11,  // Reverts to default
++    ePresetL = 12,  // Reverts to default
++    ePresetM = 13,  // Reverts to default. Not recommended to use
++    ePresetN = 14,  // Reverts to default. Not recommended to use
++    ePresetO = 15,  // Reverts to default. Not recommended to use
++
++    eCount
++};
++
++enum class DLSSDNormalRoughnessMode : uint32_t
++{
++    eUnpacked,  // App needs to provide Normal resource and Roughness resource separately.
++    ePacked,    // App needs to write Roughness to w channel of Normal resource.
++
++    eCount
++};
++
++// {0AD87504-774E-4BF3-9633-A44D1F7F9CB8}
++SL_STRUCT_BEGIN(DLSSDOptions, StructType({ 0x0ad87504, 0x774e, 0x4bf3, { 0x96, 0x33, 0xa4, 0x4d, 0x1f, 0x7f, 0x9c, 0xb8 } }), kStructVersion3)
++    //! Specifies which mode should be used
++    DLSSMode mode = DLSSMode::eOff;
++    //! Specifies output (final) target width
++    uint32_t outputWidth = INVALID_UINT;
++    //! Specifies output (final) target height
++    uint32_t outputHeight = INVALID_UINT;
++    //! Specifies sharpening level in range [0,1]
++    float sharpness = 0.0f;
++    //! Specifies pre-exposure value
++    float preExposure = 1.0f;
++    //! Specifies exposure scale value
++    float exposureScale = 1.0f;
++    //! Specifies if tagged color buffers are full HDR or not (DLSS in HDR pipeline or not)
++    Boolean colorBuffersHDR = Boolean::eTrue;
++    //! Specifies if indicator on screen should invert axis
++    Boolean indicatorInvertAxisX = Boolean::eFalse;
++    //! Specifies if indicator on screen should invert axis
++    Boolean indicatorInvertAxisY = Boolean::eFalse;
++    //! Specifies which mode should be used for roughness resource
++    DLSSDNormalRoughnessMode normalRoughnessMode = DLSSDNormalRoughnessMode::eUnpacked;
++    //! Specifies matrix transformation from the world space to the camera view space.
++    float4x4 worldToCameraView;
++    //! Specifies matrix transformation from the camera view space to the world space.
++    //! cameraViewToWorld = worldToCameraView.inverse()
++    float4x4 cameraViewToWorld;
++    //! Whether or not the alpha channel should be upscaled (if false, only RGB is upscaled)
++    //! Enabling alpha upscaling may impact performance
++    Boolean alphaUpscalingEnabled = Boolean::eFalse;
++
++    //! Presets
++    DLSSDPreset dlaaPreset = DLSSDPreset::eDefault;
++    DLSSDPreset qualityPreset = DLSSDPreset::eDefault;
++    DLSSDPreset balancedPreset = DLSSDPreset::eDefault;
++    DLSSDPreset performancePreset = DLSSDPreset::eDefault;
++    DLSSDPreset ultraPerformancePreset = DLSSDPreset::eDefault;
++    DLSSDPreset ultraQualityPreset = DLSSDPreset::eDefault;
++
++    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
++SL_STRUCT_END()
++
++//! Returned by DLSSD plugin
++//! 
++//! {FBD0C637-A28F-41F2-BC91-B421FAEE8E1E}
++SL_STRUCT_BEGIN(DLSSDOptimalSettings, StructType({ 0xfbd0c637, 0xa28f, 0x41f2, { 0xbc, 0x91, 0xb4, 0x21, 0xfa, 0xee, 0x8e, 0x1e } }), kStructVersion1)
++//! Specifies render area width
++    uint32_t optimalRenderWidth{};
++    //! Specifies render area height
++    uint32_t optimalRenderHeight{};
++    //! Specifies the optimal sharpness value
++    float optimalSharpness{};
++    //! Specifies minimal render area width
++    uint32_t renderWidthMin{};
++    //! Specifies minimal render area height
++    uint32_t renderHeightMin{};
++    //! Specifies maximal render area width
++    uint32_t renderWidthMax{};
++    //! Specifies maximal render area height
++    uint32_t renderHeightMax{};
++
++    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
++SL_STRUCT_END()
++
++//! Returned by DLSSD plugin
++//! 
++//! {71873C14-F8CA-4767-9EAF-3B4393EA98FA}
++SL_STRUCT_BEGIN(DLSSDState, StructType({ 0x71873c14, 0xf8ca, 0x4767, { 0x9e, 0xaf, 0x3b, 0x43, 0x93, 0xea, 0x98, 0xfa } }), kStructVersion1)
++//! Specified the amount of memory expected to be used
++    uint64_t estimatedVRAMUsageInBytes {};
++
++    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
++SL_STRUCT_END()
++
++}
++
++//! Provides optimal DLSSD settings
++//!
++//! Call this method to obtain optimal render target size and other DLSSD related settings.
++//!
++//! @param options Specifies DLSSD options to use
++//! @param settings Reference to a structure where settings are returned
++//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
++//!
++//! This method is NOT thread safe.
++using PFun_slDLSSDGetOptimalSettings = sl::Result(const sl::DLSSDOptions & options, sl::DLSSDOptimalSettings & settings);
++
++//! Provides DLSSD state for the given viewport
++//!
++//! Call this method to obtain optimal render target size and other DLSSD related settings.
++//!
++//! @param viewport Specified viewport we are working with
++//! @param state Reference to a structure where state is to be returned
++//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
++//!
++//! This method is NOT thread safe.
++using PFun_slDLSSDGetState = sl::Result(const sl::ViewportHandle & viewport, sl::DLSSDState & state);
++
++//! Sets DLSSD options
++//!
++//! Call this method to turn DLSSD on/off, change mode etc.
++//!
++//! @param viewport Specified viewport we are working with
++//! @param options Specifies DLSSD options to use
++//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
++//!
++//! This method is NOT thread safe.
++using PFun_slDLSSDSetOptions = sl::Result(const sl::ViewportHandle& viewport, const sl::DLSSDOptions& options);
++
++//! HELPERS
++//! 
++inline sl::Result slDLSSDGetOptimalSettings(const sl::DLSSDOptions& options, sl::DLSSDOptimalSettings& settings)
++{
++    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS_RR, slDLSSDGetOptimalSettings);
++    return s_slDLSSDGetOptimalSettings(options, settings);
++}
++
++inline sl::Result slDLSSDGetState(const sl::ViewportHandle& viewport, sl::DLSSDState& state)
++{
++    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS_RR, slDLSSDGetState);
++    return s_slDLSSDGetState(viewport, state);
++}
++
++inline sl::Result slDLSSDSetOptions(const sl::ViewportHandle& viewport, const sl::DLSSDOptions& options)
++{
++    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS_RR, slDLSSDSetOptions);
++    return s_slDLSSDSetOptions(viewport, options);
 +}
 diff --git a/third_party/streamline/include/sl_dlss_g.h b/third_party/streamline/include/sl_dlss_g.h
 new file mode 100644
