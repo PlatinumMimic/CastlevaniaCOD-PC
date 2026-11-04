@@ -630,7 +630,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..490a5ab 100644
+index fe65837..5b4a0b4 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,6 +17,7 @@
@@ -654,7 +654,7 @@ index fe65837..490a5ab 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +56,31 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +56,35 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -681,12 +681,16 @@ index fe65837..490a5ab 100644
 +constexpr uint32_t kGiRtv = kAoRtv + 1;              // ray traced bounce lighting's (Lighting)
 +constexpr uint32_t kGuideRtv = kGiRtv + 1;           // ray tracing's four guides (Guides), last
 +constexpr uint32_t kGuides = 4;
++// the bounce lighting's own denoiser's (Lighting): its history, moments and surfaces twice over (this frame's and the
++// frame before's) and its smoothing's two, last
++constexpr uint32_t kDnRtv = kGuideRtv + kGuides;
++constexpr uint32_t kDn = 8;
 +// the motion target's clear and MotionOut's value where a pixel has no motion of its own: the camera's from depth
 +constexpr float kNoMotion = 1024;
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +97,7 @@ struct Perf {
+@@ -72,6 +101,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -694,7 +698,7 @@ index fe65837..490a5ab 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,10 +120,37 @@ struct Perf {
+@@ -94,10 +124,37 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
@@ -732,7 +736,7 @@ index fe65837..490a5ab 100644
  struct PerfScope {
      double& acc;
      bool on = diag::Perf();
-@@ -140,6 +193,63 @@ float4 psmain(O i) : SV_Target {
+@@ -140,6 +197,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -796,7 +800,7 @@ index fe65837..490a5ab 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -148,6 +258,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+@@ -148,6 +262,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
  constexpr float kDepthFar = 0;
  
  const char* kDepthHlsl = R"(
@@ -804,7 +808,7 @@ index fe65837..490a5ab 100644
  Texture2D<float> img : register(t0);
  SamplerState ps : register(s1);
  struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
-@@ -157,7 +268,7 @@ O vs(uint id : SV_VertexID) {
+@@ -157,7 +272,7 @@ O vs(uint id : SV_VertexID) {
      o.p = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
      return o;
  }
@@ -813,7 +817,7 @@ index fe65837..490a5ab 100644
  )";
  
  const char* kClearHlsl = R"(
-@@ -215,6 +326,22 @@ D3D12_BLEND_OP BlendOp(uint32_t v) {
+@@ -215,6 +330,22 @@ D3D12_BLEND_OP BlendOp(uint32_t v) {
      }
  }
  
@@ -836,7 +840,7 @@ index fe65837..490a5ab 100644
  // D3DCMP_NEVER 0x200 to D3DCMP_ALWAYS 0x207, D3D12's order from 1
  D3D12_COMPARISON_FUNC Cmp(uint32_t v) {
      uint32_t n = v >= 0x200 && v <= 0x207 ? v - 0x200 : 7;
-@@ -345,6 +472,18 @@ struct Tex {
+@@ -345,6 +476,18 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -855,7 +859,7 @@ index fe65837..490a5ab 100644
  };
  
  struct PsoKey {
-@@ -377,6 +516,8 @@ struct PsoKey {
+@@ -377,6 +520,8 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
@@ -864,7 +868,7 @@ index fe65837..490a5ab 100644
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +528,7 @@ struct BlitOptions {
+@@ -387,6 +532,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -872,7 +876,7 @@ index fe65837..490a5ab 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +543,16 @@ struct ShrinkOptions {
+@@ -401,11 +547,16 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -891,7 +895,7 @@ index fe65837..490a5ab 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -460,6 +607,8 @@ public:
+@@ -460,6 +611,8 @@ public:
      void Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) override;
      void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects, uint32_t dst_points) override;
      void Present(const Surface& front) override;
@@ -900,7 +904,7 @@ index fe65837..490a5ab 100644
      void WaitGpuFrame(uint64_t n) override;
      void Sync(uint32_t data, uint32_t size) override;
      void SyncLate(uint32_t data) override;
-@@ -549,6 +698,8 @@ private:
+@@ -549,6 +702,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -909,7 +913,7 @@ index fe65837..490a5ab 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -565,10 +716,10 @@ private:
+@@ -565,10 +720,10 @@ private:
      ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
      void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
      void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
@@ -922,7 +926,7 @@ index fe65837..490a5ab 100644
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,10 +734,12 @@ private:
+@@ -583,10 +738,12 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -937,7 +941,7 @@ index fe65837..490a5ab 100644
      void UploadVertexBuffers(const Assembled& a);
      // visibility tests
      bool EnsureQueries();
-@@ -598,6 +751,7 @@ private:
+@@ -598,6 +755,7 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -945,7 +949,7 @@ index fe65837..490a5ab 100644
      D3D12_GRAPHICS_PIPELINE_STATE_DESC FullScreenPipelineDesc(ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv) const;
      // Init, in order, each callee right after its caller
      bool CreateDevice();
-@@ -613,10 +767,56 @@ private:
+@@ -613,10 +771,58 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -968,12 +972,14 @@ index fe65837..490a5ab 100644
 +    // anything, after which the draw at hand's state must be set again
 +    bool AntiAliasFrame(Target& t);
 +    bool EnsureAaTargets(uint32_t w, uint32_t h, DXGI_FORMAT fmt);
++    bool EnsureDenoiseTargets(uint32_t w, uint32_t h);
 +    // ambient occlusion (g_ambient_occlusion): the frame's 3D darkened where surfaces meet, from its depth, before the
 +    // anti-aliasing's pass; rw x rh the part drawn
 +    void AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const FrameView& view, bool rx);
 +    bool BuildRtScene(uint32_t rw, uint32_t rh);
 +    void Reflections(Target& t, uint32_t rw, uint32_t rh);
 +    void Lighting(Target& t, uint32_t rw, uint32_t rh);
++    uint32_t Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t gw, uint32_t gh, uint32_t rw, uint32_t rh);
 +    bool Guides(const Target& t, uint32_t rw, uint32_t rh);
 +    void EndRtPass();
 +    ID3D12PipelineState* EnsureAoApplyPipeline(DXGI_FORMAT rtv);
@@ -1002,7 +1008,7 @@ index fe65837..490a5ab 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -665,6 +865,7 @@ private:
+@@ -665,6 +871,7 @@ private:
          uint32_t color;
          float z;
          uint32_t stencil;
@@ -1010,7 +1016,7 @@ index fe65837..490a5ab 100644
      };
      void ClearTarget(Target& t, const State& s, const ClearArgs& c, std::vector<D3D12_RECT>& rs);
      void ClearChannels(Target& t, const float col[4], uint8_t mask, const std::vector<D3D12_RECT>& rs);
-@@ -675,8 +876,9 @@ private:
+@@ -675,8 +882,9 @@ private:
          uint32_t src_rects;
          uint32_t dst_points;
      };
@@ -1021,7 +1027,7 @@ index fe65837..490a5ab 100644
      void CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state, Target& dst_t,
                        const CopyList& l);
      // the target as a guest sized BGRA copy source, and the shrunk copy that holds it when it is not one already
-@@ -708,6 +910,9 @@ private:
+@@ -708,6 +916,9 @@ private:
      // the constants last uploaded in this command list, reused while a draw's are the same; 0 after a submit
      decltype(State::vsc) last_vsc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_vsc_gpu_ = 0;
@@ -1031,7 +1037,7 @@ index fe65837..490a5ab 100644
      DrawConstants last_dc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_dc_gpu_ = 0;
      ComPtr<ID3D12GraphicsCommandList> cl_;
-@@ -766,6 +971,10 @@ private:
+@@ -766,6 +977,10 @@ private:
      uint32_t bb_w_ = 0;
      uint32_t bb_h_ = 0;
      float scale_ = 1.0f;
@@ -1042,7 +1048,7 @@ index fe65837..490a5ab 100644
      // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
      struct Late {
          ComPtr<ID3D12Resource> rb[kFrames];
-@@ -801,6 +1010,149 @@ private:
+@@ -801,6 +1016,159 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -1165,6 +1171,16 @@ index fe65837..490a5ab 100644
 +    uint32_t guide_w_ = 0, guide_h_ = 0;
 +    uint64_t guide_frame_ = UINT64_MAX;
 +    float guide_view_[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
++    // the bounce lighting's own denoiser (Denoise, when the anti-aliasing does not denoise): history 0 and 1, moments 2
++    // and 3, surfaces 4 and 5 (dn_cur_ the pair written last), its smoothing's 6 and 7, all RGBA16F at the bounce
++    // target's size; the frame it last ran, whether this frame has anything to gather from (AntiAliasFrame) and the
++    // camera's move
++    ComPtr<ID3D12Resource> dn_[kDn];
++    D3D12_RESOURCE_STATES dn_state_[kDn] = {};
++    uint32_t dn_w_ = 0, dn_h_ = 0, dn_cur_ = 0;
++    uint64_t dn_frame_ = UINT64_MAX;
++    bool dn_said_ = false, rt_reset_ = true;
++    float rt_clip_to_prev_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 +    bool rr_said_ = false, guide_said_ = false;
 +    // ray tracing (raytrace.h): the frame's scene, whether this frame gathers one, the capture constants bound (rtc:
 +    // first slot, on), a buffer bound in the capture's place when there is no ray tracing
@@ -1192,7 +1208,7 @@ index fe65837..490a5ab 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -814,11 +1166,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -814,11 +1182,21 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      HWND hwnd = static_cast<HWND>(app::Window());
      if (!CreateDevice()) return false;
      if (!CreateSwapChain(hwnd)) return false;
@@ -1214,7 +1230,7 @@ index fe65837..490a5ab 100644
      ImGui_ImplDX12_Init(dev_.Get(), kFrames, DXGI_FORMAT_B8G8R8A8_UNORM, ui_heap_.Get(),
                          ui_heap_->GetCPUDescriptorHandleForHeapStart(), ui_heap_->GetGPUDescriptorHandleForHeapStart());
      LoadSettings();
-@@ -827,19 +1189,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -827,19 +1205,59 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      return true;
  }
  
@@ -1278,7 +1294,7 @@ index fe65837..490a5ab 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -847,9 +1249,17 @@ bool D3D12Backend::CreateDevice() {
+@@ -847,9 +1265,17 @@ bool D3D12Backend::CreateDevice() {
      DXGI_ADAPTER_DESC1 ad{};
      if (adapter) adapter->GetDesc1(&ad);
      LOGR("D3D12 adapter: %ls", adapter ? ad.Description : L"default");
@@ -1296,7 +1312,7 @@ index fe65837..490a5ab 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -871,6 +1281,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1297,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -1308,7 +1324,7 @@ index fe65837..490a5ab 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -899,9 +1314,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1330,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -1317,11 +1333,11 @@ index fe65837..490a5ab 100644
 +    srv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvCount + kMaterialViews, true, srv_heap_);
      smp_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, kSamplerCount, true, smp_heap_);
 -    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames, false, rtv_heap_);
-+    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kGuideRtv + kGuides, false, rtv_heap_);
++    rtv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kDnRtv + kDn, false, rtv_heap_);
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,10 +1327,10 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,10 +1343,10 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -1334,7 +1350,7 @@ index fe65837..490a5ab 100644
      params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
      params[0].Descriptor.ShaderRegister = 0;
      params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-@@ -925,8 +1341,15 @@ bool D3D12Backend::CreateRootSignature() {
+@@ -925,8 +1357,15 @@ bool D3D12Backend::CreateRootSignature() {
          params[2 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
          params[2 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
      }
@@ -1351,7 +1367,7 @@ index fe65837..490a5ab 100644
      rsd.pParameters = params;
      rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
      ComPtr<ID3DBlob> rs;
-@@ -958,8 +1381,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1397,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -1364,7 +1380,7 @@ index fe65837..490a5ab 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -972,10 +1399,21 @@ void D3D12Backend::Begin() {
+@@ -972,10 +1415,21 @@ void D3D12Backend::Begin() {
      ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get(), smp_heap_.Get()};
      cl_->SetDescriptorHeaps(2, heaps);
      cl_->SetGraphicsRootSignature(root_.Get());
@@ -1386,7 +1402,7 @@ index fe65837..490a5ab 100644
  void D3D12Backend::Submit(bool wait) {
      last_vsc_gpu_ = 0;
      last_dc_gpu_ = 0;
-@@ -1063,12 +1501,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1517,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
      b.Transition.StateBefore = cur;
      b.Transition.StateAfter = want;
      cl_->ResourceBarrier(1, &b);
@@ -1402,7 +1418,7 @@ index fe65837..490a5ab 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1520,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1536,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -1411,7 +1427,7 @@ index fe65837..490a5ab 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,6 +1638,13 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,6 +1654,13 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -1425,7 +1441,7 @@ index fe65837..490a5ab 100644
      if (rt) {
          if (LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
          Transition(rt->res.Get(), rt->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-@@ -1205,17 +1653,151 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1205,17 +1669,151 @@ bool D3D12Backend::BindTargets(const State& s) {
      if (ds) {
          Transition(ds->res.Get(), ds->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          ds->drawn = true;
@@ -1454,10 +1470,10 @@ index fe65837..490a5ab 100644
          bound_ds_ = ds;
 +        bound_mv_ = mv;
 +        bound_rx_ = rx;
-+    }
-+    return true;
-+}
-+
+     }
+     return true;
+ }
+ 
 +// anti-aliasing's reactive mask at the frame target's size, cleared to 0 (nothing reactive) once a frame; false when it
 +// can't be made
 +bool D3D12Backend::EnsureReactive(const Target& rt) {
@@ -1513,10 +1529,10 @@ index fe65837..490a5ab 100644
 +        float none[4] = {kNoMotion, kNoMotion, 0, 0};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_), none, 0, nullptr);
 +        fg_objmv_frame_ = presents_;
-     }
-     return true;
- }
- 
++    }
++    return true;
++}
++
 +// A 3D draw found again in the next frame by what it draws, as the game streams its meshes into buffers that move from
 +// frame to frame: its program, its first vertices and indices, its counts and first texture. A skinned mesh's vertices
 +// are its pose at rest, so it is found as its bones move.
@@ -1580,7 +1596,7 @@ index fe65837..490a5ab 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1260,6 +1842,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,6 +1858,8 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -1589,7 +1605,7 @@ index fe65837..490a5ab 100644
      DrawFullScreen(pso, cb.gpu, slot);
      dst.drawn = true;
      bound_rt_ = bound_ds_ = nullptr;
-@@ -1282,6 +1866,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +1882,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -1597,7 +1613,7 @@ index fe65837..490a5ab 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +1912,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +1928,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -1605,7 +1621,7 @@ index fe65837..490a5ab 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1397,23 +1983,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +1999,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -1699,7 +1715,7 @@ index fe65837..490a5ab 100644
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +2073,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +2089,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -1721,7 +1737,7 @@ index fe65837..490a5ab 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +2092,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +2108,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -1729,7 +1745,7 @@ index fe65837..490a5ab 100644
      return code.Get();
  }
  
-@@ -1477,6 +2136,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +2152,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -1759,7 +1775,7 @@ index fe65837..490a5ab 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2292,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2308,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -1794,7 +1810,7 @@ index fe65837..490a5ab 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2358,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +2374,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -1806,7 +1822,7 @@ index fe65837..490a5ab 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,6 +2382,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +2398,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -1814,7 +1830,7 @@ index fe65837..490a5ab 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1692,6 +2401,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +2417,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -1824,7 +1840,7 @@ index fe65837..490a5ab 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2415,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +2431,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -1839,7 +1855,7 @@ index fe65837..490a5ab 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2445,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +2461,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -1850,7 +1866,7 @@ index fe65837..490a5ab 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2565,69 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +2581,69 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -1920,7 +1936,7 @@ index fe65837..490a5ab 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1870,7 +2655,46 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,8 +2671,47 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -1939,8 +1955,8 @@ index fe65837..490a5ab 100644
 +                }
 +                tx.repl_id = id;
 +            }
-+        }
-+    }
+         }
+     }
 +    if (tx.repl_id && !tx.repl && repl_budget_) MakeReplacement(tx);
 +    // an extension's replacement is drawn before the texture pack's image
 +    if (tx.repl) {
@@ -1961,13 +1977,14 @@ index fe65837..490a5ab 100644
 +            }
 +            std::memcpy(stages.mat, tx.mat_params, sizeof(stages.mat));
 +            std::memcpy(stages.gloss, tx.mat_gloss, sizeof(stages.gloss));
-         }
++        }
 +        if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);
 +        return tx.repl.Get();
-     }
++    }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
-@@ -1969,7 +2793,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+     const Tex& drawn = tx.swap ? *tx.swap : tx;
+@@ -1969,7 +2809,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
  constexpr uint32_t kTaddressWrap = 1;
  constexpr uint32_t kTaddressClamp = 3;
  
@@ -1979,7 +1996,7 @@ index fe65837..490a5ab 100644
      D3D12_SAMPLER_DESC sd = {};
      const auto& t = s.tss[size_t(i)];
      uint32_t mag = t[kTssMagFilter];
-@@ -1982,8 +2809,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2825,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -1997,7 +2014,7 @@ index fe65837..490a5ab 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2827,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2843,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -2008,7 +2025,7 @@ index fe65837..490a5ab 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2009,7 +2845,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -2009,7 +2861,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
  uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
      D3D12_SAMPLER_DESC sd[4];
      uint32_t aniso = app::Get().aniso;
@@ -2018,7 +2035,7 @@ index fe65837..490a5ab 100644
      uint64_t key = Hash(sd, sizeof(sd));
      auto it = samplers_.find(key);
      if (it != samplers_.end()) return it->second;
-@@ -2144,9 +2981,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2144,9 +2997,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -2031,7 +2048,7 @@ index fe65837..490a5ab 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +3002,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +3018,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -2040,7 +2057,7 @@ index fe65837..490a5ab 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +3055,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +3071,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -2063,7 +2080,7 @@ index fe65837..490a5ab 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +3093,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +3109,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -2074,7 +2091,7 @@ index fe65837..490a5ab 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2433,28 +3290,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +3306,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
      c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
@@ -2153,7 +2170,7 @@ index fe65837..490a5ab 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2469,6 +3367,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+@@ -2469,6 +3383,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
      if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
      binds_.vsc = last_vsc_gpu_;
      binds_.dc = last_dc_gpu_;
@@ -2161,7 +2178,7 @@ index fe65837..490a5ab 100644
  }
  
  void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
-@@ -2577,6 +3476,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +3492,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -2185,7 +2202,7 @@ index fe65837..490a5ab 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3510,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3526,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -2196,7 +2213,7 @@ index fe65837..490a5ab 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3525,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3541,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -2253,7 +2270,7 @@ index fe65837..490a5ab 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2676,21 +3608,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
+@@ -2676,21 +3624,22 @@ void D3D12Backend::UploadVertexBuffers(const Assembled& a) {
      cl_->IASetVertexBuffers(0, a.buffer_count, vbv);
  }
  
@@ -2283,7 +2300,7 @@ index fe65837..490a5ab 100644
  }
  
  // calls the extension's EndDraw on every return from Draw once made
-@@ -2808,6 +3741,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +3757,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -2291,7 +2308,7 @@ index fe65837..490a5ab 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +3749,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +3765,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -2304,7 +2321,7 @@ index fe65837..490a5ab 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +3767,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +3783,86 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -2393,7 +2410,7 @@ index fe65837..490a5ab 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +3856,87 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +3872,87 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -2486,7 +2503,7 @@ index fe65837..490a5ab 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +3952,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +3968,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -2502,7 +2519,7 @@ index fe65837..490a5ab 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2961,7 +4033,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +4049,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -2513,7 +2530,7 @@ index fe65837..490a5ab 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +4117,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +4133,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -2533,7 +2550,7 @@ index fe65837..490a5ab 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +4135,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +4151,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -2542,7 +2559,7 @@ index fe65837..490a5ab 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,7 +4144,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,7 +4160,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -2552,7 +2569,7 @@ index fe65837..490a5ab 100644
          uint32_t taps = uint32_t(std::ceil(std::max(src_scale / dst_scale, 1.0f) - kTapsSlack));
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
-@@ -3084,7 +4162,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +4178,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -2561,7 +2578,7 @@ index fe65837..490a5ab 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +4172,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +4188,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -2580,7 +2597,7 @@ index fe65837..490a5ab 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3136,6 +4214,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +4230,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -2596,7 +2613,7 @@ index fe65837..490a5ab 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3155,16 +4242,88 @@ void D3D12Backend::ResizeSwap() {
+@@ -3155,16 +4258,88 @@ void D3D12Backend::ResizeSwap() {
      GetClientRect(hwnd, &rc);
      uint32_t w = std::max<LONG>(rc.right - rc.left, 1);
      uint32_t h = std::max<LONG>(rc.bottom - rc.top, 1);
@@ -2687,7 +2704,7 @@ index fe65837..490a5ab 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,7 +4338,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,7 +4354,8 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -2697,7 +2714,7 @@ index fe65837..490a5ab 100644
  }
  
  void D3D12Backend::StartCapture() {
-@@ -3188,7 +4348,8 @@ void D3D12Backend::StartCapture() {
+@@ -3188,7 +4364,8 @@ void D3D12Backend::StartCapture() {
      char stamp[32];
      snprintf(stamp, sizeof(stamp), "%02u%02u%02u", tm.wHour, tm.wMinute, tm.wSecond);
      std::error_code ec;
@@ -2707,7 +2724,7 @@ index fe65837..490a5ab 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4384,1159 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4400,1271 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3087,6 +3104,103 @@ index fe65837..490a5ab 100644
 +    return drawn;
 +}
 +
++// the bounce lighting's own denoiser's targets (Denoise), at the bounce target's size; new ones hold nothing to gather
++bool D3D12Backend::EnsureDenoiseTargets(uint32_t w, uint32_t h) {
++    if (dn_[0] && dn_w_ == w && dn_h_ == h) return true;
++    for (uint32_t i = 0; i < kDn; i++) {
++        if (dn_[i]) Release(std::move(dn_[i]));
++        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
++        D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_R16G16B16A16_FLOAT, w, h);
++        td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++        D3D12_CLEAR_VALUE cv{};
++        cv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++        dn_state_[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
++        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, dn_state_[i], &cv,
++                                                 IID_PPV_ARGS(&dn_[i])))) {
++            for (auto& d : dn_) d = nullptr;
++            dn_w_ = dn_h_ = 0;
++            return false;
++        }
++        dev_->CreateRenderTargetView(dn_[i].Get(), nullptr, Cpu(rtv_heap_.Get(), kDnRtv + i, rtv_inc_));
++    }
++    dn_w_ = w;
++    dn_h_ = h;
++    dn_frame_ = UINT64_MAX;  // nothing gathered yet
++    return true;
++}
++
++// The bounce lighting's own denoiser, for cards whose anti-aliasing does not denoise (AMD FSR; DLSS without Ray
++// Reconstruction): this frame's bounce target (rt_gi.hlsl) gathered into what each surface held over the frames before
++// (rt_gitemporal.hlsl), then smoothed across its neighbours on the same surface by how much it still varies
++// (rt_giatrous.hlsl, XBE_RT_DN_PASSES passes, 4: taps 1, 2, 4 and 8 texels apart). Lighting's SRVs from slot (the
++// depth, the bounce target, the guides, the motion, then dn_'s); the SRV heap's index of the light to throw back
++uint32_t D3D12Backend::Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t gw, uint32_t gh, uint32_t rw,
++                                uint32_t rh) {
++    static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
++    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
++    static const float kFrames = std::clamp(env("XBE_RT_DN_FRAMES", 24), 1.0f, 255.0f),
++                       kPasses = std::clamp(env("XBE_RT_DN_PASSES", 4), 0.0f, 6.0f),
++                       kSigma = env("XBE_RT_DN_SIGMA", 4), kDepth = env("XBE_RT_DN_DEPTH", 0.05f),
++                       kNormal = env("XBE_RT_DN_NORMAL", 0.8f), kSmoothDepth = env("XBE_RT_DN_SMOOTH_DEPTH", 0.02f),
++                       kSmoothNormal = env("XBE_RT_DN_SMOOTH_NORMAL", 64);
++    const D3D12_RESOURCE_STATES kRead =
++        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++    const uint32_t dn = slot + 5;  // dn_[0]'s SRV
++    const DXGI_FORMAT f16 = DXGI_FORMAT_R16G16B16A16_FLOAT;
++    // gathered: this frame's into the pair not written last, from the one that was (nothing to gather from after a
++    // cut, a frame it did not run, or new targets)
++    uint32_t cur = dn_cur_ ^ 1, prev = dn_cur_;
++    bool reset = rt_reset_ || dn_frame_ == UINT64_MAX || dn_frame_ + 1 != presents_;
++    float tan_y = std::tan(0.5f * ao_view_.fov_y);
++    float tp[36] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
++                    float(rw), float(rh), float(gw), float(gh),
++                    float(slot + 1), float(dn + prev), float(dn + 2 + prev), float(dn + 4 + prev),
++                    float(slot + 4), float(slot + 3), float(slot), kFrames};
++    std::memcpy(tp + 16, rt_clip_to_prev_, sizeof(rt_clip_to_prev_));
++    tp[32] = reset ? 1.0f : 0.0f;
++    tp[33] = kDepth;
++    tp[34] = kNormal;
++    tp[35] = float(kView);
++    Alloc tcb = Upload(256, 256);
++    std::memcpy(tcb.cpu, tp, sizeof(tp));
++    for (uint32_t i : {cur, 2 + cur, 4 + cur}) Transition(dn_[i].Get(), dn_state_[i], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    for (uint32_t i : {prev, 2 + prev, 4 + prev}) Transition(dn_[i].Get(), dn_state_[i], kRead);
++    rt::Scene::Out more[2] = {{Cpu(rtv_heap_.Get(), kDnRtv + 2 + cur, rtv_inc_), f16},
++                              {Cpu(rtv_heap_.Get(), kDnRtv + 4 + cur, rtv_inc_), f16}};
++    if (!rt_.Trace(rt::Scene::Pass::BounceGather, tcb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++                   Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kDnRtv + cur, rtv_inc_), f16, gw, gh, more, 2))
++        return slot + 1;
++    for (uint32_t i : {cur, 2 + cur, 4 + cur}) Transition(dn_[i].Get(), dn_state_[i], kRead);
++    dn_cur_ = cur;
++    dn_frame_ = presents_;
++    // smoothed: the history and its moments first, then each pass's light and variance into the other of 6 and 7
++    uint32_t light = dn + cur;
++    int passes = int(kPasses);
++    for (int p = 0; p < passes; p++) {
++        uint32_t out = 6 + (p & 1);
++        float sp[16] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
++                        float(rw), float(rh), float(gw), float(gh),
++                        float(light), float(dn + 2 + cur), float(dn + 4 + cur), float(1 << p),
++                        p == 0 ? 1.0f : 0.0f, kSigma, kSmoothDepth, kSmoothNormal};
++        Alloc scb = Upload(256, 256);
++        std::memcpy(scb.cpu, sp, sizeof(sp));
++        Transition(dn_[out].Get(), dn_state_[out], D3D12_RESOURCE_STATE_RENDER_TARGET);
++        if (!rt_.Trace(rt::Scene::Pass::BounceSmooth, scb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
++                       Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kDnRtv + out, rtv_inc_), f16, gw, gh))
++            break;
++        Transition(dn_[out].Get(), dn_state_[out], kRead);
++        light = dn + out;
++    }
++    if (!dn_said_) {
++        LOGR("ray tracing: bounce lighting denoised here (no denoiser in the anti-aliasing): gathered over up to %.0f "
++             "frames at %ux%u, smoothed %d times", double(kFrames), gw, gh, passes);
++        dn_said_ = true;
++    }
++    (void)tw;
++    (void)th;
++    return light;
++}
++
 +// Ray traced bounce lighting over the frame's 3D (rt_gi.hlsl, rt_giapply.hlsl): the light its surfaces throw onto each
 +// other, gathered by a few rays a pixel at a part of its size (XBE_RT_GI_SCALE, half), smoothed, thrown back in each
 +// surface's colour at the full size (Guides) and added in before the anti-aliasing gathers it over the frames
@@ -3118,12 +3232,22 @@ index fe65837..490a5ab 100644
 +        gi_h_ = th;
 +    }
 +    uint32_t gw = std::max(1u, uint32_t(float(rw) * kScale)), gh = std::max(1u, uint32_t(float(rh) * kScale));
-+    // the depth (the bounce pass's table, and both passes' by its index), the bounce target and the guides (the
-+    // smoothing's)
-+    uint32_t slot = AllocSrvSlots(4);
-+    ID3D12Resource* src[4] = {aa_depth_.Get(), gi_.Get(), guide_[0].Get(), guide_[1].Get()};
-+    DXGI_FORMAT fmt[4] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, kGuideFmt[0], kGuideFmt[1]};
-+    for (int i = 0; i < 4; i++) {
++    // the depth (the bounce pass's table, and every pass's by its index), the bounce target, the guides (the
++    // smoothing's), the motion and the denoiser's targets (Denoise's)
++    uint32_t slot = AllocSrvSlots(5 + kDn);
++    ID3D12Resource* src[5 + kDn] = {aa_depth_.Get(), gi_.Get(), guide_[0].Get(), guide_[1].Get(), aa_motion_.Get()};
++    DXGI_FORMAT fmt[5 + kDn] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, kGuideFmt[0], kGuideFmt[1],
++                                DXGI_FORMAT_R16G16_FLOAT};
++    static const int kDenoise = std::getenv("XBE_RT_DENOISE") ? std::atoi(std::getenv("XBE_RT_DENOISE")) : 1;
++    // the bounce lighting denoised here unless the anti-aliasing does it (DLSS Ray Reconstruction): XBE_RT_DENOISE 0
++    // never, 2 always
++    bool denoise = kDenoise == 2 || (kDenoise == 1 && !(aa_ && aa_->Denoises()));
++    if (denoise && !EnsureDenoiseTargets(tw, th)) denoise = false;
++    for (uint32_t i = 0; i < kDn; i++) {
++        src[5 + i] = denoise ? dn_[i].Get() : nullptr;
++        fmt[5 + i] = DXGI_FORMAT_R16G16B16A16_FLOAT;
++    }
++    for (uint32_t i = 0; i < 5 + kDn; i++) {
 +        D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
 +        sv.Format = fmt[i];
 +        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -3149,9 +3273,11 @@ index fe65837..490a5ab 100644
 +    const D3D12_RESOURCE_STATES kRead =
 +        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 +    Transition(gi_.Get(), gi_state_, kRead);
++    // gathered over the frames and smoothed (Denoise), else as the rays found it
++    uint32_t light = drawn && denoise ? Denoise(slot, tw, th, gw, gh, rw, rh) : slot + 1;
 +    float ap[16] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
 +                    float(rw), float(rh), float(gw), float(gh),
-+                    float(slot), float(slot + 1), std::max(1.0f, kStep), float(kView),
++                    float(slot), float(light), std::max(1.0f, kStep), float(kView),
 +                    float(slot + 2), float(slot + 3), 0, 0};
 +    Alloc acb = Upload(256, 256);
 +    std::memcpy(acb.cpu, ap, sizeof(ap));
@@ -3384,6 +3510,9 @@ index fe65837..490a5ab 100644
 +    // over it hung the GPU when a room changed
 +    // and the guides when DLSS Ray Reconstruction denoises with them (the bounce lighting draws them too)
 +    if (BuildRtScene(rw, rh) && aa_->Denoises()) Guides(t, rw, rh);
++    // the bounce lighting's own denoiser: whether there is anything to gather from, and the camera's move
++    rt_reset_ = !aa_had_view_ || !have || view.cut;
++    std::copy(view.clip_to_prev, view.clip_to_prev + 16, rt_clip_to_prev_);
 +    AmbientOcclusion(t, rw, rh, view.valid ? view : FrameView{}, rx);
 +    Lighting(t, rw, rh);
 +    Reflections(t, rw, rh);
@@ -3872,7 +4001,7 @@ index fe65837..490a5ab 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +5545,203 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5673,203 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -4077,7 +4206,7 @@ index fe65837..490a5ab 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +5751,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5879,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -4088,7 +4217,7 @@ index fe65837..490a5ab 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +5771,19 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5899,19 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -4108,7 +4237,7 @@ index fe65837..490a5ab 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +5794,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +5922,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -4141,7 +4270,7 @@ index fe65837..490a5ab 100644
      }
  }
  
-@@ -3317,12 +5832,14 @@ void LogPerf() {
+@@ -3317,12 +5960,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -4160,7 +4289,7 @@ index fe65837..490a5ab 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +5848,120 @@ void LogPerf() {
+@@ -3331,25 +5976,120 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -4286,7 +4415,7 @@ index fe65837..490a5ab 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +5972,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +6100,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -4317,7 +4446,7 @@ index fe65837..490a5ab 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +6013,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +6141,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -4363,7 +4492,7 @@ index fe65837..490a5ab 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +6057,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +6185,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -5773,10 +5902,10 @@ index 0000000..2c20ca0
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/raytrace.cpp b/runtime/gpu/raytrace.cpp
 new file mode 100644
-index 0000000..8b93e18
+index 0000000..ef78cc7
 --- /dev/null
 +++ b/runtime/gpu/raytrace.cpp
-@@ -0,0 +1,503 @@
+@@ -0,0 +1,515 @@
 +#include "gpu/raytrace.h"
 +
 +#include <algorithm>
@@ -5796,6 +5925,10 @@ index 0000000..8b93e18
 +#include "rt_giapply_vs.h"
 +#include "rt_guide_ps.h"  // rt_guide.hlsl's
 +#include "rt_guide_vs.h"
++#include "rt_gitemporal_ps.h"  // the bounce lighting's own denoiser: rt_gitemporal.hlsl's, rt_giatrous.hlsl's
++#include "rt_gitemporal_vs.h"
++#include "rt_giatrous_ps.h"
++#include "rt_giatrous_vs.h"
 +#endif
 +
 +namespace gpu::rt {
@@ -6208,6 +6341,14 @@ index 0000000..8b93e18
 +            pd.VS = {k_rt_guide_vs, sizeof(k_rt_guide_vs)};
 +            pd.PS = {k_rt_guide_ps, sizeof(k_rt_guide_ps)};
 +            break;
++        case Pass::BounceGather:
++            pd.VS = {k_rt_gitemporal_vs, sizeof(k_rt_gitemporal_vs)};
++            pd.PS = {k_rt_gitemporal_ps, sizeof(k_rt_gitemporal_ps)};
++            break;
++        case Pass::BounceSmooth:
++            pd.VS = {k_rt_giatrous_vs, sizeof(k_rt_giatrous_vs)};
++            pd.PS = {k_rt_giatrous_ps, sizeof(k_rt_giatrous_ps)};
++            break;
 +    }
 +    auto& b = pd.BlendState.RenderTarget[0];
 +    b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -6282,10 +6423,10 @@ index 0000000..8b93e18
 +}  // namespace gpu::rt
 diff --git a/runtime/gpu/raytrace.h b/runtime/gpu/raytrace.h
 new file mode 100644
-index 0000000..4c434f3
+index 0000000..6bf66ac
 --- /dev/null
 +++ b/runtime/gpu/raytrace.h
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,179 @@
 +#pragma once
 +// Ray tracing over a title's own 3D (DXR 1.1 inline ray queries): each frame, the triangles its world's draws put on
 +// the screen are gathered into an acceleration structure, which passes after the frame's 3D trace rays through.
@@ -6413,8 +6554,10 @@ index 0000000..4c434f3
 +    // there, written by the reflections where they trace: their second target). The targets after the first are more
 +    // (n_more of them, kept apart from the first's blending). cb is the pass's P, depth the depth's table (one SRV),
 +    // pictures the renderer's SRV heap's start (the draws' pictures by their Look, and any texture a pass is told the
-+    // index of). False when its pipeline was not made for those formats
-+    enum class Pass { AmbientOcclusion, Reflections, Bounce, BounceApply, Guides };
++    // index of). The bounce lighting's own denoiser, when no vendor's takes the frame: its gathering over the frames
++    // (rt_gitemporal.hlsl) into three targets (history, moments, surfaces: RGBA16F) and its smoothing passes
++    // (rt_giatrous.hlsl, RGBA16F). False when its pipeline was not made for those formats
++    enum class Pass { AmbientOcclusion, Reflections, Bounce, BounceApply, Guides, BounceGather, BounceSmooth };
 +    struct Out {
 +        D3D12_CPU_DESCRIPTOR_HANDLE rtv;
 +        DXGI_FORMAT fmt;
@@ -6677,10 +6820,10 @@ index 0000000..a5e9374
 +}
 diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
 new file mode 100644
-index 0000000..f3603d3
+index 0000000..cee6b3e
 --- /dev/null
 +++ b/runtime/gpu/rt_giapply.hlsl
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,51 @@
 +// Ray traced bounce lighting's second step (rt_gi.hlsl): the light arriving at each surface, gathered by a few rays a
 +// pixel at a part of the frame's size, smoothed across a 5x5 of its texels that lie on the same surface as the pixel
 +// (by their depth and their normal, rt_guide.hlsl's), then thrown back in the surface's own colour at the frame's full
@@ -6726,10 +6869,194 @@ index 0000000..f3603d3
 +        }
 +    }
 +    float3 light = sum / max(wsum, 1e-4f);
-+    // XBE_RT_VIEW 8: the light arriving alone, 9: thrown back (in the frame's place)
-+    if (ap.w == 8) return float4(light, 1);
++    // XBE_RT_VIEW 8: the light arriving alone (10: the frames its denoiser gathered, rt_gitemporal.hlsl), 9: thrown
++    // back (in the frame's place)
++    if (ap.w == 8 || ap.w == 10) return float4(light, 1);
 +    if (ap.w == 9) return float4(light * a.rgb, 1);
 +    return float4(light * a.rgb, 0);  // added
++}
+diff --git a/runtime/gpu/rt_giatrous.hlsl b/runtime/gpu/rt_giatrous.hlsl
+new file mode 100644
+index 0000000..bb07375
+--- /dev/null
++++ b/runtime/gpu/rt_giatrous.hlsl
+@@ -0,0 +1,71 @@
++// The bounce lighting's own denoiser, its second step (after rt_gitemporal.hlsl): the gathered light smoothed across
++// its neighbours on the same surface, a few times over with the taps further apart each time (an "a trous" wavelet:
++// 5 x 5 taps 1, 2, 4 and 8 texels apart reach 61 texels across for 100 taps). A neighbour counts as it lies on the
++// same surface (as deep, facing the same way) and as its light is near this texel's, by how far the light still
++// varies here: where the frames gathered have settled it, little is smoothed and the light's own shape stays (a bright
++// patch where the water's light falls); where they have not (a surface new to the view), its noise is smoothed away.
++// The first pass takes the history and its moments (the variance from them, made large where few frames are
++// gathered), each after it the pass before's light and variance.
++cbuffer P : register(b0) {
++    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
++    float4 part;  // the 3D's size in depth texels (rw, rh), the bounce target's part (gw, gh)
++    float4 ix;    // the SRV heap's indices: the light (and its variance, or frames on the first pass), the moments (the
++                  // first pass), the surfaces; the taps' step
++    float4 opt;   // 1: the first pass; how far the light may differ (in deviations), the depth's tolerance (a part of
++                  // it), the normals' sharpness
++};
++#include "rt_scene.hlsli"
++
++float Luma(float3 c) { return dot(c, float3(0.2126f, 0.7152f, 0.0722f)); }
++Texture2D<float4> Tex(float i) { return pictures[NonUniformResourceIndex(uint(i))]; }
++
++// a texel's light and variance (the first pass's from its moments)
++float4 LightAt(int2 t) {
++    float4 c = Tex(ix.x).Load(int3(t, 0));
++    if (opt.x == 0) return c;
++    float2 m = Tex(ix.y).Load(int3(t, 0)).xy;
++    float v = max(m.y - m.x * m.x, 0);
++    // few frames: the moments say little yet, so the light is taken to vary as much as it is bright
++    if (c.a < 4) v = max(v, m.x * m.x * 4 / max(c.a, 1));
++    return float4(c.rgb, v);
++}
++
++float4 ps(float4 pos : SV_Position) : SV_Target {
++    int2 q = int2(pos.xy);
++    int2 size = int2(part.zw);
++    float4 sc = Tex(ix.z).Load(int3(q, 0));
++    if (sc.w <= 0) return 0;  // no surface
++    float4 c = LightAt(q);
++    // the variance smoothed over the 3 x 3 about it, steadier to judge by
++    float vs = 0;
++    [unroll] for (int y = -1; y <= 1; y++)
++        [unroll] for (int x = -1; x <= 1; x++) {
++            int2 t = clamp(q + int2(x, y), int2(0, 0), size - 1);
++            float k = (x == 0 ? 0.5f : 0.25f) * (y == 0 ? 0.5f : 0.25f);
++            vs += LightAt(t).a * k;
++        }
++    float lc = Luma(c.rgb);
++    float spread = opt.y * sqrt(max(vs, 0)) + 1e-4f;
++    int step = int(ix.w);
++    static const float kK[3] = {0.375f, 0.25f, 0.0625f};  // B3 spline: 3/8, 1/4, 1/16
++    float3 sum = 0;
++    float vsum = 0, wsum = 0;
++    [unroll] for (int j = -2; j <= 2; j++) {
++        [unroll] for (int i = -2; i <= 2; i++) {
++            int2 t = q + int2(i, j) * step;
++            if (any(t < 0) || any(t >= size)) continue;
++            float4 s = (i == 0 && j == 0) ? sc : Tex(ix.z).Load(int3(t, 0));
++            if (s.w <= 0) continue;
++            float4 l = (i == 0 && j == 0) ? c : LightAt(t);
++            float w = kK[abs(i)] * kK[abs(j)];
++            w *= exp(-abs(s.w - sc.w) / (opt.z * sc.w * sqrt(float(i * i + j * j)) * step + 1e-3f));
++            w *= pow(saturate(dot(s.xyz, sc.xyz)), opt.w);
++            w *= exp(-abs(Luma(l.rgb) - lc) / spread);
++            sum += l.rgb * w;
++            vsum += l.a * w * w;
++            wsum += w;
++        }
++    }
++    if (wsum <= 1e-6f) return c;
++    return float4(sum / wsum, vsum / (wsum * wsum));
++}
+diff --git a/runtime/gpu/rt_gitemporal.hlsl b/runtime/gpu/rt_gitemporal.hlsl
+new file mode 100644
+index 0000000..f964668
+--- /dev/null
++++ b/runtime/gpu/rt_gitemporal.hlsl
+@@ -0,0 +1,100 @@
++// The bounce lighting's own denoiser, its first step (d3d12.cpp's Lighting, when no vendor's denoiser takes the frame:
++// AMD FSR, or DLSS without Ray Reconstruction's files): each texel of the bounce target (rt_gi.hlsl, the light arriving
++// at a part of the frame's size) is added into what that surface gathered over the frames before. Where the surface
++// was a frame before comes from the frame's motion (each draw's own, else the camera's); the history there is taken
++// only from texels that held the same surface (as near as the camera's move says, facing the same way: a character
++// that walked past a wall leaves the wall's history behind), and each frame counts as much as the frames before it
++// together until there are kFrames of them, so a surface new to the view clears as fast as it can and a still one
++// keeps settling. Its light's mean and mean square go along for the variance the smoothing after it
++// (rt_giatrous.hlsl) is guided by. Writes the history (light, frames), the moments, and the surface each texel is (its
++// world normal and view depth), which the next frame checks its own against.
++cbuffer P : register(b0) {
++    float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
++    float4 part;  // the 3D's size in depth texels (rw, rh), the bounce target's part (gw, gh)
++    float4 ix;    // the SRV heap's indices: the bounce target, and the frame before's history, moments and surfaces
++    float4 ix2;   // the SRV heap's indices: the motion, the guides' normals, the depth; the frames gathered at most
++    float4 m0;    // the camera's move: this frame's clip space to the frame before's, rows
++    float4 m1;
++    float4 m2;
++    float4 m3;
++    float4 opt;   // 1: nothing to gather from (a cut, a room's first frame); the depth's tolerance (a part of it), the
++                  // normals' (the least cosine); XBE_RT_VIEW
++};
++#include "rt_scene.hlsli"
++
++float ViewZ(float d) { return cam.x * cam.y / (d * cam.x + (1 - d) * cam.y); }
++float Luma(float3 c) { return dot(c, float3(0.2126f, 0.7152f, 0.0722f)); }
++Texture2D<float4> Tex(float i) { return pictures[NonUniformResourceIndex(uint(i))]; }
++
++struct Out {
++    float4 history : SV_Target0;  // the light gathered, the frames it holds
++    float4 moments : SV_Target1;  // its luminance's mean and mean square
++    float4 surface : SV_Target2;  // world normal, view depth (0: no surface)
++};
++
++Out ps(float4 pos : SV_Position) {
++    Out o;
++    o.history = 0;
++    o.moments = 0;
++    o.surface = 0;
++    int2 q = int2(pos.xy);
++    // the depth texel at the middle of its part, as the bounce pass took it
++    int2 px = int2((float2(q) + 0.5) * part.xy / part.zw);
++    float4 cur = Tex(ix.x).Load(int3(q, 0));
++    if (cur.a == 0) return o;  // no bounce there (not the scene's surface, or past its fade)
++    float d = Tex(ix2.z).Load(int3(px, 0)).r;
++    float z = ViewZ(d);
++    float3 n = Tex(ix2.y).Load(int3(px, 0)).xyz;
++    o.surface = float4(n, z);
++    // where it was: its motion, in parts of the 3D's size
++    float2 uv = (float2(px) + 0.5) / part.xy + Tex(ix2.x).Load(int3(px, 0)).xy;
++    // how deep it was, had only the camera moved
++    float4 c = float4((float(px.x) + 0.5) / part.x * 2 - 1, 1 - (float(px.y) + 0.5) / part.y * 2, d, 1);
++    float4 p = float4(dot(m0, c), dot(m1, c), dot(m2, c), dot(m3, c));
++    float zc = abs(p.w) > 1e-20f ? ViewZ(saturate(p.z / p.w)) : z;
++    float4 h = 0;
++    float2 m = 0;
++    float wsum = 0;
++    if (opt.x == 0 && all(uv >= 0) && all(uv <= 1)) {
++        // the four texels about it, each kept only where it held the same surface
++        float2 g = uv * part.zw - 0.5f;
++        int2 g0 = int2(floor(g));
++        float2 f = g - float2(g0);
++        [unroll] for (int k = 0; k < 4; k++) {
++            int2 t = g0 + int2(k & 1, k >> 1);
++            if (any(t < 0) || any(t >= int2(part.zw))) continue;
++            float4 s = Tex(ix.w).Load(int3(t, 0));
++            if (s.w <= 0) continue;
++            if (min(abs(s.w - z), abs(s.w - zc)) > opt.y * z) continue;
++            if (dot(s.xyz, n) < opt.z) continue;
++            float w = ((k & 1) ? f.x : 1 - f.x) * ((k >> 1) ? f.y : 1 - f.y) + 1e-4f;
++            h += Tex(ix.y).Load(int3(t, 0)) * w;
++            m += Tex(ix.z).Load(int3(t, 0)).xy * w;
++            wsum += w;
++        }
++    }
++    float frames = 0;
++    if (wsum > 1e-3f) {
++        h /= wsum;
++        m /= wsum;
++        frames = h.a;
++    }
++    frames = min(frames + 1, ix2.w);
++    float l = Luma(cur.rgb);
++    // a ray that met something far brighter than the surface ever gathered: held to a few deviations above it, so one
++    // frame's spark does not linger for a second
++    if (frames > 4) {
++        float sd = sqrt(max(m.y - m.x * m.x, 0));
++        float top = m.x + 4 * sd + 0.02f;
++        if (l > top) {
++            cur.rgb *= top / l;
++            l = top;
++        }
++    }
++    float a = 1 / frames;
++    o.history = float4(lerp(h.rgb, cur.rgb, a), frames);
++    o.moments = float4(lerp(m, float2(l, l * l), a), 0, 0);
++    // XBE_RT_VIEW 10: the frames gathered (white 32), red where none
++    if (opt.w == 10) o.history = float4(frames <= 1 ? 1 : 0, frames / 32, frames / 32, frames);
++    return o;
 +}
 diff --git a/runtime/gpu/rt_guide.hlsl b/runtime/gpu/rt_guide.hlsl
 new file mode 100644
