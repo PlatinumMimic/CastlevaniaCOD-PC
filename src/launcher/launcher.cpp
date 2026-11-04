@@ -701,6 +701,8 @@ struct Settings {
     uint32_t sharpening = 30;           // percent, AMD FSR's
     uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
     uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion, 5 lighting, 7 lighting and reflections (menu.cpp)
+    uint32_t rt_lighting = 100;         // percent, how strongly its lighting shows (menu.cpp)
+    uint32_t rt_quality = 2;            // 0 low, 1 medium, 2 high: how much ray tracing a frame does (menu.cpp)
     uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     toml::table rest;
@@ -752,6 +754,8 @@ struct Settings {
         // bits (1 ambient occlusion, 2 reflections, 4 lighting) as the choices offer them
         uint32_t rt = rest["ray_tracing"].value_or(ray_tracing);
         ray_tracing = (rt & 2) ? 7u : (rt & 4) ? 5u : (rt & 1);
+        rt_lighting = std::min(rest["ray_tracing_lighting"].value_or(rt_lighting), 200u);
+        rt_quality = std::min(rest["ray_tracing_quality"].value_or(rt_quality), 2u);
         surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
     }
@@ -794,6 +798,8 @@ struct Settings {
         rest.insert_or_assign("sharpening", int64_t(sharpening));
         rest.insert_or_assign("ambient_occlusion", int64_t(ambient_occlusion));
         rest.insert_or_assign("ray_tracing", int64_t(ray_tracing));
+        rest.insert_or_assign("ray_tracing_lighting", int64_t(rt_lighting));
+        rest.insert_or_assign("ray_tracing_quality", int64_t(rt_quality));
         rest.insert_or_assign("surface_depth", int64_t(surface_depth));
         rest.insert_or_assign("gpu", gpu);
         std::ofstream f(File());
@@ -1731,7 +1737,7 @@ private:
                std::to_string(s.fov) + "|" + std::to_string(s.draw_distance) + "|" + std::to_string(s.fog_distance) + "|" +
                std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
                std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
-               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + std::to_string(s.ray_tracing) + "|" +
+               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + std::to_string(s.ray_tracing) + "|" + std::to_string(s.rt_lighting) + std::to_string(s.rt_quality) + "|" +
                std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view);
     }
 
@@ -2206,6 +2212,21 @@ private:
             else if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
             else if ((settings_.ray_tracing & 1) && !settings_.ambient_occlusion)
                 ControlNote(kAmber, T("Ambient occlusion is off: only the lighting is traced."));
+            EndSetting();
+            BeginOff(!aa || !rays || !(settings_.ray_tracing & 4));
+            BeginSetting(T("Lighting strength"),
+                         T("How strongly ray tracing's lighting shows: the light the room's surfaces throw onto each "
+                           "other, in place of the flat fill the game lit each room with. 100% keeps each room as "
+                           "bright as the game made it; more brings out the glow and the shade."));
+            Slider("rtlight", settings_.rt_lighting, 0, 200,
+                   settings_.rt_lighting ? std::to_string(settings_.rt_lighting) + "%" : std::string(T("Off")));
+            EndOff();
+            if (rays && aa && !(settings_.ray_tracing & 4)) ControlNote(kMuted, T("Needs ray tracing's Lighting."));
+            EndSetting();
+            BeginOff(!aa || !rays || !settings_.ray_tracing);
+            BeginSetting(T("Ray tracing quality"), T("How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it."));
+            Segmented<uint32_t>("rtq", settings_.rt_quality, {0, 1, 2}, {T("Low"), T("Medium"), T("High")});
+            EndOff();
             EndSetting();
         }
         BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "

@@ -291,11 +291,37 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
     its own colour: the courtyard's water lights the carved wall and gargoyle above it in blue, a torchlit wall warms
     the floor before it, Hector picks up the light around him. A filter across its neighbours on the same surface
     smooths it, and the anti-aliasing gathers it over the frames. It comes with the ray traced ambient occlusion.
+    It takes the place of the flat fill the game's artists lit each room with rather than adding to it: a surface
+    gets the light it gets above the room's average (the room's, eased over about a second so a turn of the camera
+    does not pump it), and gives up a share of the game's own as it gets less, so a room keeps the brightness the game
+    gave it while its light comes from where the rays say: the glow by the water, the shade in a corner. **Lighting
+    strength** (`ray_tracing_lighting`, 0% to 200%, 100% by default) sets how strongly it shows. Reflections take the
+    place of the share of a surface's own colour they stand for (its Fresnel share: little head on, most at a glancing
+    angle) rather than adding to it, too.
+    - *Lights*: what the game adds onto the frame as light, a torch's flame, a glow, a spell in Hector's hand, lights
+      the room too. Each pixel samples one of them a frame (picked among a few by how strongly each lights it) with a
+      ray toward it for its shadow, so a character between a torch and the wall throws one. Flames the game draws as
+      flat sprites are put back into the room at the depth they show at, a little before their wall; a haze over the
+      whole view is no light. Their light is light above the room's own, so the room's average leaves it out: a torch
+      brightens its wall without the rest of the room dimming to make up for it.
+    - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
+      higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
+      arch or a ledge shades what lies under it.
+    - *Light shafts*: the air catches the light on its way to the eye, the sky's through the room's openings and the
+      lights' around them (a torch's glow in the air, cut by the bars before it). Marched at a quarter of the frame's
+      size, gathered over the frames and added over the frame; the game's own fog stays as it was.
   - *Reflections*: a surface with a texture pack's material maps reflects what its mirror direction meets, that
     draw's picture lit as the game lit it, blurred as its roughness spreads the rays. The HD pack's maps are rough all
     over (about 0.8, no metal), too rough to reflect anything, so the port gives the pack's iron (railings, gates)
     a metal's gloss and its dressed stone a worn polish that shows at a low angle; a manifest's `reflect_roughness`
-    and `reflect_metalness` set a material's own.
+    and `reflect_metalness` set a material's own. Water is a smooth mirror with water's Fresnel, rippled by a few
+    slow waves laid in the world (they stay put as the camera moves): the courtyard's pool reflects its gargoyles and
+    the balustrade above it. Characters' metal shines too: Hector's armour, gauntlets and sword, an enemy's blade and
+    gold trims, told by their pictures' colour (grey steel, gold), their cloth, leather and skin left matte.
+  - *Character shadows*: Hector, the enemies and the Innocent Devils cast soft shadows on the floor and the walls
+    around them (the game drew none), from a light above and a little to one side, the same way in every room, which
+    only the characters block, so the ceiling does not shade the room. They come with the ray traced ambient
+    occlusion.
   - *Denoising*: with anti-aliasing on NVIDIA DLSS (any GeForce RTX), DLSS Ray Reconstruction takes over from it and
     cleans the rays' grain as it anti-aliases. Each frame it is given what every pixel's surface is, traced through
     the room at the 3D's full size: its picture's colour, its normal (bent by a texture pack's normal map), roughness
@@ -317,7 +343,11 @@ way. The launcher's Graphics page has a switch for them (`texture_pack_materials
 
     Together they cost about 0.55 ms at 1080p on a GeForce RTX 5080.
 
-  All three cost about 1.5 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms).
+  All of it costs about 3 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms).
+  **Ray tracing quality** (`ray_tracing_quality`: 0 low, 1 medium, 2 high, the default) is for slower graphics cards
+  (AMD's, Intel's, a handheld's): low lights the room with one ray a pixel at a third of the frame's size, reaches
+  less far, sends fewer ambient occlusion rays, reflects only the smoothest surfaces and leaves the light shafts out
+  (about 2 ms on the RTX 5080); medium is between.
   The shaders are compiled to DXIL by the Windows SDK's `dxc` when the port is built; a build without it, or a card
   without DXR 1.1, keeps the screen space ambient occlusion.
 - **Field of View** - 100% (the game's, which each room's camera sets) to 200%, a wider view as the number goes up;
