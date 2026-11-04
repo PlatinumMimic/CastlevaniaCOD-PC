@@ -175,6 +175,8 @@ public:
     // ext.z 4: a fade or tint over the whole frame (a loading screen's black, a door's): a vertex at any of the console
     // frame's edges goes exactly to the screen's, top and bottom too (the PS2's grid puts it under a pixel in, which
     // left a line of the picture under it at the left and top of the screen)
+    // ext2.z 1: a panel the frame's whole height (a tip's): a vertex at the frame's top or bottom edge goes exactly to
+    // the screen's (a row of the room showed above a tip's panel)
     // ext.x and ext.y otherwise scale across and down, ext.w and ext2.x then move across and down, in clip space (the
     // frame pass placed pixel for pixel: Placement)
     std::string Position() const override {
@@ -186,7 +188,7 @@ public:
                "    bool fill = ext.z > 3.5;\n"
                "    if (sides) oT0.x = ext.w + (oT0.x - ext.w) / ext.x;\n"
                "    bool at_edge = (ext.z > 0.5 && ext.z < 2.5 || fill) && abs(abs(o.pos.x / o.pos.w) - 1) < 0.008;\n"
-               "    bool at_top = fill && abs(abs(o.pos.y / o.pos.w) - 1) < 0.008;\n"
+               "    bool at_top = (fill || ext2.z > 0.5) && abs(abs(o.pos.y / o.pos.w) - 1) < 0.008;\n"
                "    float across = saturate((o.pos.x / o.pos.w + 0.1) * 5);\n"
                "    o.pos.x = at_edge ? sign(o.pos.x) * o.pos.w : o.pos.x * ext.x;\n"
                "    o.pos.x += (sides ? 0 : strip ? lerp(ext.y, ext.w, across) : ext.w) * o.pos.w;\n"
@@ -499,7 +501,11 @@ public:
         ext[3] = sides ? (d_.u.lo + d_.u.hi) * 0.5f : menu.strip ? menu.right : placed ? across * d_.move[0] : shift;
         ext[4] = placed ? d_.move[1] : 0.0f;
         ext[5] = placed && squeeze && d_.tex.linear ? 1.0f : 0.0f;
-        ext[6] = ext[7] = 0;
+        // a panel the whole height, not the frame's own picture nor a movie's: to the screen's top and bottom exactly
+        bool tall = back_buffer_ && !d_.world && !d_.target && !movie && !placed && !fill && !d_.y.Empty() &&
+                    d_.y.lo <= 1.5f && d_.y.hi >= d_.gh - 1.5f;
+        ext[6] = tall ? 1.0f : 0.0f;
+        ext[7] = 0;
         if (Backdrop(vsc)) ext[0] = ext[1] = ext[3] = ext[4] = 0;  // not drawn: every vertex at the centre
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
         if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty()) {
