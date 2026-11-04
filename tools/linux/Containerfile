@@ -5,7 +5,7 @@ FROM docker.io/library/ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg lsb-release software-properties-common wget git make pkg-config file patchelf \
-        python3 python3-pip perl libjson-perl bison flex xz-utils zstd \
+        python3 python3-pip perl libjson-perl bison flex xz-utils zstd nasm \
         libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
         libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libgles-dev libdrm-dev \
         libgbm-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libibus-1.0-dev \

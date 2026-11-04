@@ -1,0 +1,76 @@
+{
+  "name": "menu-pad",
+  "after": "newgame.json",
+  "env": {
+    "XBE_VIRTUAL_PAD": "1"
+  },
+  "note": "The in-game settings menu by controller alone (src/common/menu.cpp; the SDK's virtual controller, XBE_VIRTUAL_PAD): both sticks clicked open it, RB (the Xbox's black) and LB (white) turn its pages either way round, B closes it; opened again, Start closes it, and the Start held as it closes does not reach the game, whose pause menu stays shut.",
+  "steps": [
+    {
+      "press": "0f:l3+r3:5f,10f:wait:20f",
+      "shot": "open",
+      "expect": [
+        "settings_menu",
+        "'vsync' in menu_controls"
+      ]
+    },
+    {
+      "press": "0f:black:5f,10f:wait:10f",
+      "shot": "rb",
+      "expect": [
+        "settings_menu",
+        "'aniso' in menu_controls"
+      ]
+    },
+    {
+      "press": "0f:black:5f,10f:wait:10f",
+      "shot": "rb-2",
+      "expect": [
+        "'fpsc' in menu_controls"
+      ]
+    },
+    {
+      "press": "0f:white:5f,10f:wait:10f",
+      "shot": "lb",
+      "expect": [
+        "'aniso' in menu_controls"
+      ]
+    },
+    {
+      "press": "0f:white:5f,10f:wait:10f",
+      "expect": [
+        "'vsync' in menu_controls"
+      ]
+    },
+    {
+      "press": "0f:white:5f,10f:wait:10f",
+      "shot": "lb-wraps",
+      "expect": [
+        "settings_menu",
+        "'vsync' not in menu_controls"
+      ]
+    },
+    {
+      "press": "0f:b:5f,20f:wait:20f",
+      "shot": "b-closes",
+      "expect": [
+        "not settings_menu",
+        "not menu"
+      ]
+    },
+    {
+      "press": "0f:l3+r3:5f,10f:wait:20f",
+      "expect": [
+        "settings_menu"
+      ]
+    },
+    {
+      "press": "0f:start:5f,30f:wait:30f",
+      "shot": "start-closes",
+      "expect": [
+        "not settings_menu",
+        "not menu"
+      ]
+    }
+  ]
+}

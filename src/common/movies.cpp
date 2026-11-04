@@ -661,6 +661,13 @@ public:
         return kTag | (uint64_t(serial_) << 32) | (uint64_t(frame_) + 1);
     }
 
+    // telemetry's "movies" (telemetry.cpp): the movie playing (its name, empty when none) and the frames drawn from its
+    // HD video so far
+    std::string Telemetry() {
+        std::lock_guard lock(m_);
+        return "{\"name\":\"" + (active_ ? name_ : std::string()) + "\",\"hd_frames\":" + std::to_string(made_) + "}";
+    }
+
     std::shared_ptr<const gpu::Replacement> Replaced(uint64_t id) {
         std::lock_guard lock(m_);
         if (!decoder_ || uint32_t((id >> 32) & 0x3FFFFFFF) != serial_) return std::make_shared<gpu::Replacement>();
@@ -824,6 +831,7 @@ void MoviesInit() {
 void MoviesFrame(uint64_t presents) { g_movies.Frame(presents); }
 uint64_t MoviesReplace(const gpu::TextureDesc& d, const uint8_t* guest) { return g_movies.Replace(d, guest); }
 bool MoviesOwn(uint64_t id) { return (id & kTag) != 0; }
+std::string MoviesJson() { return g_movies.Telemetry(); }
 std::shared_ptr<const gpu::Replacement> MoviesReplaced(uint64_t id) { return g_movies.Replaced(id); }
 bool MoviesScale(const gpu::TextureDesc& d, float squeeze, float qx, float qy, float& sx, float& sy) {
     return g_movies.Scale(d, squeeze, qx, qy, sx, sy);

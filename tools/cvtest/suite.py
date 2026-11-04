@@ -11,8 +11,8 @@ this platform's dev build (cvtest.py), then the release packages in out/release 
 new game they come after once (cvtest.py --session), each still a test with its own result and report; --alone
 plays each in a game of its own instead. --quick runs the shorter list marked so, --only some of them, --from the
 list from one on; --no-packages leaves the packages out; --linux, run on Windows, then runs the Linux half in WSL.
-A test that needs what this PC lacks (a disc, the HD texture pack, a package, the other platform) is skipped and
-said so, never passed.
+A test that needs what this PC lacks (a disc, the HD texture pack, a package, the other platform, a folder of
+suite.json's, a GeForce RTX) is skipped and said so, never passed.
 
 The summary is out/test/suite-<time>/summary.md, with each test's own report. A full run (no --quick, --only or
 --from) that passed with nothing skipped also writes out/test/suite-<platform>.json: the commits it ran on (this
@@ -23,8 +23,11 @@ This PC's own paths are in out/test/suite.json (out/ is not in the repository):
   {"discs": {"usa": "<the USA xiso>", "eu": "<the European disc image>", "other": "<another release's image>",
              "folder": "<the extracted USA disc>"},
    "wsl": {"distro": "Ubuntu", "repo": "/mnt/c/.../CastlevaniaCOD-PC",
-           "env": {"CV_BUILD": "<the Linux build>", "VK_DRIVER_FILES": "<a Vulkan driver's manifest>"}}}
-On Linux the discs' paths are the Windows ones, read through /mnt (or given apart as "linux_discs").
+           "env": {"CV_BUILD": "<the Linux build>", "VK_DRIVER_FILES": "<a Vulkan driver's manifest>"}},
+   "movies": "<an HD movie pack's folder (movies.toml)>",
+   "materials": "<an HD texture pack's textures folder with material maps (PlatinumMimic's v4)>",
+   "vendor": "<AMD's FSR DLLs and a streamline folder, as the launcher downloads them>"}
+On Linux the discs' and folders' paths are the Windows ones, read through /mnt (or given apart as "linux_discs").
 """
 import hashlib
 import json
@@ -69,6 +72,21 @@ def discs():
         if p.exists():
             out[k] = p
     return out
+
+
+def folder(key):
+    """one of suite.json's folders (movies, materials, vendor) as this platform reads it, or None"""
+    v = config().get(key)
+    if not v:
+        return None
+    p = Path(linux_path(v) if LINUX else v)
+    return p if p.is_dir() else None
+
+
+def folder_env(key, variable):
+    """the environment a test of one of those folders plays with: the folder named in variable"""
+    f = folder(key)
+    return {variable: str(f)} if f else {}
 
 
 def version():
@@ -124,7 +142,7 @@ def scenario(name, *args, test=None, quick=False, needs=(), before=None, env=Non
 SESSIONS = {
     "usa": ["newgame", "texpack", "texpack-live", "fps", "fps-uncapped", "stick", "widescreen", "route", "moai-off", "moai-on", "bot",
             "buttons-xbox", "shadow", "warp", "rooms", "keyboard", "menu"],
-    "wide": ["filters-pack", "qol", "lockon"],
+    "wide": ["filters-pack", "qol", "ao", "wide-1610", "lockon"],
     "eu": ["newgame-eu", "widescreen-eu", "rooms-eu"],
     "pack-off": ["filters-nopack", "texpack-off", "texpack-live-on"],
 }
@@ -177,6 +195,18 @@ def tests():
         scenario("vpad", quick=True),
         scenario("vpad", "--set", "button_layout=1", test="vpad-ps2"),
         scenario("menu", quick=True),
+        scenario("menu-pad"),
+        # 1.8.0: ambient occlusion with no anti-aliasing, the renderer's own TAA, 16:10 at the Steam Deck's size, an HD
+        # movie pack, a texture pack's material maps; anti-aliasing, upscaling and frame generation with AMD's and
+        # NVIDIA's files (Windows)
+        scenario("ao"),
+        scenario("taa"),  # Linux's anti-aliasing, on Windows by XBE_TAA
+        scenario("wide-1610", quick=True),
+        scenario("movies-hd", needs=["movies"], env=folder_env("movies", "CV_MOVIES")),
+        scenario("surface", needs=["materials"], env=folder_env("materials", "CV_TEXTURES")),
+        scenario("aa", needs=["vendor"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
+        scenario("aa-dlss", needs=["vendor", "rtx"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
+        scenario("fg", needs=["vendor"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
         # Linux only: on Windows they would take the PC's own screen and keyboard
         scenario("display", env={"CV_WAYLAND": "1"}, platforms=["linux"]),
         scenario("keyboard", platforms=["linux"]),
@@ -220,6 +250,10 @@ def lacks(test):
             return "no HD texture pack in textures"
         if need in ("usa", "eu", "other", "folder") and need not in d:
             return f"no {need} disc in {CONFIG}"
+        if need in ("movies", "materials", "vendor") and not folder(need):
+            return f"no {need} folder in {CONFIG}"
+        if need == "rtx" and not any("GeForce RTX" in g for g in gpus()):
+            return "no GeForce RTX for NVIDIA DLSS"
     return None
 
 

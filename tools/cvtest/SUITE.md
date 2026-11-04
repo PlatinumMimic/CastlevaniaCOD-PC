@@ -9,8 +9,11 @@ on the platform it runs on; a release is made only from a commit both platforms 
     python -I tools\cvtest\suite.py --quick       the shorter list, during work
     python -I tools\cvtest\suite.py --check       both platforms passed on this commit, with these packages
 
-This PC's discs and WSL setup are in `out/test/suite.json` (see `suite.py`). Tests marked *Linux* run only there:
-on Windows they would take the PC's own screen or keyboard.
+This PC's discs and WSL setup are in `out/test/suite.json` (see `suite.py`), with the folders some tests need: an HD
+movie pack (`movies`), a texture pack with material maps (`materials`, PlatinumMimic's v4) and AMD's and NVIDIA's
+libraries as the launcher downloads them (`vendor`); without one its tests are skipped, and said so. Tests marked
+*Linux* run only there: on Windows they would take the PC's own screen or keyboard. Those marked *Windows* need AMD's
+or NVIDIA's libraries, which are Windows ones.
 
 Scenarios that come after the same new game play in sessions (`SESSIONS` in `suite.py`): one game plays the new
 game once and then each of them in turn, each from the courtyard where a new game starts Hector, with the menus
@@ -44,11 +47,21 @@ his wall). After a test fails the next plays a fresh game. `--alone` plays every
 | Controllers (SDL) | `vpad`, `vpad-ps2` | a virtual controller read as a real one: buttons, sticks, the settings menu by both sticks, unplugged and plugged in again, rumble |
 | Keyboard play | `keyboard` (*Linux*) | each key as its controller button, WASD and the arrows as the sticks, Enter and the pause menu |
 | HD texture packs | `texpack`, `texpack-off`, `texpack-1024`, `filters-pack` | the pack indexed (.dds), three in four of the pack's kind of textures drawn with its pictures; none with it off; the size limit taken; sharper with it |
+| The pack switched while playing | `texpack-live`, `texpack-live-on` | off and on again in a game started with it, and on in a game started without it: the pictures gone and back (telemetry `texpack`) |
+| Material maps, surface depth | `surface` | a pack's materials listed and the courtyard's pictures loaded with their maps; surface depth off and on again moves the floor's stone and puts it back |
+| HD movies | `movies-hd` | the opening movie drawn from the pack's video (telemetry `movies`), the game's own with HD movies switched off while it plays and the pack's again on; Original and Fit leave the screen's side bands black, Fill reaches them |
+| Anti-aliasing and upscaling, AMD FSR | `aa` (*Windows*) | FSR on the 3D (its signed libraries loaded), off and on while playing, Performance drawing half the size and softer, native again |
+| NVIDIA DLSS | `aa-dlss` (*Windows*, a GeForce RTX) | DLSS (DLAA) at the start, Quality drawing two thirds across |
+| Frame generation | `fg` (*Windows*) | FSR 3 generating standing and turning: twice the frames shown, the game at 60, presented without v-sync on a screen whose refresh is not a multiple of 120 |
+| The renderer's own TAA (Linux's anti-aliasing) | `taa` | the TAA on the 3D (on Windows by `XBE_TAA=1`), still from frame to frame, off and on, Performance upscaling, the camera turned |
+| Ambient occlusion | `ao` | with no anti-aliasing: the stone darker where it meets at High, still from frame to frame, lighter with it off, Low between |
+| 16:10 widescreen | `wide-1610` | at the Steam Deck's 1280x800: no black bars, the HUD at the edges, 16:9 putting the bars back while playing, the pause menu to both sides |
 | Render scale, anisotropic filtering | `filters-pack`, `filters-nopack` | 50% and 200% soften and sharpen, filtering sharpens, with the pack and without |
 | Shaders kept on disk | `shadercache-cold`, `shadercache-warm` | a second run compiles no shader |
 | Frame rate | `fps`, `fps-uncapped` | held at 60; well above it with the cap and v-sync off |
 | Graphics card choice | `gpu-1`, `gpu-2`, ... | each card the launcher lists draws the game when named in `gpu` |
 | The in-game settings menu (F10, L3 + R3) | `menu`, `vpad`, `display` (*Linux*) | opened by both sticks and by F10; a switch, a drop-down opened and a choice taken, each saved with the launcher's keys kept; Reset to defaults; Close; the FPS counter in the corner |
+| The settings menu by controller | `menu-pad` | a controller alone: RB and LB turning its pages both ways round, B closing it, Start closing it without the game's pause menu opening |
 | Display modes | `display` (*Linux*) | borderless and fullscreen fill the display, windowed is back to its size |
 | Linux on Wayland | `wayland` (*Linux*) | a new game on a headless Weston through SDL's Wayland video |
 
@@ -84,3 +97,6 @@ What no test here reaches, to try before a release when it changed:
 - SmartScreen and a browser's download warning for a new release (the README's steps).
 - A dev build's program icon, made from the game's copy (packages have none).
 - Linux on a PC's own graphics drivers (the tests run in WSL through Mesa's dozen) and on a Steam Deck.
+- HDR on an HDR display (Windows), and NVIDIA DLSS frame generation (a GeForce RTX 40 or 50).
+- Frame generation on a 120 Hz screen with v-sync, and on a variable refresh one (G-SYNC, FreeSync).
+- The launcher's downloads of AMD's and NVIDIA's files (the tests copy them from `vendor`).

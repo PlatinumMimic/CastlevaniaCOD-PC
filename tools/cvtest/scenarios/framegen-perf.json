@@ -2,6 +2,7 @@
   "name": "framegen-perf",
   "after": "newgame.json",
   "note": "The game's own frame rate with frame generation (the game's logic is one step a frame, so it must stay at 60): 5 s standing and 5 s with the camera turning in map 3 room 2, timed (XBE_PERF). --set frame_generation=0, 1 or 2.",
+  "vendor": true,
   "settings": {
     "width": 1920,
     "height": 1080,

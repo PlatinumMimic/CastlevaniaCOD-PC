@@ -1,0 +1,51 @@
+{
+  "name": "surface",
+  "after": "newgame.json",
+  "needs": [
+    "env:CV_TEXTURES"
+  ],
+  "note": "A texture pack's material maps and surface depth (texpack.cpp's manifest, the SDK's shaders.cpp): with CV_TEXTURES set to a pack that has them (PlatinumMimic's), its materials listed and the first courtyard's pictures loaded with their normal, ORM and height maps (telemetry texpack.materials, mapped); surface depth switched off and on again while playing moves the floor's stone under parallax (the screen's bottom, below Hector, against the first shot) and puts it back.",
+  "steps": [
+    {
+      "press": "0f:wait:90f",
+      "shot": "depth-high",
+      "expect": [
+        "texpack.materials > 1000",
+        "texpack.mapped > 0",
+        "found(runlog, 'with its material maps')"
+      ]
+    },
+    {
+      "press": "0:set=surface_depth=0,0f:wait:30f",
+      "shot": "depth-off",
+      "differs": {
+        "floor": [
+          "depth-high",
+          0.0,
+          0.83,
+          1.0,
+          1.0
+        ]
+      },
+      "expect": [
+        "screen.differs.floor > 4"
+      ]
+    },
+    {
+      "press": "0:set=surface_depth=2,0f:wait:30f",
+      "shot": "depth-high-again",
+      "differs": {
+        "floor": [
+          "depth-high",
+          0.0,
+          0.83,
+          1.0,
+          1.0
+        ]
+      },
+      "expect": [
+        "screen.differs.floor < 2"
+      ]
+    }
+  ]
+}

@@ -17,6 +17,20 @@ even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE
 License (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html) for more details.
 
 
+FFmpeg 7.1.2 (https://ffmpeg.org), in lib/
+
+The HD movies' decoding, unmodified, linked dynamically: libavformat.so.61, libavcodec.so.61, libavutil.so.59 and
+libswscale.so.8 may be replaced by any compatible build of them. Built under the LGPL alone (no GPL or nonfree
+part), configured with --disable-everything --enable-decoder=h264,hevc --enable-parser=h264,hevc
+--enable-demuxer=mov --enable-protocol=file --enable-swscale --enable-shared --disable-autodetect. Its source:
+https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz
+
+Copyright the FFmpeg developers (see its CREDITS file). FFmpeg is free software under the GNU Lesser General Public
+License, version 2.1 or later, whose text is the last in this file (COPYING.LGPLv2.1). It is distributed in the
+hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE.
+
+
 stb_image and stb_image_write (https://github.com/nothings/stb)
 
 Public domain (or the MIT License, at your choice). Copyright (c) 2017 Sean Barrett.

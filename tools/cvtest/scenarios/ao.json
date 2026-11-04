@@ -1,0 +1,245 @@
+{
+  "name": "ao",
+  "after": "newgame.json",
+  "note": "Ambient occlusion with no anti-aliasing (the SDK's OcclusionAlone): at High in the courtyard, the stone darkened where it meets (its corners, the carvings' hollows), held still from frame to frame (a second shot a moment later the same above and beside Hector, once the area's name card a warp shows has gone), switched off while playing (lighter, as without it) and to Low, then High again as at first.",
+  "steps": [
+    {
+      "press": "0:set=antialiasing=0,0:set=ambient_occlusion=2,0f:wait:240f",
+      "shot": "ao-high",
+      "luma": {
+        "left": [
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ]
+      },
+      "expect": [
+        "aa.kind == 0",
+        "found(runlog, r'ambient occlusion: \\w+, .* with no anti-aliasing')"
+      ]
+    },
+    {
+      "press": "0f:wait:20f",
+      "shot": "ao-high-still",
+      "differs": {
+        "left": [
+          "ao-high",
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          "ao-high",
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          "ao-high",
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ],
+        "upper": [
+          "ao-high",
+          0.55,
+          0.15,
+          1.0,
+          0.65
+        ]
+      },
+      "expect": [
+        "screen.differs.upper < 1.2"
+      ]
+    },
+    {
+      "press": "0:set=ambient_occlusion=0,0f:wait:30f",
+      "shot": "ao-off",
+      "luma": {
+        "left": [
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ]
+      },
+      "differs": {
+        "left": [
+          "ao-high",
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          "ao-high",
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          "ao-high",
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ],
+        "upper": [
+          "ao-high",
+          0.55,
+          0.15,
+          1.0,
+          0.65
+        ]
+      },
+      "expect": [
+        "screen.luma.all > shots['ao-high'].luma.all + 1",
+        "screen.luma.right > shots['ao-high'].luma.right + 1.5"
+      ]
+    },
+    {
+      "press": "0:set=ambient_occlusion=1,0f:wait:30f",
+      "shot": "ao-low",
+      "luma": {
+        "left": [
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ]
+      },
+      "differs": {
+        "left": [
+          "ao-high",
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          "ao-high",
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          "ao-high",
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ],
+        "upper": [
+          "ao-high",
+          0.55,
+          0.15,
+          1.0,
+          0.65
+        ]
+      },
+      "expect": [
+        "shots['ao-high'].luma.all < screen.luma.all < shots['ao-off'].luma.all"
+      ]
+    },
+    {
+      "press": "0:set=ambient_occlusion=2,0f:wait:30f",
+      "shot": "ao-high-again",
+      "luma": {
+        "left": [
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ]
+      },
+      "differs": {
+        "left": [
+          "ao-high",
+          0.0,
+          0.25,
+          0.35,
+          0.8
+        ],
+        "right": [
+          "ao-high",
+          0.65,
+          0.25,
+          1.0,
+          0.8
+        ],
+        "all": [
+          "ao-high",
+          0.0,
+          0.1,
+          1.0,
+          1.0
+        ],
+        "upper": [
+          "ao-high",
+          0.55,
+          0.15,
+          1.0,
+          0.65
+        ]
+      },
+      "expect": [
+        "abs(screen.luma.all - shots['ao-high'].luma.all) < 0.5",
+        "screen.differs.upper < 1.2"
+      ]
+    }
+  ]
+}

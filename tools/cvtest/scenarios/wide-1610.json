@@ -1,0 +1,143 @@
+{
+  "name": "wide-1610",
+  "after": "newgame.json",
+  "note": "16:10 widescreen at the Steam Deck's 1280x800 (widescreen_aspect 1610, src/common/widescreen.cpp): the courtyard's 3D fills the window, no black bars above and below; the HUD at the screen's left edge; 16:9 chosen while playing puts the bars back (a 16:9 frame in a 16:10 window), 16:10 again takes them away; the pause menu reaches the sides.",
+  "steps": [
+    {
+      "press": "0:set=width=1280,0:set=height=800,0:set=widescreen_aspect=1610,0f:wait:60f",
+      "shot": "deck-1610",
+      "luma": {
+        "top": [
+          0.0,
+          0.0,
+          1.0,
+          0.035
+        ],
+        "bottom": [
+          0.0,
+          0.965,
+          1.0,
+          1.0
+        ],
+        "left": [
+          0.0,
+          0.2,
+          0.03,
+          0.8
+        ],
+        "right": [
+          0.97,
+          0.2,
+          1.0,
+          0.8
+        ]
+      },
+      "expect": [
+        "window.w == 1280 and window.h == 800",
+        "wide.hud.move != 0",
+        "screen.luma.top > 4",
+        "screen.luma.bottom > 4",
+        "screen.luma.left > 4",
+        "screen.luma.right > 4"
+      ]
+    },
+    {
+      "press": "0:set=widescreen_aspect=169,0f:wait:30f",
+      "shot": "deck-169",
+      "luma": {
+        "top": [
+          0.0,
+          0.0,
+          1.0,
+          0.035
+        ],
+        "bottom": [
+          0.0,
+          0.965,
+          1.0,
+          1.0
+        ],
+        "left": [
+          0.0,
+          0.2,
+          0.03,
+          0.8
+        ],
+        "right": [
+          0.97,
+          0.2,
+          1.0,
+          0.8
+        ]
+      },
+      "expect": [
+        "screen.luma.top < 1",
+        "screen.luma.bottom < 1",
+        "screen.luma.left > 4"
+      ]
+    },
+    {
+      "press": "0:set=widescreen_aspect=1610,0f:wait:30f",
+      "shot": "deck-1610-again",
+      "luma": {
+        "top": [
+          0.0,
+          0.0,
+          1.0,
+          0.035
+        ],
+        "bottom": [
+          0.0,
+          0.965,
+          1.0,
+          1.0
+        ],
+        "left": [
+          0.0,
+          0.2,
+          0.03,
+          0.8
+        ],
+        "right": [
+          0.97,
+          0.2,
+          1.0,
+          0.8
+        ]
+      },
+      "expect": [
+        "screen.luma.top > 4",
+        "screen.luma.bottom > 4"
+      ]
+    },
+    {
+      "press": "0:start,1500:wait",
+      "shot": "pause",
+      "luma": {
+        "left": [
+          0.0,
+          0.05,
+          0.1,
+          0.95
+        ],
+        "right": [
+          0.9,
+          0.05,
+          1.0,
+          0.95
+        ]
+      },
+      "expect": [
+        "menu",
+        "screen.luma.right > 30",
+        "screen.luma.left > 8"
+      ]
+    },
+    {
+      "press": "0:b,1500:wait",
+      "expect": [
+        "not menu"
+      ]
+    }
+  ]
+}

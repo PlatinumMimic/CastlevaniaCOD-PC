@@ -702,6 +702,13 @@ const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"s
                                      L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
 
 // all of a kind's files there, beside the game (FSR) or in its streamline folder (DLSS)
+// AMD's and NVIDIA's files to download: Windows only, their libraries being Windows ones
+#ifdef _WIN32
+constexpr bool kVendorFiles = true;
+#else
+constexpr bool kVendorFiles = false;
+#endif
+
 bool HaveFrameGen(const fs::path& game, uint32_t kind) {
     std::error_code ec;
     if (kind == 1) {
@@ -2124,7 +2131,12 @@ const char* PresetName(int p) {
     }
 }
 
+#ifdef _WIN32
 const char* AntiAliasName(uint32_t aa) { return aa == 2 ? "NVIDIA DLSS" : aa == 1 ? "AMD FSR" : T("Off"); }
+#else
+// Linux: the game's own TAA, whatever was chosen on Windows
+const char* AntiAliasName(uint32_t aa) { return aa ? "TAA" : T("Off"); }
+#endif
 
 // the launcher's state and its one screen
 class Launcher {
@@ -2467,9 +2479,9 @@ private:
             Cursor(dl, {p.x + tw - S(38) + S(6) * hv, p.y + th * 0.5f}, S(18), 0.3f + 0.7f * hv);
         }
         ImGui::Dummy({0, S(8)});
-        // anti-aliasing is on by default but its vendor's files are not in the download: without them it, upscaling
-        // and ambient occlusion do nothing, so say so where everyone looks
-        if (settings_.antialiasing && !HaveFrameGen(ExeDir(), AntiAliasVendor())) {
+        // anti-aliasing is on by default but its vendor's files are not in the download: without them it and
+        // upscaling do nothing, so say so where everyone looks
+        if (kVendorFiles && settings_.antialiasing && !HaveFrameGen(ExeDir(), AntiAliasVendor())) {
             Status(kIconWarn, kAmber, F("Anti-aliasing ({}) needs its files: download them on the Graphics page.",
                                         {AntiAliasName(AntiAliasVendor())}));
             ImGui::Dummy({0, S(4)});
@@ -2553,10 +2565,11 @@ private:
         }
     }
 
-    // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR
+    // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR (on Linux, where
+    // the game's own TAA takes FSR's place, always)
     uint32_t AntiAliasVendor() const {
         uint32_t aa = settings_.antialiasing;
-        return aa == 2 && !RtxCard(UsedGpu().name) ? 1 : aa;
+        return aa == 2 && (!kVendorFiles || !RtxCard(UsedGpu().name)) ? 1 : aa;
     }
 
     // frame generation's warnings, and its files when anti-aliasing's card above does not show them already
@@ -2664,6 +2677,7 @@ private:
 
         Section(T("ANTI-ALIASING AND UPSCALING"));
         BeginCard("aa");
+#ifdef _WIN32
         BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world. AMD FSR works on any "
                                            "graphics card; NVIDIA DLSS needs a GeForce RTX. The HUD and menus stay sharp."),
                      true);
@@ -2672,6 +2686,15 @@ private:
         else if (aa == 2) ControlNote(kMuted, T("From the game's next start."));
         EndSetting();
         if (aa) VendorFiles(AntiAliasVendor());
+#else
+        BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world, gathered over the frames by "
+                                           "the game's own TAA (AMD FSR and NVIDIA DLSS are Windows only). The HUD and "
+                                           "menus stay sharp."),
+                     true);
+        if (aa > 1) aa = 1;  // DLSS chosen on Windows: the TAA here
+        Segmented<uint32_t>("aa", aa, {0, 1}, {T("Off"), "TAA"});
+        EndSetting();
+#endif
         if (aa) ImGui::Dummy({0, S(6)});
         BeginOff(!aa);
         BeginWideSetting(T("Upscaling"), T("Draws the 3D world at a lower resolution and rebuilds it to full size, for a "
@@ -2693,8 +2716,13 @@ private:
         }
         EndSetting();
         BeginOff(AntiAliasVendor() != 1);
+#ifdef _WIN32
         BeginSetting(T("Sharpening"), T("Brings back fine texture detail after AMD FSR smooths the picture; too much "
                                         "outlines the edges. 30% suits most."));
+#else
+        BeginSetting(T("Sharpening"), T("Brings back fine texture detail after the TAA smooths the picture; too much "
+                                        "outlines the edges. 30% suits most."));
+#endif
         Slider("sharp", settings_.sharpening, 0, 100,
                settings_.sharpening ? std::to_string(settings_.sharpening) + "%" : std::string(T("Off")));
         EndOff();
@@ -2705,13 +2733,11 @@ private:
 
         Section(T("LIGHTING AND DETAIL"));
         BeginCard("detail");
-        BeginOff(!aa);
+        // with anti-aliasing or without (the SDK's OcclusionAlone)
         BeginSetting(T("Ambient occlusion"), T("Soft shadow where surfaces meet: in corners, between stones, under ledges "
                                                "and where feet touch the floor. Low is lighter on the graphics card."),
                      true);
         Segmented<uint32_t>("ao", settings_.ambient_occlusion, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
-        EndOff();
-        if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
         EndSetting();
         BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "
                                                    "little."));
@@ -2723,6 +2749,7 @@ private:
         EndSetting();
         EndCard();
 
+#ifdef _WIN32  // Linux has none: AMD's and NVIDIA's libraries are Windows ones
         Section(T("FRAME GENERATION"));
         BeginCard("framegen");
         BeginSetting(T("Frame generation"), T("A frame made between each two the game draws, for twice the frame rate on a "
@@ -2732,6 +2759,7 @@ private:
         EndSetting();
         FrameGenStatus();
         EndCard();
+#endif
 
         Section(T("GRAPHICS CARD"));
         BeginCard("gpu");

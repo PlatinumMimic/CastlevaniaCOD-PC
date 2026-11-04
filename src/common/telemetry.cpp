@@ -23,8 +23,9 @@
 // last got them; "audio", the frames the sound output played and those with sound; "window_size", the game window's
 // pixels; "view", the field of view, far plane and fog as the game set them and as drawn (game/view.cpp); "wide",
 // widescreen's moves of the lock-on marker and the HUD and the sky's fogged draws (widescreen.cpp); "texpack", the HD
-// texture pack on, indexed, and the textures that asked it and got a picture (texpack.cpp); "settings_menu"; "vpad",
-// the virtual controller (XBE_VIRTUAL_PAD).
+// texture pack on, indexed, and the textures that asked it and got a picture (texpack.cpp); "aa", "fg" and "hdr", the
+// renderer's anti-aliasing, frame generation and HDR as they run; "settings_menu"; "vpad", the virtual controller
+// (XBE_VIRTUAL_PAD).
 //
 // CV_TELEMETRY=<file.jsonl> appends the state every CV_TELEMETRY_EVERY frames (30 by default) while the game reads
 // the pad, with "pad": the buttons held as the game got them; a button pressed or let go also writes the state right
@@ -45,6 +46,7 @@
 #include "audio/audio.h"
 #include "common/release.h"
 #include "core/input.h"
+#include "gpu/backend.h"
 #include "kernel/memory.h"
 #include "xdk/d3d8.h"
 
@@ -180,6 +182,7 @@ std::string BotJson();   // bot.cpp
 std::string WideJson();  // widescreen.cpp
 std::string ViewJson();  // game/view.cpp
 std::string TexturePackJson();  // texpack.cpp
+std::string MoviesJson();       // movies.cpp
 bool MenuOpen();         // menu.cpp
 
 // for the bot (bot.cpp), each frame: Hector's position and facing, the camera's heading (the direction stick up
@@ -304,6 +307,23 @@ std::string GameStateJson() {
     if (!view.empty()) out += ",\"view\":" + view;
     // the HD texture pack: on, indexed, the textures that asked it for a picture and got one
     out += ",\"texpack\":" + TexturePackJson();
+    // the movie playing, and its frames drawn from a movie pack's HD video
+    out += ",\"movies\":" + MoviesJson();
+    // what the renderer runs: anti-aliasing's kind (0 none) and the 3D's size drawn and output; frame generation's
+    // kind, whether it generates, the frames reaching the screen and the game's own a second; HDR
+    {
+        uint32_t drawn = gpu::g_antialias_drawn.load(), output = gpu::g_antialias_output.load();
+        app::FrameGenState fg = app::FrameGen();
+        app::HdrState hdr = app::Hdr();
+        char b[320];
+        std::snprintf(b, sizeof(b),
+                      ",\"aa\":{\"kind\":%u,\"drawn\":[%u,%u],\"output\":[%u,%u]},\"fg\":{\"kind\":%u,\"active\":%s,"
+                      "\"shown_fps\":%.1f,\"game_fps\":%.1f},\"hdr\":{\"display\":%s,\"on\":%s}",
+                      gpu::g_antialias_running.load(), drawn >> 16, drawn & 0xFFFF, output >> 16, output & 0xFFFF,
+                      fg.kind, fg.active ? "true" : "false", fg.shown_fps, fg.game_fps, hdr.display ? "true" : "false",
+                      hdr.on ? "true" : "false");
+        out += b;
+    }
     out += MenuOpen() ? ",\"settings_menu\":true" : ",\"settings_menu\":false";
     // the virtual controller (XBE_VIRTUAL_PAD): plugged in, taken by a port, the motors the game drove it with
     if (input::VirtualOn()) {

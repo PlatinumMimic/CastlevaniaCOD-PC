@@ -1,0 +1,35 @@
+{
+  "name": "fg",
+  "after": "newgame.json",
+  "vendor": true,
+  "needs": [
+    "env:CV_VENDOR_DIR"
+  ],
+  "platforms": [
+    "windows"
+  ],
+  "note": "Frame generation by AMD FSR 3 (framegen.cpp's, its signed libraries from CV_VENDOR_DIR), chosen before the start: generating in the courtyard, standing and with the camera turning, a frame made between each two the game draws, so about twice as many reach the screen as the game draws, and the game itself still at its 60. With vsync on a screen whose refresh is not a multiple of 120 (85, 144, 165 Hz) its frames go without vsync, or AMD's swap chain would hold the game under 60 (42 at 85 Hz).",
+  "settings": {
+    "width": 1280,
+    "height": 720,
+    "frame_generation": 1
+  },
+  "steps": [
+    {
+      "press": "0f:wait:120f",
+      "shot": "fsr3-stand"
+    },
+    {
+      "press": "0f:rs=0.7/0:90f",
+      "shot": "fsr3-turn",
+      "expect": [
+        "fg.kind == 1",
+        "fg.active",
+        "fg.game_fps > 50",
+        "fg.shown_fps > fg.game_fps * 1.5",
+        "not found(runlog, 'is not signed')",
+        "found(runlog, r'framegen: the screen at \\d+ Hz')"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "name": "aa-dlss",
+  "after": "newgame.json",
+  "vendor": true,
+  "needs": [
+    "env:CV_VENDOR_DIR"
+  ],
+  "platforms": [
+    "windows"
+  ],
+  "note": "Anti-aliasing and upscaling by NVIDIA DLSS (Streamline's, framegen.cpp), chosen before the start as it must be, its signed libraries in the streamline folder from CV_VENDOR_DIR: on a GeForce RTX, DLSS on the courtyard's 3D, then upscaling at Quality (two thirds across) and back. Elsewhere DLSS is not offered and AMD FSR runs in its place, which the test takes as a skip, not a pass.",
+  "settings": {
+    "width": 1280,
+    "height": 720,
+    "antialiasing": 2,
+    "upscaling": 0
+  },
+  "steps": [
+    {
+      "press": "0f:wait:90f",
+      "shot": "dlss",
+      "expect": [
+        "aa.kind == 2",
+        "aa.drawn == [1280, 720]",
+        "found(runlog, r'antialias: NVIDIA DLSS on the frame.s 3D')",
+        "not found(runlog, 'is not signed')"
+      ]
+    },
+    {
+      "press": "0:set=upscaling=1,0f:wait:60f",
+      "shot": "dlss-quality",
+      "expect": [
+        "aa.kind == 2",
+        "aa.drawn[0] < 900 and aa.drawn[0] > 800",
+        "aa.output == [1280, 720]"
+      ]
+    },
+    {
+      "press": "0:set=upscaling=0,0f:wait:30f",
+      "shot": "dlss-native",
+      "expect": [
+        "aa.drawn == [1280, 720]"
+      ]
+    }
+  ]
+}

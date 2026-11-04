@@ -740,6 +740,7 @@ private:
                                  e.height.filename().string().c_str());
                     }
                     r->material = std::move(m);
+                    mapped_.fetch_add(1, std::memory_order_relaxed);
                     static std::atomic<int> logged{0};
                     if (logged.fetch_add(1) < 8)
                         LOGR("texpack: %s with its material maps", files_[i].filename().string().c_str());
@@ -875,15 +876,18 @@ private:
 
 public:
     // telemetry's "texpack" (telemetry.cpp): on, its pictures indexed, and the textures that asked for a picture and
-    // got one since the start
+    // got one since the start, the materials its manifests list and the pictures loaded with theirs
     std::string Telemetry() const {
         return std::string("{\"on\":") + (g_texture_pack ? "true" : "false") + ",\"ready\":" +
                (ready_ ? "true" : "false") + ",\"asked\":" + std::to_string(asked_.load()) +
-               ",\"matched\":" + std::to_string(matched_.load()) + "}";
+               ",\"matched\":" + std::to_string(matched_.load()) +
+               ",\"materials\":" + std::to_string(ready_ ? materials_.size() : 0) +
+               ",\"mapped\":" + std::to_string(mapped_.load()) + "}";
     }
 
 private:
     std::atomic<uint64_t> asked_{0}, matched_{0};
+    std::atomic<uint64_t> mapped_{0};  // pictures loaded with their material maps
     bool on_ = false;                     // g_texture_pack as Epoch last saw it
     uint32_t epoch_ = 0;
     std::atomic<bool> indexing_{false};   // Index started, once

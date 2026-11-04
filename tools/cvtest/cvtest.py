@@ -17,7 +17,10 @@ A scenario is JSON:
                                           to a virtual controller the game reads through SDL, src/common/keyboard.cpp)
    "platforms": ["linux"],                optional: where it runs (windows, linux); elsewhere it is skipped
    "needs": ["textures"],                 optional: skipped without an HD texture pack in the textures folder the
-                                          game finds (this repository's)
+                                          game finds (this repository's); "env:<VARIABLE>" without that folder named
+                                          in the environment (CV_MOVIES, CV_TEXTURES, CV_VENDOR_DIR)
+   "vendor": true,                        optional: AMD FSR's and NVIDIA's libraries copied beside the game from
+                                          CV_VENDOR_DIR (its DLLs and streamline folder), as the launcher downloads them
    "dump": "<va>:<bytes>,...",            optional: guest memory saved after every command (game/live/mem-<n>-<va>.bin)
    "telemetry": <frames>,                 optional: the state every that many frames, game/telemetry.jsonl
    "perf": true,                          optional: the SDK's timings (XBE_PERF, a log line set each second): a
@@ -60,6 +63,9 @@ and may have
   "seams": {"<name>": [x0, y0, x1, y1]}   how far the strongest step between two columns there stands out of the
                                           median one: screen.seams.<name> (a straight seam, 70 and more; a continuous
                                           picture some 3)
+  "differs": {"<name>": ["<shot>", x0, y0, x1, y1]}   the mean brightness difference (0 to 255) of those parts from
+                                          the same parts of an earlier step's shot: screen.differs.<name> (the same
+                                          picture 0)
   "click": "<control>" or [...]          clicks the in-game settings menu's controls first, by their names as it
                                           says where they are (CV_MENU_STATE, src/common/menu.cpp): made by the
                                           game as ImGui input (the live entry click=<control>), whatever window
@@ -451,6 +457,25 @@ def luma(w, h, bgra, box):
     return round(total / count / 1000, 1)
 
 
+def differs(w, h, bgra, other, box):
+    """the mean brightness difference (0 to 255) in box, fractions of the window, between two screenshots of a size"""
+    if other is None or other[:2] != (w, h):
+        return None
+    x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    every = max(1, (x1 - x0) * (y1 - y0) // 100000)
+    b = other[2]
+    total = count = 0
+    for y in range(y0, y1, every):
+        for x in range(x0, x1):
+            i = (y * w + x) * 4
+            total += abs((bgra[i + 2] - b[i + 2]) * 299 + (bgra[i + 1] - b[i + 1]) * 587 + (bgra[i] - b[i]) * 114)
+            count += 1
+    return round(total / count / 1000, 2)
+
+
 def seams(w, h, bgra, box):
     """in box (fractions of the window), the brightness step between neighbouring columns: the strongest column's mean
     step over the median column's. A straight vertical seam (a card's edge, a smeared block's border) stands out of a
@@ -561,18 +586,21 @@ class Game:
             folder.mkdir(parents=True)
             for f in (self.exe + EXE, self.exe + CODE):
                 shutil.copy2(build / f, folder / f)  # dates kept: the exe takes a DLL that is not older than it
-            # frame generation's libraries, the player's to download: from the build folder, else CV_FRAMEGEN_DIR
-            # (a folder laid out as the game's: the AMD files and a streamline folder)
-            fg = Path(os.environ["CV_FRAMEGEN_DIR"]) if os.environ.get("CV_FRAMEGEN_DIR") else build
-            for f in fg.glob("amd_fidelityfx_*.dll"):
-                shutil.copy2(f, folder / f.name)
-            if (fg / "streamline").is_dir():
-                shutil.copytree(fg / "streamline", folder / "streamline")
         settings = dict(DEFAULT_SETTINGS, **scenario.get("settings", {}))
         lines = [f"{k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}" for k, v in settings.items()]
         (folder / "castlevania.toml").write_text("\n".join(lines) + "\n")
         if scenario.get("save"):
             shutil.copytree(SAVES / scenario["save"], folder / "hdd")
+        # "vendor": AMD's and NVIDIA's libraries beside the game, from CV_VENDOR_DIR (CV_FRAMEGEN_DIR too: its DLLs and
+        # the streamline folder), as the launcher's Download puts them there; without it the game has none, as the
+        # player's install before that download
+        vendor = os.environ.get("CV_VENDOR_DIR") or os.environ.get("CV_FRAMEGEN_DIR")
+        if scenario.get("vendor") and vendor and not installed:
+            vendor = Path(vendor)
+            for f in vendor.glob("*.dll"):
+                shutil.copy2(f, folder / f.name)
+            if (vendor / "streamline").is_dir():
+                shutil.copytree(vendor / "streamline", folder / "streamline")
         self.live = folder / "live"
         self.live.mkdir()
         if scenario.get("dump"):  # "<va>:<bytes>,...": guest memory saved after each command, mem-<n>-<va>.bin
@@ -1156,6 +1184,12 @@ def skipped(scenario, install=None):
     if "textures" in scenario.get("needs", []) and not (install or any(textures.rglob("*.dds"))
                                                       or any(textures.rglob("*.png"))):
         return f"no HD texture pack in {textures}"
+    # env:<VARIABLE>: a folder the environment names (a movie pack, a texture pack, the vendors' libraries)
+    for need in scenario.get("needs", []):
+        if need.startswith("env:"):
+            v = os.environ.get(need[4:], "")
+            if not v or not all(Path(p).exists() for p in v.split(";")):
+                return f"no {need[4:]} (a folder) in the environment"
     return None
 
 
@@ -1226,6 +1260,7 @@ def play_steps(game, scenario, settings, shots, run, results):
     state after the last, "runlog" the game's log lines so far (without their times)"""
     places = {}  # sweep: where each room put Hector and the camera
     screens = {}  # each shot's screen, for later steps' shots["<shot>"]
+    pictures = {}  # each shot's screenshot, for later steps' differs
     prev, runlog = run["prev"], run["runlog"]
     judge_model, judge_key, review = scenario.get("judge"), None, None
     if judge_model or any("ask" in st for st in scenario["steps"]):
@@ -1312,6 +1347,10 @@ def play_steps(game, scenario, settings, shots, run, results):
                     screen["luma"] = {k: luma(*img, box) for k, box in step["luma"].items()}
                 if step.get("seams"):
                     screen["seams"] = {k: seams(*img, box) for k, box in step["seams"].items()}
+                if step.get("differs"):
+                    screen["differs"] = {k: differs(*img, pictures.get(v[0]), v[1:]) for k, v in step["differs"].items()}
+                if step.get("shot"):
+                    pictures[step["shot"]] = img
                 shot = shots / f"{i:03d}_{(step.get('shot') or 'step')}.png"
                 write_png(shot, *img)
                 if judge_model and step.get("judge", True):
@@ -1394,13 +1433,16 @@ HOME_POS = (-5000, -4900)
 # own values (the SDK's app::Settings, src/common/menu.cpp's Defaults)
 GAME_DEFAULTS = {"render_percent": 100, "anisotropic_filtering": 0, "vsync": True, "fps_cap": 60, "widescreen": True,
                  "fps_counter": False, "lament_save": False, "ps2_stick": True, "invert_camera_x": False,
-                 "invert_camera_y": False, "fov": 100, "draw_distance": 100, "fog_distance": 100, "hud_edges": True}
+                 "invert_camera_y": False, "fov": 100, "draw_distance": 100, "fog_distance": 100, "hud_edges": True,
+                 "widescreen_aspect": 169, "menu_spread": True, "hd_movies": True, "movie_view": 1, "surface_depth": 2,
+                 "antialiasing": 1, "upscaling": 0, "sharpening": 30, "ambient_occlusion": 1}
 # settings a session's parts have the same, from the game's start: those it reads only then (keyboard.cpp's live set=
 # refuses texture_pack_size and button_layout), and texture_pack, live in the game, whose off tests are of a game
 # started without the pack (no index made)
 START_ONLY = ("texture_pack", "texture_pack_size", "button_layout", "game_language", "gpu", "launcher_language")
-# scenario keys about the whole run (its saves, its timings, its shader cache): such a scenario is played alone
-WHOLE_RUN = ("save", "perf", "shader_cache", "telemetry", "dump")
+# scenario keys about the whole run (its saves, its timings, its shader cache, its vendor libraries): such a scenario is
+# played alone
+WHOLE_RUN = ("save", "perf", "shader_cache", "telemetry", "dump", "vendor")
 # what closes whatever a part left open: the settings menu, a story scene, a box, the pause menu and its pages
 CLOSE_ALL = [["settings_menu", "0f:l3+r3:5f,10f:wait:20f"], ["cutscene", "0:start,45f:wait"],
              ["modal", "0:a,30f:wait"], ["menu", "0:b,30f:wait"]]

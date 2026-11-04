@@ -254,7 +254,9 @@ void DisplayTab(bool& save) {
     // no frame rate cap here: the game's logic steps once a frame, so it is held at the 60 it was made for
     Row("V-Sync", "Off can tear, and lowers input latency a little.");
     save |= Check("##vsync", &s.vsync);
-    HdrRows(save);
+#ifdef _WIN32
+    HdrRows(save);  // Linux sends no HDR picture
+#endif
     ImGui::EndTable();
 }
 
@@ -266,6 +268,7 @@ void GraphicsTab(bool& save) {
                              {"50%", "75%", "100%", "150%", "200%"});
     Row("Anisotropic filtering", "Sharper textures at an angle.");
     save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
+#ifdef _WIN32
     Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames: AMD FSR on any graphics card, "
                          "NVIDIA DLSS on a GeForce RTX (from the next start once chosen). Their files come from AMD and "
                          "NVIDIA: the launcher's Graphics page downloads them with frame generation's.");
@@ -280,6 +283,16 @@ void GraphicsTab(bool& save) {
         else if (g_antialias && running != g_antialias)
             ImGui::TextDisabled(running ? "AMD FSR in its place (logs\\castlevania.log)" : "not running (logs\\castlevania.log)");
     }
+#else
+    // Linux: AMD's and NVIDIA's libraries are Windows ones; the renderer's own TAA takes AMD FSR's place (setting 1)
+    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by the game's own TAA (AMD FSR "
+                         "and NVIDIA DLSS are Windows only).");
+    {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+        if (g_antialias > 1) g_antialias = 1;  // DLSS chosen on Windows: the TAA here
+        save |= Choice<uint32_t>("##aa", g_antialias, {0, 1}, {"Off", "TAA"});
+    }
+#endif
     Row("Upscaling", "The 3D world drawn below the screen's resolution and rebuilt to it by the anti-aliasing above, "
                      "for a higher frame rate on a slower graphics card: Quality draws two thirds of it across with "
                      "textures as sharp as the full resolution's, Balanced a little less of both, Performance half "
@@ -299,8 +312,13 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled("%s", text);
         }
     }
+#ifdef _WIN32
     Row("Sharpening", "AMD FSR's sharpening of the 3D after it is smoothed: more brings back fine texture detail, too much "
                       "outlines edges. NVIDIA DLSS has no sharpening of its own.");
+#else
+    Row("Sharpening", "The TAA's sharpening of the 3D after it is smoothed: more brings back fine texture detail, too much "
+                      "outlines edges.");
+#endif
     {
         int sharp = int(g_sharpening);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
@@ -314,15 +332,11 @@ void GraphicsTab(bool& save) {
         }
     }
     Row("Ambient occlusion", "Soft shadow where surfaces meet: corners, the gaps between stones, under railings, where "
-                             "feet touch the floor. Worked out from the 3D's depth before the anti-aliasing smooths it, "
-                             "so it needs anti-aliasing on. Low is lighter on the graphics card.");
+                             "feet touch the floor. Worked out from the 3D's depth, and smoothed over the frames by the "
+                             "anti-aliasing when it runs. Low is lighter on the graphics card.");
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
         save |= Choice<uint32_t>("##ao", g_ambient_occlusion, {0, 1, 2}, {"Off", "Low", "High"});
-        if (g_ambient_occlusion && !g_antialias) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("needs anti-aliasing");
-        }
     }
     // DLSS turned into multi frame generation by the NVIDIA app slows the game (FrameGenSeen): said in its help too
     static std::string fg_help;
@@ -330,7 +344,9 @@ void GraphicsTab(bool& save) {
                    g_fg_seen.shown_fps > g_fg_seen.game_fps * 2.3;
     fg_help = "A frame made between each two the game draws, for twice the frame rate on a 120 Hz or faster screen: "
               "AMD FSR 3 on any graphics card, NVIDIA DLSS on a GeForce RTX 40 or 50. Their files come from AMD and "
-              "NVIDIA: the launcher's Graphics page downloads them. From the next start.";
+              "NVIDIA: the launcher's Graphics page downloads them. From the next start. On a screen whose refresh is "
+              "not a multiple of 120 Hz (144, 165) its frames go without vsync, so the game keeps its speed: a G-SYNC or "
+              "FreeSync screen shows them without tearing.";
     if (fg_slow) {
         char line[256];
         std::snprintf(line, sizeof(line),
@@ -340,6 +356,7 @@ void GraphicsTab(bool& save) {
                       g_fg_seen.shown_fps / g_fg_seen.game_fps, g_fg_seen.game_fps);
         fg_help += line;
     }
+#ifdef _WIN32  // Linux has none: AMD's and NVIDIA's libraries are Windows ones
     Row("Frame generation", fg_help.c_str());
     {
         static const uint32_t running = s.frame_generation;  // as this run started
@@ -357,6 +374,7 @@ void GraphicsTab(bool& save) {
             // the menu over the frame stops it: what counts is the frame rate once the menu is closed
             ImGui::TextDisabled("on (paused in this menu)");
     }
+#endif
     Row("Widescreen", "More of the world at the sides, nothing stretched: 16:9 for a 16:9 screen, 16:10 for a 16:10 "
                       "one (1920x1200). The HUD and menus stay 4:3 in the middle. Off shows the game 4:3, as on a "
                       "4:3 TV.");

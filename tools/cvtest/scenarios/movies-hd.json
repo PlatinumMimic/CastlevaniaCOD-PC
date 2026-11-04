@@ -1,0 +1,91 @@
+{
+  "name": "movies-hd",
+  "needs": [
+    "env:CV_MOVIES"
+  ],
+  "settings": {
+    "width": 1600,
+    "height": 900
+  },
+  "note": "HD movies (src/common/movies.cpp) from a movie pack (CV_MOVIES: PlatinumMimic's): a new game whose opening text plays rather than being skipped, drawn from the pack's HD video (Windows decodes it with Media Foundation, Linux with FFmpeg; telemetry movies.hd_frames), the game's own frames with HD movies off (live) and the HD video's again with it on; the movie's size: Original and Fit leave the bands at the screen's sides black, Fill reaches them.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "note": "the logos to the title"
+    },
+    {
+      "until": "frame >= 640",
+      "timeout": 60
+    },
+    {
+      "press": "1000:a,4000:a,4600:a,5200:a,6000:start,7000:a,9000:a,13000:left,14000:a,18000:a,21000:a,24000:a,26000:wait",
+      "note": "New Game, name AAA, the save made; the movies then play"
+    },
+    {
+      "press": "0:wait:12000",
+      "shot": "hd",
+      "luma": {
+        "left": [
+          0.0,
+          0.3,
+          0.02,
+          0.7
+        ]
+      },
+      "expect": [
+        "found(runlog, 'st00_00 starts, its HD version from the pack')",
+        "found(runlog, r'st00_00\\.mp4, .*decoded')",
+        "movies.name == 'st00_00'",
+        "movies.hd_frames > 30",
+        "screen.luma.left < 3"
+      ]
+    },
+    {
+      "press": "0:set=hd_movies=false,0f:wait:30f",
+      "shot": "original",
+      "expect": [
+        "movies.hd_frames - prev.movies.hd_frames < 3"
+      ]
+    },
+    {
+      "press": "0:set=hd_movies=true,0f:wait:45f",
+      "shot": "hd-again",
+      "expect": [
+        "movies.hd_frames - prev.movies.hd_frames > 10"
+      ]
+    },
+    {
+      "press": "0:set=movie_view=0,0f:wait:20f",
+      "shot": "view-original",
+      "luma": {
+        "left": [
+          0.0,
+          0.3,
+          0.02,
+          0.7
+        ]
+      },
+      "expect": [
+        "screen.luma.left < 3"
+      ]
+    },
+    {
+      "press": "0:set=movie_view=2,0f:wait:20f",
+      "shot": "view-fill",
+      "luma": {
+        "left": [
+          0.0,
+          0.3,
+          0.02,
+          0.7
+        ]
+      },
+      "expect": [
+        "screen.luma.left > 8"
+      ]
+    },
+    {
+      "press": "0:set=movie_view=1,0f:wait:10f"
+    }
+  ]
+}

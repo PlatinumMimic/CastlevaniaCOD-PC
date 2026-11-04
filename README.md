@@ -7,7 +7,9 @@ sound on XAudio2 (on Linux, through SDL).
 **Thanks to Calm-Consideration41** (PlatinumMimic, who also made the
 [Castlevania PS2 4K texture packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs)) for the
 field of view, draw distance and fog settings, the HUD in the screen's corners in widescreen, the PS2's stick
-response, the inverted camera and the rumble on both motors.
+response, the inverted camera and the rumble on both motors, and for 1.8.0's HD movies, material maps and surface
+depth, HDR, anti-aliasing, upscaling and frame generation by AMD FSR and NVIDIA DLSS, ambient occlusion, 16:10
+widescreen, the settings menu by controller and the launcher's new pages.
 
 This is a personal, non-commercial fan project. It has nothing to do with Konami, Microsoft or any other company: it
 is not affiliated with, endorsed or sponsored by them, and it is not an official release. See [Legal](#legal).
@@ -54,7 +56,7 @@ On top of Pazzi7054's port:
 - **HD texture packs** - `.dds` packs as well as `.png`; eight Xbox textures the PS2 packs know under other names are
   found (with Panda_Venom and Stan21's pack, 96.8% of what the game draws gets an HD picture); cut-out pictures keep
   clean edges at every distance; a tool makes HD pictures for the textures a pack lacks; and the launcher shows
-  whether you have a pack, with a switch for it.
+  whether you have a pack, with a switch for it, which the settings menu has too, while playing.
 - **No stutter the first time an effect is drawn** - compiled shaders are kept on disk between sessions.
 - **Anisotropic filtering without a pack** - it sharpens the game's own textures too.
 - **PS2 button layout** - the PS2's button icons (from a PS2 HD pack) and shoulder buttons, as an option.
@@ -66,6 +68,21 @@ On top of Pazzi7054's port:
 - **PS2 stick response, inverted camera and rumble** - Hector walks any way the stick points, as on the PS2, instead
   of snapping to up, down, left and right; the camera's axes can be inverted apart; and both of the controller's
   motors rumble as the game drives them. By Calm-Consideration41.
+- **HD movies** - the story movies played from an HD movie pack in place of the disc's (Calm-Consideration41 upscaled
+  every one), fitted to the screen or filling it, switched on and off in the launcher or while playing. See
+  [HD Movies](#hd-movies). By Calm-Consideration41.
+- **Material maps and surface depth** - with a texture pack that has them (Calm-Consideration41's v4), stone, wood and
+  metal take the light by their normal maps and show depth by their height maps (parallax). By Calm-Consideration41.
+- **Anti-aliasing and upscaling** - AMD FSR on any graphics card, or NVIDIA DLSS on a GeForce RTX, smooth the 3D's
+  edges over the frames, and can draw it below the screen's resolution and rebuild it, for a higher frame rate on a
+  laptop or a handheld; the launcher downloads their files from AMD and NVIDIA. On Linux, where those do not run, the
+  game's own TAA does both. By Calm-Consideration41 (the TAA, this fork's).
+- **Frame generation** (Windows) - a frame made between each two the game draws, by AMD FSR 3 or NVIDIA DLSS, for twice
+  the frame rate on a fast screen. By Calm-Consideration41.
+- **Ambient occlusion** - soft shadow where surfaces meet, with anti-aliasing or without. By Calm-Consideration41.
+- **HDR** (Windows) - fire, magic and light brighter than the rest on an HDR display. By Calm-Consideration41.
+- **16:10 widescreen** - for the Steam Deck and 16:10 monitors, beside 16:9. By Calm-Consideration41.
+- **The settings menu by controller** - LB and RB turn its pages, B and Start close it. By Calm-Consideration41.
 - **Crazy mode and Trevor from the start** - the name codes `@CRAZY` and `@TREVOR` work without beating the game first.
 - **Launcher** - in the game's own look, with the title logo from your HD pack. It chooses the graphics card and says
   whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
@@ -110,7 +127,8 @@ copies will play, and reads the xbe inside a disc image too.
    (`default.xbe` with its `data`, `movie` and `sound` folders). This project does not provide it.
 4. Run `Castlevania.exe` again. The first start builds the game code from your copy, which takes a few minutes and
    shows its progress; press **Start** when it is done. After that the game starts straight away.
-5. Optional: an HD texture pack, see [HD Textures](#hd-textures). The game plays as it is without one.
+5. Optional: an HD texture pack, see [HD Textures](#hd-textures), and HD movies, see [HD Movies](#hd-movies). The game
+   plays as it is without them.
 
 A release contains no game code. `Castlevania.exe` holds the runtime, and the first start makes `Castlevania.dll`
 from your own `default.xbe` with the recompiler, [Clang and LLD](https://llvm.org) in the `compiler` folder. The
@@ -134,9 +152,12 @@ On a freshly installed Windows there is nothing to download besides the release 
    progress; press **Start** when it is done.
 
 `./CastlevaniaLauncher` has every setting, in the same pages and seven languages as on Windows. `lib` holds vkd3d,
-which draws the game's Direct3D 12 with Vulkan; `fonts` the launcher's fonts (URW's P052 for its Palatino, and Material
-Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs installing besides a Vulkan driver
-(see [To Play on Linux](#to-play-on-linux)), and no root.
+which draws the game's Direct3D 12 with Vulkan, and FFmpeg, which plays the HD movies; `fonts` the launcher's fonts
+(URW's P052 for its Palatino, and Material Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs
+installing besides a Vulkan driver (see [To Play on Linux](#to-play-on-linux)), and no root: an HD movie pack plays
+with the FFmpeg in `lib`, and anti-aliasing and upscaling are the game's own TAA, which needs nothing either. HDR and
+frame generation are Windows only for now: AMD's and NVIDIA's libraries are Windows ones, and the Linux build sends
+no HDR picture yet.
 
 ### Windows or Antivirus Warnings
 
@@ -173,6 +194,7 @@ makers' work: they are not part of this project, and are linked here with thanks
 | [Castlevania - Curse of Darkness (USA) HD Remaster](https://gbatemp.net/threads/castlevania-curse-of-darkness-usa-hd-remaster.619688/) | Panda_Venom and Stan21 | On GBAtemp. The pack this port was tested with: 96.8% of what the game draws gets an HD picture. |
 | [VK Curse of Darkness](https://drive.usercontent.google.com/download?id=1rEeBsGLc93pQerT_7j-MwzT-otxhGZl-&authuser=0) | VictorKratos | On Google Drive, a 15 GB `.rar`. |
 | [Castlevania PS2 4K Texture Packs](https://buymeacoffee.com/platinummin/castlevania-ps2-4k-texture-packs) | PlatinumMimic (Calm-Consideration41) | Free, on Buy Me a Coffee; Curse of Darkness and Lament of Innocence. |
+| [CastlevaniaCOD Textures v4](https://drive.google.com/file/d/1tCugvgp1PajfEywF7TVNS7811LgusHlR/view?usp=sharing) | PlatinumMimic (Calm-Consideration41) | On Google Drive, a 12 GB zip. Made for this port: with material maps (normal, ORM and height) for the light and surface depth. |
 
 To add one:
 
@@ -181,11 +203,39 @@ To add one:
    (`textures\SLUS-21168\replacements\...` is fine). The launcher's **Open textures folder** makes that folder.
    Keep one pack in it at a time.
 3. Open `CastlevaniaLauncher.exe`. Its home page says how many pictures it found, and its switch turns the pack on or
-   off. The pack is read when the game starts, so a change applies from the next start.
+   off; so does the settings menu's (F10) **HD texture pack**, while playing.
 
 `.png` and `.dds` pictures are both read. Pictures of a whole texture are used; the pieces of a texture some packs
 also have (`-rWxH` in their names) are not, nor pictures of the PS2's own screen buffers. More on how pictures are
 matched, and on the textures the PS2 packs lack, under [HD Texture Packs](#hd-texture-packs).
+
+A pack with material maps (Calm-Consideration41's v4 has them, in its `materials` folder) gives its pictures light and
+depth: the launcher's Textures page has **Material maps** (on by default) and **Surface depth** (Off, Low, High: how
+deep the height maps look, on the settings menu's Graphics page too).
+
+## HD Movies
+
+Optional. Without them the game plays its own movies, as on the Xbox. Calm-Consideration41 upscaled every story movie
+of the game, and his pack plays them in their place. It is his work, made from the game's movies: it is not part of
+this project, and is linked here with thanks.
+
+| Pack | Made by | Notes |
+|---|---|---|
+| [CastlevaniaCOD-PC HD movies v1](https://drive.google.com/file/d/1V7aZ4XW-ofoc3hzCt0urbAx1yhB9NZkQ/view?usp=sharing) | Calm-Consideration41 | On Google Drive, a 3.9 GB zip. |
+
+To add it:
+
+1. Download the zip and extract it.
+2. Put its `movies` folder beside `Castlevania.exe` (on Linux beside `Castlevania`), so there is a
+   `movies\movies.toml` with the movies beside it.
+3. That is all: the next movie plays in HD. The launcher's View page (**HD movies**, **Movie size**) and the settings
+   menu (F10) turn them off and on and set their size: **Fit** the whole picture as large as the screen shows it,
+   **Fill** the whole screen (the picture's edges cut), **Original** the game's 4:3. A change applies at once, a movie
+   playing too.
+
+On Windows they are decoded by Windows' own Media Foundation, on the graphics card where it can; the N editions of
+Windows lack it until Microsoft's Media Feature Pack is installed. On Linux FFmpeg decodes them, from the release's
+`lib`.
 
 ## Features
 
@@ -201,7 +251,7 @@ make them; **Play** starts the game, with the executable of the release it found
 `assets`, a list beside **Play** chooses which one it starts (`release = "CastlevaniaEU"` or `"Castlevania"` in
 `castlevania.toml`, which `Castlevania` and `CastlevaniaEU` started by themselves follow too, handing the game to the
 other's executable; without it each plays its own release, the USA one by default). Saves and logs are a click away.
-`--page controls` (or home, display, graphics, game, files) opens it on that page. It looks like the game's menus: navy with fog
+`--page controls` (or home, display, graphics, view, textures, game, files) opens it on that page. It looks like the game's menus: navy with fog
 and a teal band, page names on orange banners, the chosen option on a green bar, boxes framed in light blue, Palatino
 for the game's serif. Its home page has the title logo from your HD texture pack (else the name in gold), the crest
 of its icon, and under **Play** the pack's row: how many pictures the `textures` folder has, with the switch for them,
@@ -220,13 +270,14 @@ with (a missing one shows as ?) and says which are missing; `install.py` runs it
 Press **F10** in game for the settings menu, or click both sticks in (**L3 + R3**) on a controller. The key can be
 changed in the launcher (Game tab), for keyboards where F10 needs Fn or is taken by another program. Every change
 applies at once and is saved to `castlevania.toml`. While the menu is open the game gets no input; Escape, the menu
-key or L3 + R3 closes it.
+key or L3 + R3 closes it. A controller runs it all: the d-pad and A choose, LB and RB turn its pages, B or Start
+closes it, and the buttons held as it closes do not reach the game. By Calm-Consideration41.
 
 ### Display
 - **Any Resolution** - Renders at your display's resolution instead of 640x480.
 - **Display Modes** - Fullscreen, borderless or windowed, with vsync.
-- **Widescreen** - On a 16:9 or wider display the game is shown 16:9 with more of the world at the sides (Hor+),
-  without stretching. The HUD, text and movies stay 4:3 in the middle; the backdrops of the menus, the map and the
+- **Widescreen** - On a 16:9 or 16:10 display (16:10 for the Steam Deck's 1280x800 and 16:10 monitors: **Widescreen**
+  16:9 or 16:10) the game is shown in that shape with more of the world at the sides (Hor+), without stretching. The HUD, text and movies stay 4:3 in the middle; the backdrops of the menus, the map and the
   save screens reach the sides, as does the dimmed panel behind a message. Turn it off in the menu (Graphics) for
   the original 4:3 picture.
 - **HUD at the Screen Edges** - In widescreen the health bar, its numbers, the icon at the bottom left and the
@@ -235,6 +286,9 @@ key or L3 + R3 closes it.
   stay as they are.
 - **No Overscan Streaks** - The rows a TV's overscan used to hide at the top and bottom of the picture no longer
   smear; the frame fills the screen.
+- **HDR** (Windows) - On a display with HDR on in Windows, fire, magic, light and the other brightest parts of the
+  picture shine brighter than the rest, up to the peak brightness set; the scene brightness sets the rest. By
+  Calm-Consideration41.
 
 ### HD Texture Packs
 Optional: without a pack the game draws its own textures, as on the Xbox. Texture packs made for PCSX2 work as they are:
@@ -249,8 +303,9 @@ of the 2,000 met in a sweep of every room, 96.8% of their area). Of the rest, so
 doors, a few effects) and some the Xbox changed (the save screens say HARD DISK where the PS2's say MEMORY CARD; the
 HUD's icons have NEW! labels and the d-pad of its own), so the PS2's picture would be wrong for them.
 `tools\texpack\upscale.py` makes pictures for those from the game's own textures (see Testing): 48 pictures for the 24
-textures, which put in `textures` cover the rest of that sweep. The pack is read when the game starts, so the switch
-takes effect from the next start; the in-game menu has none.
+textures, which put in `textures` cover the rest of that sweep. The switch applies at once, the launcher's before
+**Play** or the settings menu's while playing (a game started without the pack reads its pictures' names in the
+background first); the size pictures load at applies from the next start.
 
 ### Graphics
 - **Native Direct3D 12 Renderer** - The game's Direct3D 8 calls, fixed function stages and paletted textures are
@@ -269,6 +324,22 @@ takes effect from the next start; the in-game menu has none.
   rampart has a moon 45,000 units out, its fog ending at 39,000): pushed out, they showed their edges. That sky's
   textures keep the room's own fog, so it looks as the game shows it, while the rest of the room is drawn as far as
   set.
+- **Anti-Aliasing** - Smooth, steady edges on the 3D, gathered over the frames: AMD FSR on any graphics card, NVIDIA
+  DLSS on a GeForce RTX (from the game's next start once chosen), their files downloaded by the launcher's Graphics
+  page from AMD and NVIDIA (the game loads them only signed by AMD or NVIDIA, the launcher checks their SHA-256). On
+  Linux the game's own TAA, as AMD's and NVIDIA's are Windows libraries. The HUD and menus stay sharp. By
+  Calm-Consideration41 (the TAA, this fork's).
+- **Upscaling** - The 3D drawn below the screen's resolution and rebuilt to it by the anti-aliasing: Quality (two
+  thirds across), Balanced or Performance (half), for a higher frame rate on a slower graphics card or a handheld.
+- **Sharpening** - FSR's and the TAA's, 0 to 100% (30% by default).
+- **Ambient Occlusion** - Soft shadow where surfaces meet, Low or High, from the 3D's depth: with anti-aliasing it is
+  smoothed over the frames too. By Calm-Consideration41.
+- **Frame Generation** (Windows) - A frame made between each two the game draws, AMD FSR 3 on any graphics card or
+  NVIDIA DLSS on a GeForce RTX 40 or 50, from the next start: about twice the frames reach the screen while the game
+  keeps its 60. On a screen whose refresh is not a multiple of 120 Hz (60, 144, 165) its frames go without v-sync,
+  as with it AMD's would hold the game under 60 and slow its play; a G-SYNC or FreeSync screen shows them without
+  tearing. By Calm-Consideration41.
+- **Material Maps and Surface Depth** - See [HD Textures](#hd-textures). By Calm-Consideration41.
 - **Shader Cache** - Shaders compiled while playing are kept in `cache\shaders` beside the game, so later sessions
   do not stutter the first time an effect is drawn.
 
@@ -342,7 +413,8 @@ A release needs nothing installed on a fresh Windows but the graphics driver:
   1 GB free to start; its ready page can delete the compiler folder afterwards), besides your game: 3.1 GB as a disc
   image, 2.9 GB extracted (a whole dump of the European disc is 7.8 GB).
 - **Your copy of the game**, the USA or the European release (see [Required Game Version](#required-game-version)).
-- Optional: a controller (Xbox, PlayStation or Switch; the keyboard plays too), and an HD texture pack.
+- Optional: a controller (Xbox, PlayStation or Switch; the keyboard plays too), an HD texture pack and HD movies (on
+  the N editions of Windows with Microsoft's Media Feature Pack).
 
 Everything else comes in the zip or with Windows. The zip has the Visual C++ runtime (`msvcp140.dll`,
 `vcruntime140.dll`, `vcruntime140_1.dll`) and the recompiler, Clang and LLD the first start builds the game code
@@ -434,7 +506,10 @@ packages: `python -I tools\cvtest\suite.py --linux` runs it on Windows and then 
 With Clang, LLD, CMake 3.25 or later, Ninja and the headers SDL needs for X11, Wayland and sound (on Ubuntu:
 `clang lld cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev
 libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libpipewire-0.3-dev
-libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libvulkan-dev spirv-headers libjson-perl bison flex`):
+libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libvulkan-dev spirv-headers libjson-perl bison flex`), and
+FFmpeg for the HD movies: your distribution's (`libavformat-dev libavcodec-dev libswscale-dev libavutil-dev`), or a
+build of its own given to CMake with `-DCV_FFMPEG_DIR=<its prefix>` (the release's: FFmpeg 7.1.2 under the LGPL alone,
+with only its H.264 and HEVC decoders, MP4 demuxer and swscale; `tools/linux/release.sh` has its configure line):
 
 1. Build [vkd3d](https://dl.winehq.org/vkd3d/source/) 2.1 into a folder of its own:
    `./configure --prefix=$HOME/vkd3d --disable-tests --disable-demos && make && make install`.
@@ -448,7 +523,8 @@ libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libvulkan-dev spirv-header
 
 `tools/linux/release.sh 1.0.0` makes `out/release/CastlevaniaCOD-PC-1.0.0-linux.tar.xz` in a
 [Podman](https://podman.io) container of Ubuntu 22.04 (`tools/linux/Containerfile`), so the release runs on glibc 2.35
-and later: both executables and the launcher without the game code, vkd3d's libraries in `lib`, the `compiler` folder
+and later: both executables and the launcher without the game code, vkd3d's and FFmpeg's libraries in `lib`, the
+`compiler` folder
 with LLVM's own Linux Clang and LLD, and the fonts. It checks that nothing of the game went into the package, as
 `release.bat` does. `tools/cvtest/install.py` tests the archive as a player would install it, from Linux or WSL.
 WSL's own Mesa has Vulkan on the processor only (llvmpipe, a few frames per second); Mesa built with
@@ -660,6 +736,8 @@ Changes this game needed beyond the generated config:
   Mesa's dozen (Vulkan on Windows' Direct3D 12), on X11 and Wayland: both releases install, build their game code and
   play the new game, widescreen and room tests at 60 frames per second on the RTX 3060, with the same pictures as on
   Windows. It has not been tried on a Linux PC's own graphics drivers yet.
+- Linux has no HDR and no frame generation yet, and its anti-aliasing and upscaling are the game's own TAA: AMD FSR
+  and NVIDIA DLSS are Windows libraries. The TAA is new and has been tested in the first areas only.
 - With the fog pushed out or off, or Far View on, some rooms' skies show the edges of the painted cards they are
   made of. The Abandoned Castle's rampart keeps its sky as the game shows it; a fix for the other rooms is being
   worked on.
@@ -681,7 +759,10 @@ sponsored by them, and it is not an official product. Nothing here is sold.
 - You need your own copy of the game, the USA or the European Xbox disc, as an `.iso` or its extracted files. This
   project does not provide one, nor tell where to get one.
 - The HD texture packs linked under [HD Textures](#hd-textures) are their makers' own work, made for the PS2 game.
-  They are not part of this repository or its releases, which neither host nor include any of their pictures.
+  They are not part of this repository or its releases, which neither host nor include any of their pictures. The
+  same goes for the HD movie pack linked under [HD Movies](#hd-movies), which is made from the game's movies.
+- AMD's FidelityFX and NVIDIA's DLSS and Streamline libraries are not in the releases either: the launcher downloads
+  them from AMD's and NVIDIA's own releases, under their licences, which it saves beside them.
 - The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an
   executable from `build.bat`, are for your personal use only. Do not distribute them, generated code or game files.
 - Castlevania and Curse of Darkness are trademarks of Konami Digital Entertainment. Xbox is a trademark of
@@ -700,7 +781,12 @@ The source in this repository is released under the [GNU General Public License 
 - [Castlevania-COD-Recomp](https://github.com/Neguchads/Castlevania-COD-Recomp) by Neguchads, for its findings in the
   game: Hector's shadow on the 4X multisample grid, and the addresses of the camera, maps, rooms and enemies.
 - Calm-Consideration41 (PlatinumMimic) for the field of view, draw distance and fog settings, the HUD at the screen's
-  corners, the PS2 stick response, the inverted camera and the rumble.
+  corners, the PS2 stick response, the inverted camera and the rumble; and for the HD movies and their pack, the
+  material maps and surface depth and the textures v4, HDR, AMD FSR and NVIDIA DLSS anti-aliasing, upscaling and frame
+  generation, ambient occlusion, 16:10 widescreen, the settings menu by controller and the launcher's new pages.
+- [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) and
+  [NVIDIA Streamline](https://github.com/NVIDIA-RTX/Streamline) (their headers, MIT) for loading FSR and DLSS.
+- [FFmpeg](https://ffmpeg.org) (LGPL 2.1), which plays the HD movies on Linux.
 - The HD texture packs' makers: Panda_Venom and Stan21
   ([HD Remaster](https://gbatemp.net/threads/castlevania-curse-of-darkness-usa-hd-remaster.619688/)), VictorKratos
   ([VK Curse of Darkness](https://drive.usercontent.google.com/download?id=1rEeBsGLc93pQerT_7j-MwzT-otxhGZl-&authuser=0))
