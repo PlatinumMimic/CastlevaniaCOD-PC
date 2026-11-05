@@ -655,7 +655,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..cd5ff5c 100644
+index fe65837..fdd3862 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,13 +17,16 @@
@@ -3908,7 +3908,7 @@ index fe65837..cd5ff5c 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,29 +5488,2246 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,29 +5488,2257 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -4465,14 +4465,16 @@ index fe65837..cd5ff5c 100644
 +// The bounce lighting's own denoiser, for cards whose anti-aliasing does not denoise (AMD FSR; DLSS without Ray
 +// Reconstruction): this frame's bounce target (rt_gi.hlsl) gathered into what each surface held over the frames before
 +// (rt_gitemporal.hlsl), then smoothed across its neighbours on the same surface by how much it still varies
-+// (rt_giatrous.hlsl, XBE_RT_DN_PASSES passes, 4: taps 1, 2, 4 and 8 texels apart). Lighting's SRVs from slot (the
++// (rt_giatrous.hlsl, XBE_RT_DN_PASSES passes, 5: taps 1, 2, 4, 8 and 16 texels apart). Lighting's SRVs from slot (the
 +// depth, the bounce target, the guides, the motion, then dn_'s); the SRV heap's index of the light to throw back
 +uint32_t D3D12Backend::Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t gw, uint32_t gh, uint32_t rw,
 +                                uint32_t rh) {
 +    static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
 +    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
-+    static const float kFrames = std::clamp(env("XBE_RT_DN_FRAMES", 24), 1.0f, 255.0f),
-+                       kPasses = std::clamp(env("XBE_RT_DN_PASSES", 4), 0.0f, 6.0f),
++    // (32 frames, 5 passes: 1 to 16 texels apart; at 24 and 4 the bounce lighting's low noise stayed as blotches the
++    // size of a floor tile, which the stronger lighting showed)
++    static const float kFrames = std::clamp(env("XBE_RT_DN_FRAMES", 32), 1.0f, 255.0f),
++                       kPasses = std::clamp(env("XBE_RT_DN_PASSES", 5), 0.0f, 6.0f),
 +                       kSigma = env("XBE_RT_DN_SIGMA", 4), kDepth = env("XBE_RT_DN_DEPTH", 0.05f),
 +                       kNormal = env("XBE_RT_DN_NORMAL", 0.8f), kSmoothDepth = env("XBE_RT_DN_SMOOTH_DEPTH", 0.02f),
 +                       kSmoothNormal = env("XBE_RT_DN_SMOOTH_NORMAL", 64);
@@ -4845,12 +4847,13 @@ index fe65837..cd5ff5c 100644
 +    static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
 +    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
 +    // the quality's (RtQuality), unless the environment says: low one ray a pixel at a third of the frame's size,
-+    // reaching 1500; medium one at half, 2000; high two at half, 2500
++    // reaching 1500; medium one at half, 2000; high four at half, 2500 (two left blotches crawling on 5.9's floor,
++    // twice the flicker of ambient occlusion alone; four, as little as it)
 +    const uint32_t q = RtQuality();
 +    static const float kScaleSet = env("XBE_RT_GI_SCALE", 0), kRaysSet = env("XBE_RT_GI_RAYS", 0),
 +                       kReachSet = env("XBE_RT_GI_REACH", 0);
 +    const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
-+    const float kRays = kRaysSet > 0 ? kRaysSet : q == 2 ? 2.0f : 1.0f;
++    const float kRays = kRaysSet > 0 ? kRaysSet : q == 2 ? 4.0f : 1.0f;
 +    const float kReach = kReachSet > 0 ? kReachSet : q == 0 ? 1500.0f : q == 1 ? 2000.0f : 2500.0f;
 +    // XBE_RT_GI_FADE: the distance the bounce lighting has faded out by, from half of it (10000: a room's far wall
 +    // keeps it whole; at 20000 the sky cards past 5.9's rampart, some 15000 off, took the light the rays brought back
@@ -5051,12 +5054,20 @@ index fe65837..cd5ff5c 100644
 +    // room), eased toward from XBE_RT_GI_LIFT_KNEE (0.8) on; cut at 1 before, the walls by the purple lamps doubled to
 +    // a flat purple (the easing keeps their carving)
 +    static const float kLiftMost = env("XBE_RT_GI_LIFT_MOST", 2.0f), kLiftKnee = env("XBE_RT_GI_LIFT_KNEE", 0.8f);
-+    float ap[24] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
++    // XBE_RT_GI_HUE: how much of the light's own hue a surface it raises takes (1: all; 0: white, the surface's own
++    // colour raised), the raise set by the light's brightness alone
++    static const float kLiftHue = env("XBE_RT_GI_HUE", 1.0f);
++    // XBE_RT_GI_MEAN_FLOOR: the least the room's average bounce is taken as for what raises a surface (0.15,
++    // rt_giapply.hlsl), so a dark room's small glows and noise are not raised by how dark it is (at 0 an item's sparkle
++    // on 5.9's night rampart lit a white pool across the floor; at 0.2 2.17's torches lit little)
++    static const float kMeanFloor = env("XBE_RT_GI_MEAN_FLOOR", 0.15f);
++    float ap[28] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
 +                    float(rw), float(rh), float(gw), float(gh),
 +                    float(slot), float(light), std::max(1.0f, kStep), float(kView),
 +                    float(slot + 2), float(slot + 3), mean, fill,
 +                    kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f,
-+                    kLiftMost, kLiftKnee, kFade, 0};
++                    kLiftMost, kLiftKnee, kFade, kLiftHue,
++                    kMeanFloor, 0, 0, 0};
 +    Alloc acb = Upload(256, 256);
 +    std::memcpy(acb.cpu, ap, sizeof(ap));
 +    Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -6167,7 +6178,7 @@ index fe65837..cd5ff5c 100644
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
      ID3D12DescriptorHeap* uh[] = {ui_heap_.Get()};
-@@ -3253,19 +7735,302 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +7746,302 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -6471,7 +6482,7 @@ index fe65837..cd5ff5c 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +8040,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +8051,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -6482,7 +6493,7 @@ index fe65837..cd5ff5c 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +8060,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +8071,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -6503,7 +6514,7 @@ index fe65837..cd5ff5c 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +8084,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +8095,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -6536,7 +6547,7 @@ index fe65837..cd5ff5c 100644
      }
  }
  
-@@ -3312,17 +8117,45 @@ void LogPerf() {
+@@ -3312,17 +8128,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -6586,7 +6597,7 @@ index fe65837..cd5ff5c 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +8164,122 @@ void LogPerf() {
+@@ -3331,25 +8175,122 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -6714,7 +6725,7 @@ index fe65837..cd5ff5c 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +8290,42 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +8301,42 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -6758,7 +6769,7 @@ index fe65837..cd5ff5c 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +8333,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +8344,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -6766,7 +6777,7 @@ index fe65837..cd5ff5c 100644
      ApplySettings();
  }
  
-@@ -3386,13 +8345,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +8356,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -6812,7 +6823,7 @@ index fe65837..cd5ff5c 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +8389,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +8400,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6820,7 +6831,7 @@ index fe65837..cd5ff5c 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +8679,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +8690,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
@@ -9908,10 +9919,10 @@ index 0000000..83c542c
 +}
 diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
 new file mode 100644
-index 0000000..32325ff
+index 0000000..e53582a
 --- /dev/null
 +++ b/runtime/gpu/rt_giapply.hlsl
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,117 @@
 +// Ray traced bounce lighting's second step (rt_gi.hlsl): the light arriving at each surface, gathered by a few rays a
 +// pixel at a part of the frame's size, smoothed across a 5x5 of its texels that lie on the same surface as the pixel
 +// (by their depth and their normal, rt_guide.hlsl's), then put into the frame's 3D at its full size as a gain on the
@@ -9933,7 +9944,9 @@ index 0000000..32325ff
 +                  // (0: none)
 +    float4 gy;    // the most a surface's light is raised (XBE_RT_GI_LIFT_MOST), and up to where it is raised as it
 +                  // gets more, then eased toward that most (XBE_RT_GI_LIFT_KNEE); the distance the bounce pass's light
-+                  // has faded out at (XBE_RT_GI_FADE, rt_gi.hlsl's gi.w)
++                  // has faded out at (XBE_RT_GI_FADE, rt_gi.hlsl's gi.w); how much of the light's hue a lift takes
++                  // (XBE_RT_GI_HUE)
++    float4 gz;    // the least the room's average is taken as (XBE_RT_GI_MEAN_FLOOR, 0: as it is)
 +};
 +#include "rt_scene.hlsli"
 +
@@ -9984,6 +9997,11 @@ index 0000000..32325ff
 +    float3 mean = pictures[NonUniformResourceIndex(uint(gu.z))].Load(int3(0, 0, 0)).rgb;
 +    float lm = Luma(mean);
 +    if (lm <= 1e-5f) return kAsIs;
++    // what raises a surface is set against the room's average or gz.x, the more: a room lit dim all round (5.9's
++    // rampart at night) has an average so low that a small glow's light (an item's sparkle on the floor), and the
++    // rays' noise, were many times it, and lit pools of white and yellow on the floor with nothing there to throw
++    // them. What dims one, against the average as it is, so the room keeps its brightness
++    float lup = max(lm, gz.x);
 +    // a character (the guides' albedo alpha a half) by its own share: the game lights Hector and the enemies apart from
 +    // the room, as brightly in its darkest corner as by its torches, so they stood out lit up against their
 +    // surroundings; with the larger share they take the room's light as the stone beside them does
@@ -9996,14 +10014,20 @@ index 0000000..32325ff
 +    float near = gy.z > 0 ? saturate((gy.z - zc) / (0.5f * gy.z)) : 1;
 +    if (near <= 0) return kAsIs;
 +    light /= max(near, 0.1f);
-+    float dim = share * saturate(1 - Luma(light) / lm);
++    float ll = Luma(light);
++    float dim = share * saturate(1 - ll / lm);
 +    // and a character gains none (XBE_RT_GI_CHAR_BOOST, 0) of what it gets above the average: the game's own lights
-+    // light it already, and added to theirs it stood out brighter than the floor beside it. Twice its own at most
-+    float3 x = (person ? gx.z : gx.x) * share * max(light / lm - 1, 0);
++    // light it already, and added to theirs it stood out brighter than the floor beside it
++    float x = (person ? gx.z : gx.x) * share * max(ll / lup - 1, 0);
 +    // raised as it gets more up to the knee, then eased toward the most rather than cut there: the stone right by
 +    // a purple lamp, doubled, lost its carving to a flat purple
 +    float most = max(gy.x, 1e-3f), knee = clamp(gy.y, 0, most);
-+    float3 lift = select(x < knee, x, knee + (most - knee) * (1 - exp(-(x - knee) / max(most - knee, 1e-3f))));
++    float rise = x < knee ? x : knee + (most - knee) * (1 - exp(-(x - knee) / max(most - knee, 1e-3f)));
++    // by its brightness against the average's, in the light's own hue (gy.w of it, XBE_RT_GI_HUE; the rest white).
++    // Colour by colour, each crossed the average at its own distance from a light, and the floor round a purple
++    // brazier was ringed pink, yellow and green; the light's noise came out as blotches of colour
++    float3 hue = min(light / max(Luma(light), 1e-4f), 4.0f);
++    float3 lift = rise * lerp(float3(1, 1, 1), hue, saturate(gy.w));
 +    lift *= near;
 +    dim *= near;
 +    // under the frame's effects (the anti-aliasing's reactive mask, gx.w its SRV heap index + 1: a glow, a beam of
