@@ -1,0 +1,66 @@
+{
+ "name": "bosshud",
+ "after": "newgame.json",
+ "note": "A boss's health bar at the bottom and the HUD at the bottom left (the Innocent Devils' panel, the command ring): the Executioner of 5.2, whose bar comes up as he breaks through the wall. The HUD's pieces should keep one side through the fight, not break apart or jump (widescreen.cpp HudShift); CV_WIDE_TRACE shows each HUD draw's place and move",
+ "steps": [
+  {
+   "press": "0:warp=5.2,10f:wait:20f",
+   "note": "the corridor of the first enemy, the Executioner"
+  },
+  {
+   "until": "room == 2 and player.active and not loading and not cutscene",
+   "timeout": 30,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:walk=-17000/-20300/150:8000",
+   "note": "near him: he breaks through the wall"
+  },
+  {
+   "until": "not modal and not cutscene and player.active",
+   "poll": "30f:wait",
+   "timeout": 30
+  },
+  {
+   "press": "0:heal,0f:wait:30f",
+   "shot": "boss-0"
+  },
+  {
+   "press": "0:heal,0f:wait:30f",
+   "shot": "boss-1"
+  },
+  {
+   "press": "0:heal,0f:rsl:30f",
+   "shot": "boss-2"
+  },
+  {
+   "press": "0:heal,0f:x:4f,0f:wait:40f",
+   "shot": "boss-3"
+  },
+  {
+   "press": "0:heal,0f:x:4f,0f:wait:40f",
+   "shot": "boss-4"
+  },
+  {
+   "press": "0:heal,0f:wait:60f",
+   "shot": "boss-5"
+  },
+  {
+   "press": "0:heal,0f:x:4f,0f:wait:90f",
+   "shot": "boss-6"
+  },
+  {
+   "press": "0:heal,0f:wait:120f",
+   "shot": "boss-7"
+  }
+ ]
+}

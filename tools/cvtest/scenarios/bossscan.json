@@ -1,0 +1,1051 @@
+{
+ "name": "bossscan",
+ "after": "newgame.json",
+ "note": "Abandoned Castle's rooms one by one, to find the boss whose health bar comes up (the log's \"a boss's health bar up\"): the HUD at the bottom left and the bar centred (widescreen.cpp BossBar)",
+ "steps": [
+  {
+   "press": "0:warp=5.0,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 0 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-0",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.1,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 1 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-1",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.2,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 2 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-2",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.3,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 3 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-3",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.4,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 4 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-4",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.5,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 5 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-5",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.6,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 6 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-6",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.7,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 7 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-7",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.8,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 8 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-8",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.9,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 9 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-9",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.10,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 10 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-10",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.11,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 11 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-11",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.12,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 12 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-12",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.13,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 13 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-13",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.14,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 14 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-14",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.15,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 15 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-15",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.16,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 16 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-16",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.17,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 17 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-17",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.18,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 18 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-18",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.19,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 19 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-19",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.20,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 20 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-20",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.21,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 21 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-21",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.22,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 22 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-22",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.23,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 23 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-23",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.24,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 24 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-24",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.25,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 25 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-25",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.26,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 26 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-26",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.27,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 27 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-27",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.28,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 28 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-28",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.29,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 29 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-29",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.30,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 30 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-30",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.31,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 31 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-31",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.32,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 32 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-32",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.33,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 33 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-33",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.34,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 34 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-34",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.35,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 35 and player.active and not loading",
+   "timeout": 25,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:90f,0:heal,0f:wait:60f",
+   "shot": "5-35",
+   "judge": false,
+   "stop_on_fail": false
+  }
+ ]
+}

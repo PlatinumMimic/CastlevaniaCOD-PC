@@ -532,6 +532,7 @@ public:
         }
         // the HUD, from its first draw to the frame pass, to the screen's edges
         float shift = 0;
+        bool boss_bar = false;
         if (back_buffer_ && d_.target && d_.whole) hud_ = false;
         // a window's page over the world while one is up (a tip: one picture over the whole frame, its words in it):
         // to the screen's sides as a kSides picture is, its edges' black reaching them; it covers the HUD drawn before
@@ -550,7 +551,11 @@ public:
             bool named = std::find(std::begin(kHud), std::end(kHud), d_.name) != std::end(kHud);
             hud_ |= named;
             bool inside = !d_.x.Empty() && !d_.y.Empty() && d_.x.lo >= -2 && d_.x.hi <= d_.gw + 2;
-            if (hud_ && inside) {
+            if (hud_ && inside && BossBar(named)) {
+                // a boss's health bar: in the middle of the screen, where the 4:3 frame centres it, and none of
+                // the HUD's pieces, so the bottom left's keep the side they have outside a boss fight
+                boss_bar = true;
+            } else if (hud_ && inside) {
                 // the draw's own key from frame to frame: its texture, and where its top left lies (a bar's fill
                 // changes its width, a figure its value, in place)
                 uint64_t key = (d_.name ^ 0x9E3779B97F4A7C15ull) * 1099511628211ull ^
@@ -630,7 +635,7 @@ public:
         if (Backdrop(vsc) || SkyCard()) ext[0] = ext[1] = ext[3] = ext[4] = 0;  // not drawn: every vertex at the centre
         else if (hide_water && Water()) ext[0] = ext[1] = 0;
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
-        if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty()) {
+        if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty() && !boss_bar) {
             std::lock_guard lock(g_seen_m);
             (d_.at_point ? g_marker : g_hud) = {frame_, d_.x.lo, d_.x.hi, ext[3]};
             g_frame = frame_;
@@ -648,7 +653,7 @@ public:
                  d_.target ? " target" : "", src_blend, d_.ntex ? " pack " : "",
                  d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "", d_.whole ? "whole, " : "",
                  sides ? "to the sides" : edges ? "edges out" : menu.strip ? "menu strip" : menu.backdrop ? "menu backdrop"
-                 : placed ? "placed" : movie ? "movie" : d_.at_point ? "at a point"
+                 : placed ? "placed" : movie ? "movie" : d_.at_point ? "at a point" : boss_bar ? "boss bar, centred"
                  : shift < 0 ? (menu_ ? "menu left" : "hud left") : shift > 0 ? (menu_ ? "menu right" : "hud right")
                  : squeeze ? "squeezed" : "kept");
         // CV_WIDE_ODD: the draws drawn at the console's shape, each kind once (an enemy's spawn: the 4:3 shape it
@@ -939,41 +944,83 @@ private:
         if (frame_ % 60 == 0) std::erase_if(hud_kept_, [&](const auto& k) { return frame_ - k.second.seen > kHudKeep; });
     }
 
-    // a HUD draw's move: as it moved the frame before, while it is drawn frame after frame in its place (key); a draw
-    // new to the HUD as the piece of the frame before it is in, else as a draw of this frame it touches, else a quad
-    // of the HUD's own textures by itself (a piece's first frame). A part of the HUD keeps its side while it is up: a
-    // boss's health bar coming up against the Innocent Devils' panel at the bottom left joined them into one piece
-    // across the frame, which went back to the 4:3 middle, and as the bar's parts came and went the panel jumped
-    // between the two from frame to frame
+    // a HUD draw's move: as the piece of the frame before it is in, else as a draw of this frame it touches, else a quad
+    // of the HUD's own textures by itself (a piece's first frame). Drawn frame after frame in its place (key), it keeps
+    // the side it has until it has wanted another for kHudSettle frames running: a part of the HUD that comes and goes
+    // for a frame or two joining a piece moves nothing, and a side taken wrongly (the HUD back all at once after a
+    // story scene, its pieces not yet drawn) is put right in a quarter of a second rather than kept
     float HudShift(Rect r, bool quad, uint64_t key) {
         gw_ = d_.gw;
-        r.shift = 0;
-        auto kept = hud_kept_.find(key);
-        bool found = kept != hud_kept_.end() && frame_ - kept->second.seen <= kHudKeep;
-        if (found) r.shift = kept->second.shift;
+        float want = 0;
+        bool found = false;
         for (size_t i = 0; !found && i < pieces_.size(); i++)
             if (Touch(pieces_[i], r)) {
-                r.shift = pieces_[i].shift;
+                want = pieces_[i].shift;
                 found = true;
             }
         for (size_t i = 0; !found && i < rects_.size(); i++)
             if (Touch(rects_[i], r)) {
-                r.shift = rects_[i].shift;
+                want = rects_[i].shift;
                 found = true;
             }
-        if (!found && r.named && quad) r.shift = Side(r);
-        if (hud_kept_.size() < 1024) hud_kept_[key] = {r.shift, frame_};
+        if (!found && r.named && quad) want = Side(r);
+        auto kept = hud_kept_.find(key);
+        if (kept != hud_kept_.end() && frame_ - kept->second.seen <= kHudKeep) {
+            HudKept& k = kept->second;
+            if (want == k.shift) {
+                k.pending_from = 0;
+            } else if (k.pending_from && k.pending == want) {
+                if (frame_ - k.pending_from >= kHudSettle) {
+                    k.shift = want;
+                    k.pending_from = 0;
+                }
+            } else {
+                k.pending = want;
+                k.pending_from = frame_;
+            }
+            k.seen = frame_;
+            r.shift = k.shift;
+        } else {
+            r.shift = want;
+            if (hud_kept_.size() < 1024) hud_kept_[key] = {want, frame_, want, 0};
+        }
         if (rects_.size() < 256) rects_.push_back(r);
         return r.shift;
     }
-    // each HUD draw's move by its key (HudShift), and the frame it was last drawn: kept while it is drawn at least
-    // every kHudKeep frames
+    // each HUD draw's move by its key (HudShift), the frame it was last drawn (kept while it is drawn at least every
+    // kHudKeep frames), and the side it has wanted since pending_from (0: none)
     struct HudKept {
         float shift;
         uint64_t seen;
+        float pending;
+        uint64_t pending_from;
     };
     std::unordered_map<uint64_t, HudKept> hud_kept_;
     static constexpr uint64_t kHudKeep = 90;
+    static constexpr uint64_t kHudSettle = 15;
+
+    // A boss's health bar, a row along the bottom of the frame of the HUD's sheet: its name ("Boss", the sheet's
+    // u 0.8125 to 1, 60 x 17 console pixels) at its left (88..148, y 438..455), its frame and fill to 553. Its name
+    // gives its row, this frame's or the frame before's; the HUD's draws within that row from the name on are the bar's
+    bool BossBar(bool named) {
+        if (!named) return false;
+        float w = d_.x.hi - d_.x.lo, h = d_.y.hi - d_.y.lo;
+        bool label = d_.name == kHud[0] && !d_.u.Empty() && std::fabs(d_.u.lo - 0.8125f) < 0.004f && d_.u.hi > 0.996f &&
+                     w > 50 && w < 70 && h > 13 && h < 22 && d_.y.lo > d_.gh * 0.6f;
+        if (label) {
+            static int said = 0;
+            if (boss_frame_ + 1 < frame_ && said < 16 && ++said)
+                LOGR("wide: a boss's health bar up (its name at x %.0f..%.0f y %.0f..%.0f), centred", d_.x.lo, d_.x.hi,
+                     d_.y.lo, d_.y.hi);
+            boss_row_ = {d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, true, 0};
+            boss_frame_ = frame_;
+            return true;
+        }
+        if (boss_frame_ + 1 < frame_ || boss_frame_ == ~0ull) return false;
+        return d_.y.lo >= boss_row_.y0 - 2 && d_.y.hi <= boss_row_.y1 + 2 && d_.x.lo >= boss_row_.x0 - 2;
+    }
+    Rect boss_row_{};
+    uint64_t boss_frame_ = ~0ull;  // the frame the boss bar's name was last drawn in
 
     // the pause menu (menu_spread). Its sides: -1 left, 0 stays (the page buttons), 1 right, 2 a strip across it,
     // stretched (its title bar: the page's name, a bar and a line under them, drawn as tiles that meet)
