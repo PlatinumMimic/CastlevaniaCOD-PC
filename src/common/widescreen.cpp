@@ -30,7 +30,8 @@
 // that side's screen edge, one about the middle stays, and so does one with none of the HUD's textures. Before the
 // HUD in the frame are the world's 2D effects (glows, sparks), drawn at the points they light, which stay; nothing
 // moves while the pause menu is up, or in a story scene. While a window is up (ModalUp) the HUD stays at the edges:
-// it went back to the 4:3 middle, over the window, as one came up.
+// it went back to the 4:3 middle, over the window, as one came up. The window's own draws after it (from its dimmed
+// panel or its page on) stay on the window.
 //
 // The pause menu across the screen (menu_spread): its pages are a left column (Hector's stats, a list), a middle one
 // (the page buttons and their cursor) and a right one (status, equipment), all in the 4:3 middle, under a title bar
@@ -446,6 +447,11 @@ public:
         bool page = back_buffer_ && modal_ && squeeze && d_.whole && d_.textured && !d_.target && d_.sampled &&
                     !d_.u.Empty() && world_ >= kWorld;
         if (page) hud_ = false;
+        // the rest of a window over the world while one is up: a whole-frame draw after the HUD (the dimmed panel an
+        // item's name and description lie on) ends it, so what is drawn on the window stays on it rather than going
+        // with a piece of the HUD it touches (an item's description, its first 32 letters a draw of their own that
+        // touched the HUD's left column, went to the left edge and the rest of the line stayed)
+        if (back_buffer_ && modal_ && d_.whole && !d_.target && world_ >= kWorld) hud_ = false;
         bool card_fx = (card_now_seen_ || card_before_seen_) && !d_.target && d_.name &&
                        std::find(std::begin(kCardFx), std::end(kCardFx), d_.name) != std::end(kCardFx);
         if (squeeze && hud_free_ && !d_.world && !d_.whole && !d_.target && !card_fx) {
