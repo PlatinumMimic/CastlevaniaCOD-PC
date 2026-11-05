@@ -48,7 +48,7 @@ index d4d3144..f2e4702 100644
 +COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 +OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 diff --git a/cmake/XbeRecomp.cmake b/cmake/XbeRecomp.cmake
-index 22e033f..b4bc6d6 100644
+index 22e033f..09422d6 100644
 --- a/cmake/XbeRecomp.cmake
 +++ b/cmake/XbeRecomp.cmake
 @@ -22,6 +22,11 @@ set(SDL_GPU OFF CACHE BOOL "" FORCE)
@@ -85,7 +85,7 @@ index 22e033f..b4bc6d6 100644
      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_GAME_CONFIGS} ${XBE_COMPILER_DIR}/config
      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_COMPILER_HEADERS} ${XBE_COMPILER_DIR}/include/cpu
      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_FREESTANDING_HEADERS} ${XBE_COMPILER_DIR}/include/freestanding
-@@ -69,12 +82,36 @@ set(XBE_IMGUI_SOURCES
+@@ -69,12 +82,48 @@ set(XBE_IMGUI_SOURCES
      ${imgui_SOURCE_DIR}/imgui_draw.cpp
      ${imgui_SOURCE_DIR}/imgui_tables.cpp
      ${imgui_SOURCE_DIR}/imgui_widgets.cpp
@@ -121,11 +121,23 @@ index 22e033f..b4bc6d6 100644
 +    find_library(XBE_VKD3D_SHADER_LIB vkd3d-shader PATHS ${XBE_VKD3D_DIR}/lib REQUIRED)
 +    find_package(Vulkan REQUIRED)
 +    get_filename_component(XBE_VKD3D_LIB_DIR ${XBE_VKD3D_LIB} DIRECTORY)
++    # AMD FSR 3's upscaler on Vulkan (runtime/linux/fsr_vk.cpp): the FidelityFX SDK 1.1.4's Linux fork, its sdk folder
++    # once built (include, bin/ffx_sdk); without it AMD FSR's place is the renderer's own TAA
++    set(XBE_FSR_VK_DIR "" CACHE PATH "the FidelityFX SDK's sdk folder, built for Vulkan on Linux")
++    if(NOT "${XBE_FSR_VK_DIR}" STREQUAL "")
++        find_library(XBE_FSR_VK_UPSCALER ffx_fsr3upscaler_x64 PATHS ${XBE_FSR_VK_DIR}/bin/ffx_sdk REQUIRED NO_DEFAULT_PATH)
++        find_library(XBE_FSR_VK_BACKEND ffx_backend_vk_x64 PATHS ${XBE_FSR_VK_DIR}/bin/ffx_sdk REQUIRED NO_DEFAULT_PATH)
++        set(XBE_FSR_VK_LIBS ${XBE_FSR_VK_UPSCALER} ${XBE_FSR_VK_BACKEND})
++        set_property(SOURCE ${XBE_SDK_DIR}/runtime/linux/fsr_vk.cpp APPEND PROPERTY INCLUDE_DIRECTORIES
++                     ${XBE_FSR_VK_DIR}/include)
++        set_property(SOURCE ${XBE_SDK_DIR}/runtime/linux/fsr_vk.cpp APPEND PROPERTY COMPILE_DEFINITIONS
++                     XBE_FSR_VK UNICODE _UNICODE)
++    endif()
 +endif()
  
  # One executable per recompiled image: the SDK runtime, XBE_HOST_SOURCES shared by every image of the game, and
  # src/<game_dir> hooks only this image has. The image's code goes to <target>.dll beside it, which the executable delay
-@@ -82,20 +119,38 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
+@@ -82,20 +131,38 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
  # release leaves it out and the executable builds it from the player's xbe (runtime/app/game_code.cpp, which compiles
  # with the same flags). Expects assets/<xbe> and the config's out = "generated/<game_dir>". At run time the game may be
  # a disc image instead.
@@ -168,7 +180,7 @@ index 22e033f..b4bc6d6 100644
          COMMAND ${CMAKE_COMMAND} -E touch ${GEN}/codegen.stamp
          DEPENDS xbe_recomp ${configs} ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe}
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-@@ -107,34 +162,116 @@ function(add_xbe_image target xbe config partitions game_dir)
+@@ -107,34 +174,117 @@ function(add_xbe_image target xbe config partitions game_dir)
      set(xbe_file ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe})
      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${xbe_file})
      file(SHA1 ${xbe_file} xbe_sha1)
@@ -219,7 +231,8 @@ index 22e033f..b4bc6d6 100644
 +        target_include_directories(${target} SYSTEM PRIVATE ${XBE_VKD3D_INCLUDE} ${stb_SOURCE_DIR})
 +        target_compile_definitions(${target} PRIVATE XBE_CODE_LIBRARY NOMINMAX WIDL_EXPLICIT_AGGREGATE_RETURNS)
 +        target_link_libraries(${target} PRIVATE tomlplusplus::tomlplusplus $<LINK_ONLY:SDL3::SDL3-static>
-+                              ${XBE_VKD3D_LIB} ${XBE_VKD3D_UTILS_LIB} ${XBE_VKD3D_SHADER_LIB} Vulkan::Vulkan dl pthread)
++                              ${XBE_FSR_VK_LIBS} ${XBE_VKD3D_LIB} ${XBE_VKD3D_UTILS_LIB} ${XBE_VKD3D_SHADER_LIB}
++                              Vulkan::Vulkan dl pthread)
 +        # exports what the library calls; a release's libraries in lib beside it, a build's where vkd3d is
 +        set_target_properties(${target} PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH "\$ORIGIN/lib;${XBE_VKD3D_LIB_DIR}"
 +                              INSTALL_RPATH "\$ORIGIN/lib")
@@ -1692,7 +1705,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..d85b83c 100644
+index fe65837..5ae056d 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,6 +15,8 @@
@@ -1704,7 +1717,7 @@ index fe65837..d85b83c 100644
  #include <cmath>
  #include <cstdio>
  #include <cstring>
-@@ -27,13 +29,21 @@
+@@ -27,13 +29,22 @@
  
  #include <imgui.h>
  #include <backends/imgui_impl_dx12.h>
@@ -1712,6 +1725,7 @@ index fe65837..d85b83c 100644
  #include <backends/imgui_impl_win32.h>
 +#else
 +// Linux: D3D12 is vkd3d's on Vulkan, the swap chain and ImGui's input SDL's (linux/)
++#include "linux/fsr_vk.h"
 +#include "linux/present.h"
 +#include "linux/sdl_app.h"
 +#endif
@@ -1726,7 +1740,7 @@ index fe65837..d85b83c 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +62,29 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +63,29 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -1756,7 +1770,7 @@ index fe65837..d85b83c 100644
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +101,7 @@ struct Perf {
+@@ -72,6 +102,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -1764,7 +1778,7 @@ index fe65837..d85b83c 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,10 +124,37 @@ struct Perf {
+@@ -94,10 +125,37 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
@@ -1802,7 +1816,7 @@ index fe65837..d85b83c 100644
  struct PerfScope {
      double& acc;
      bool on = diag::Perf();
-@@ -140,6 +197,63 @@ float4 psmain(O i) : SV_Target {
+@@ -140,6 +198,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -1866,7 +1880,7 @@ index fe65837..d85b83c 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -148,6 +262,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+@@ -148,6 +263,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
  constexpr float kDepthFar = 0;
  
  const char* kDepthHlsl = R"(
@@ -1874,7 +1888,7 @@ index fe65837..d85b83c 100644
  Texture2D<float> img : register(t0);
  SamplerState ps : register(s1);
  struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
-@@ -157,7 +272,7 @@ O vs(uint id : SV_VertexID) {
+@@ -157,7 +273,7 @@ O vs(uint id : SV_VertexID) {
      o.p = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
      return o;
  }
@@ -1883,7 +1897,7 @@ index fe65837..d85b83c 100644
  )";
  
  const char* kClearHlsl = R"(
-@@ -345,6 +460,17 @@ struct Tex {
+@@ -345,6 +461,17 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -1901,7 +1915,7 @@ index fe65837..d85b83c 100644
  };
  
  struct PsoKey {
-@@ -377,6 +503,8 @@ struct PsoKey {
+@@ -377,6 +504,8 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
@@ -1910,7 +1924,7 @@ index fe65837..d85b83c 100644
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +515,7 @@ struct BlitOptions {
+@@ -387,6 +516,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -1918,7 +1932,7 @@ index fe65837..d85b83c 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +530,15 @@ struct ShrinkOptions {
+@@ -401,11 +531,15 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -1936,7 +1950,7 @@ index fe65837..d85b83c 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -549,6 +682,8 @@ private:
+@@ -549,6 +683,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -1945,7 +1959,7 @@ index fe65837..d85b83c 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -565,10 +700,10 @@ private:
+@@ -565,10 +701,10 @@ private:
      ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
      void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
      void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
@@ -1958,7 +1972,7 @@ index fe65837..d85b83c 100644
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,7 +718,7 @@ private:
+@@ -583,7 +719,7 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -1967,7 +1981,7 @@ index fe65837..d85b83c 100644
      void SetBlendFactorStencilRef(const State& s);
      void UpdateTargetUsed(uint32_t data);
      void DrawGeometry(const Assembled& a);
-@@ -598,10 +733,16 @@ private:
+@@ -598,10 +734,16 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -1984,7 +1998,7 @@ index fe65837..d85b83c 100644
      void CreateHeaps();
      uint32_t CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE t, uint32_t n, bool visible, ComPtr<ID3D12DescriptorHeap>& out);
      void CreateBackBufferViews();
-@@ -613,10 +754,58 @@ private:
+@@ -613,10 +755,59 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -2015,6 +2029,7 @@ index fe65837..d85b83c 100644
 +    // the own TAA's pass (framegen::MakeOwnTaa) over the frame, in AntiAliasFrame; false when it can't
 +    bool TaaFrame(Target& t, const framegen::AntiAlias::Frame& f);
 +    const char* AaName() const {
++        if (aa_ && aa_->VulkanImages()) return "AMD FSR (Vulkan)";
 +        return aa_ && aa_->Own() ? "TAA" : framegen::AntiAliasName(aa_ ? aa_->Kind() : 0);
 +    }
 +    ID3D12PipelineState* EnsureAoApplyPipeline(DXGI_FORMAT rtv);
@@ -2043,7 +2058,7 @@ index fe65837..d85b83c 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -665,6 +854,7 @@ private:
+@@ -665,6 +856,7 @@ private:
          uint32_t color;
          float z;
          uint32_t stencil;
@@ -2051,7 +2066,7 @@ index fe65837..d85b83c 100644
      };
      void ClearTarget(Target& t, const State& s, const ClearArgs& c, std::vector<D3D12_RECT>& rs);
      void ClearChannels(Target& t, const float col[4], uint8_t mask, const std::vector<D3D12_RECT>& rs);
-@@ -675,8 +865,9 @@ private:
+@@ -675,8 +867,9 @@ private:
          uint32_t src_rects;
          uint32_t dst_points;
      };
@@ -2062,7 +2077,7 @@ index fe65837..d85b83c 100644
      void CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state, Target& dst_t,
                        const CopyList& l);
      // the target as a guest sized BGRA copy source, and the shrunk copy that holds it when it is not one already
-@@ -691,10 +882,16 @@ private:
+@@ -691,10 +884,16 @@ private:
      ID3D12Resource* PrepareLateSource(Target& t, Late& l);
      void RecordLateCopy(Late& l, uint32_t slot, ID3D12Resource* src);
  
@@ -2079,7 +2094,7 @@ index fe65837..d85b83c 100644
      ComPtr<ID3D12Resource> bb_[kFrames];
      ComPtr<ID3D12Fence> fence_;
      HANDLE event_ = nullptr;
-@@ -708,6 +905,9 @@ private:
+@@ -708,6 +907,9 @@ private:
      // the constants last uploaded in this command list, reused while a draw's are the same; 0 after a submit
      decltype(State::vsc) last_vsc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_vsc_gpu_ = 0;
@@ -2089,7 +2104,7 @@ index fe65837..d85b83c 100644
      DrawConstants last_dc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_dc_gpu_ = 0;
      ComPtr<ID3D12GraphicsCommandList> cl_;
-@@ -766,6 +966,10 @@ private:
+@@ -766,6 +968,10 @@ private:
      uint32_t bb_w_ = 0;
      uint32_t bb_h_ = 0;
      float scale_ = 1.0f;
@@ -2100,7 +2115,7 @@ index fe65837..d85b83c 100644
      // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
      struct Late {
          ComPtr<ID3D12Resource> rb[kFrames];
-@@ -801,6 +1005,137 @@ private:
+@@ -801,6 +1007,142 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -2203,6 +2218,11 @@ index fe65837..d85b83c 100644
 +    ComPtr<ID3D12Resource> aa_depth_, aa_motion_, aa_out_;
 +    // its reactive mask (EnsureReactive): R8 at the frame target's size, the frame's effects' share of each pixel
 +    ComPtr<ID3D12Resource> aa_rx_;
++    // Linux's AMD FSR on Vulkan: the frame's colour and effects copied into images of its own (VulkanImages); the
++    // targets above made as its own images too when aa_vk_
++    ComPtr<ID3D12Resource> aa_vk_color_, aa_vk_rx_;
++    D3D12_RESOURCE_STATES aa_vk_color_state_{}, aa_vk_rx_state_{};
++    bool aa_vk_ = false;
 +    D3D12_RESOURCE_STATES aa_rx_state_{};
 +    uint32_t aa_rx_w_ = 0, aa_rx_h_ = 0;
 +    uint64_t aa_rx_frame_ = UINT64_MAX;  // the frame it was cleared for
@@ -2238,7 +2258,7 @@ index fe65837..d85b83c 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -811,9 +1146,13 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -811,9 +1153,13 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      g_reversed_depth = true;
      guest_w_ = width;
      guest_h_ = height;
@@ -2254,7 +2274,7 @@ index fe65837..d85b83c 100644
      CreateHeaps();
      CreateBackBufferViews();
      if (!CreateRootSignature()) return false;
-@@ -827,19 +1166,71 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -827,19 +1173,71 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      return true;
  }
  
@@ -2330,7 +2350,7 @@ index fe65837..d85b83c 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -850,6 +1241,8 @@ bool D3D12Backend::CreateDevice() {
+@@ -850,6 +1248,8 @@ bool D3D12Backend::CreateDevice() {
      D3D12_COMMAND_QUEUE_DESC qd{};
      qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
      dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue_));
@@ -2339,7 +2359,7 @@ index fe65837..d85b83c 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -857,6 +1250,40 @@ bool D3D12Backend::CreateDevice() {
+@@ -857,6 +1257,40 @@ bool D3D12Backend::CreateDevice() {
      return true;
  }
  
@@ -2380,7 +2400,7 @@ index fe65837..d85b83c 100644
  bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      RECT rc;
      GetClientRect(hwnd, &rc);
-@@ -871,6 +1298,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1305,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -2392,7 +2412,7 @@ index fe65837..d85b83c 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -880,6 +1312,7 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -880,6 +1319,7 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sc1.As(&swap_);
      return true;
  }
@@ -2400,7 +2420,7 @@ index fe65837..d85b83c 100644
  
  uint32_t D3D12Backend::CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE t, uint32_t n, bool visible,
                                    ComPtr<ID3D12DescriptorHeap>& out) {
-@@ -899,9 +1332,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1339,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -2413,7 +2433,7 @@ index fe65837..d85b83c 100644
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,7 +1345,7 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,7 +1352,7 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -2422,7 +2442,7 @@ index fe65837..d85b83c 100644
      ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
      ranges[1].NumDescriptors = 4;
      D3D12_ROOT_PARAMETER params[4] = {};
-@@ -946,7 +1380,11 @@ void D3D12Backend::CreateFrames() {
+@@ -946,7 +1387,11 @@ void D3D12Backend::CreateFrames() {
          f.upload->Map(0, nullptr, reinterpret_cast<void**>(&f.map));
      }
      dev_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_));
@@ -2434,7 +2454,7 @@ index fe65837..d85b83c 100644
      dev_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, frames_[0].alloc.Get(), nullptr, IID_PPV_ARGS(&cl_));
  }
  
-@@ -958,8 +1396,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1403,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -2447,7 +2467,7 @@ index fe65837..d85b83c 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -1001,7 +1443,11 @@ void D3D12Backend::Flush() { Submit(true); }
+@@ -1001,7 +1450,11 @@ void D3D12Backend::Flush() { Submit(true); }
  
  void D3D12Backend::WaitFence(uint64_t value) {
      fence_->SetEventOnCompletion(value, event_);
@@ -2459,7 +2479,7 @@ index fe65837..d85b83c 100644
  }
  
  void D3D12Backend::SetFullViewport(uint32_t w, uint32_t h) {
-@@ -1063,12 +1509,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1516,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
      b.Transition.StateBefore = cur;
      b.Transition.StateAfter = want;
      cl_->ResourceBarrier(1, &b);
@@ -2475,7 +2495,7 @@ index fe65837..d85b83c 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1528,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1535,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -2484,7 +2504,7 @@ index fe65837..d85b83c 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,25 +1646,168 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,25 +1653,168 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -2559,10 +2579,10 @@ index fe65837..d85b83c 100644
 +        float none[4] = {};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kAaRxRtv, rtv_inc_), none, 0, nullptr);
 +        aa_rx_frame_ = presents_;
-+    }
-+    return true;
-+}
-+
+     }
+     return true;
+ }
+ 
 +// the motion target at the frame target's size, cleared to kNoMotion once a frame; false when it can't be made
 +bool D3D12Backend::EnsureObjectMotion(const Target& rt) {
 +    if (!fg_objmv_ || fg_objmv_w_ != rt.w || fg_objmv_h_ != rt.h) {
@@ -2589,10 +2609,10 @@ index fe65837..d85b83c 100644
 +        float none[4] = {kNoMotion, kNoMotion, 0, 0};
 +        cl_->ClearRenderTargetView(Cpu(rtv_heap_.Get(), kFgObjRtv, rtv_inc_), none, 0, nullptr);
 +        fg_objmv_frame_ = presents_;
-     }
-     return true;
- }
- 
++    }
++    return true;
++}
++
 +// A 3D draw found again in the next frame by what it draws, as the game streams its meshes into buffers that move from
 +// frame to frame: its program, its first vertices and indices, its counts and first texture. A skinned mesh's vertices
 +// are its pose at rest, so it is found as its bones move.
@@ -2656,7 +2676,7 @@ index fe65837..d85b83c 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1260,8 +1852,11 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,8 +1859,11 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -2668,7 +2688,7 @@ index fe65837..d85b83c 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -1282,6 +1877,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +1884,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -2676,7 +2696,7 @@ index fe65837..d85b83c 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +1923,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +1930,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -2684,7 +2704,7 @@ index fe65837..d85b83c 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1350,6 +1947,7 @@ void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
+@@ -1350,6 +1954,7 @@ void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
      CurrentFrame().garbage.push_back(tex);
      t.epoch = DirtyEpoch(t.data);
      t.sig = MemSig(t.data, t.bytes);
@@ -2692,7 +2712,7 @@ index fe65837..d85b83c 100644
  }
  
  // samplers_ key of the full screen passes' samplers, apart from the stage samplers' hashed keys
-@@ -1397,23 +1995,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +2002,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -2723,8 +2743,8 @@ index fe65837..d85b83c 100644
 -    DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
 +    ID3D12PipelineState* pso = o.hdr ? EnsureHdrPipeline(o.hdr) : EnsureBlitPipeline(o.rtv, o.over);
 +    if (pso) DrawFullScreen(pso, cb.gpu, slot, si);
- }
- 
++}
++
 +namespace {
 +
 +constexpr UINT kCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL1;
@@ -2779,14 +2799,14 @@ index fe65837..d85b83c 100644
 +    std::error_code ec;
 +    if (ok) std::filesystem::rename(tmp, file, ec);
 +    if (!ok || ec) std::filesystem::remove(tmp, ec);
-+}
-+
+ }
+ 
 +}  // namespace
 +
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +2085,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +2092,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -2808,7 +2828,7 @@ index fe65837..d85b83c 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +2104,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +2111,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -2816,7 +2836,7 @@ index fe65837..d85b83c 100644
      return code.Get();
  }
  
-@@ -1477,6 +2148,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +2155,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -2846,7 +2866,7 @@ index fe65837..d85b83c 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2304,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2311,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -2881,7 +2901,7 @@ index fe65837..d85b83c 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2370,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +2377,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -2893,7 +2913,7 @@ index fe65837..d85b83c 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,6 +2394,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +2401,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -2901,7 +2921,7 @@ index fe65837..d85b83c 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1692,6 +2413,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +2420,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -2911,7 +2931,7 @@ index fe65837..d85b83c 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2427,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +2434,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -2926,7 +2946,7 @@ index fe65837..d85b83c 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2457,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +2464,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -2937,7 +2957,7 @@ index fe65837..d85b83c 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2577,68 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +2584,68 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -3006,7 +3026,7 @@ index fe65837..d85b83c 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1861,7 +2657,8 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1861,7 +2664,8 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
          tx.palette = palette.hash;
          const uint8_t* p = static_cast<const uint8_t*>(kernel::HostPtr(d.data));
          auto perf_t = PerfClock::now();
@@ -3016,7 +3036,7 @@ index fe65837..d85b83c 100644
          g_perf.sig += PerfMs(perf_t);
          if (sig != tx.sig || !same) {
              PerfScope perf_up{g_perf.texup};
-@@ -1870,7 +2667,45 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,7 +2674,45 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -3062,7 +3082,7 @@ index fe65837..d85b83c 100644
      }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
-@@ -1969,7 +2804,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+@@ -1969,7 +2811,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
  constexpr uint32_t kTaddressWrap = 1;
  constexpr uint32_t kTaddressClamp = 3;
  
@@ -3074,7 +3094,7 @@ index fe65837..d85b83c 100644
      D3D12_SAMPLER_DESC sd = {};
      const auto& t = s.tss[size_t(i)];
      uint32_t mag = t[kTssMagFilter];
-@@ -1982,8 +2820,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2827,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -3092,7 +3112,7 @@ index fe65837..d85b83c 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2838,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2845,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -3103,7 +3123,7 @@ index fe65837..d85b83c 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2009,7 +2856,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -2009,7 +2863,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
  uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
      D3D12_SAMPLER_DESC sd[4];
      uint32_t aniso = app::Get().aniso;
@@ -3113,7 +3133,7 @@ index fe65837..d85b83c 100644
      uint64_t key = Hash(sd, sizeof(sd));
      auto it = samplers_.find(key);
      if (it != samplers_.end()) return it->second;
-@@ -2144,9 +2992,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2144,9 +2999,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -3126,7 +3146,7 @@ index fe65837..d85b83c 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +3013,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +3020,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -3135,7 +3155,7 @@ index fe65837..d85b83c 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +3066,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +3073,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -3158,7 +3178,7 @@ index fe65837..d85b83c 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +3104,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +3111,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -3169,7 +3189,7 @@ index fe65837..d85b83c 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2433,28 +3301,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +3308,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
      c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
@@ -3248,7 +3268,7 @@ index fe65837..d85b83c 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2469,6 +3378,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+@@ -2469,6 +3385,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
      if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
      binds_.vsc = last_vsc_gpu_;
      binds_.dc = last_dc_gpu_;
@@ -3256,7 +3276,7 @@ index fe65837..d85b83c 100644
  }
  
  void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
-@@ -2577,6 +3487,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +3494,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -3280,7 +3300,7 @@ index fe65837..d85b83c 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3521,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3528,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -3291,7 +3311,7 @@ index fe65837..d85b83c 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3536,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3543,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -3348,7 +3368,7 @@ index fe65837..d85b83c 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2808,6 +3751,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +3758,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -3356,7 +3376,7 @@ index fe65837..d85b83c 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +3759,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +3766,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -3369,7 +3389,7 @@ index fe65837..d85b83c 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +3777,89 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +3784,89 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -3461,7 +3481,7 @@ index fe65837..d85b83c 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +3869,22 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +3876,22 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -3488,7 +3508,7 @@ index fe65837..d85b83c 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +3900,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +3907,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -3504,7 +3524,7 @@ index fe65837..d85b83c 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2912,6 +3932,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2912,6 +3939,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          }
      }
      t.drawn = true;
@@ -3512,7 +3532,7 @@ index fe65837..d85b83c 100644
  }
  
  // ClearChannels' pipeline for the target format and channel mask, kept in blit_psos_; null when it can't be made
-@@ -2961,7 +3982,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +3989,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -3523,7 +3543,7 @@ index fe65837..d85b83c 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +4066,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +4073,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -3543,7 +3563,7 @@ index fe65837..d85b83c 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +4084,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +4091,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -3552,7 +3572,7 @@ index fe65837..d85b83c 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,13 +4093,15 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,13 +4100,15 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -3569,7 +3589,7 @@ index fe65837..d85b83c 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -3084,7 +4112,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +4119,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -3578,7 +3598,7 @@ index fe65837..d85b83c 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +4122,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +4129,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -3597,7 +3617,7 @@ index fe65837..d85b83c 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3111,6 +4139,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3111,6 +4146,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          cl_->CopyTextureRegion(&dl, dx, dy, 0, &sl, &b);
      }
      dst_t.drawn = true;
@@ -3605,7 +3625,7 @@ index fe65837..d85b83c 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -3136,6 +4165,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +4172,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -3621,7 +3641,7 @@ index fe65837..d85b83c 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3150,21 +4188,127 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3150,21 +4195,127 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
  }
  
  void D3D12Backend::ResizeSwap() {
@@ -3751,7 +3771,7 @@ index fe65837..d85b83c 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,16 +4323,23 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,16 +4330,23 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -3778,7 +3798,7 @@ index fe65837..d85b83c 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4374,1143 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4381,1211 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3893,10 +3913,55 @@ index fe65837..d85b83c 100644
 +// anti-aliasing's depth and motion at the frame's size (drawn as frame generation's are), and AMD's output in the
 +// frame's format when the card can write it so, then copied back; else RGBA and drawn back
 +bool D3D12Backend::EnsureAaTargets(uint32_t w, uint32_t h, DXGI_FORMAT fmt) {
-+    if (aa_depth_ && aa_motion_ && aa_out_ && aa_w_ == w && aa_h_ == h && aa_fmt_ == fmt) return true;
++    bool vk = aa_ && aa_->VulkanImages();
++    if (aa_depth_ && aa_motion_ && aa_out_ && aa_w_ == w && aa_h_ == h && aa_fmt_ == fmt && aa_vk_ == vk) return true;
++#ifndef _WIN32
++    if (aa_vk_) {
++        // FSR's own images: released once the GPU is done with them, then their Vulkan images freed
++        Flush();
++        for (ComPtr<ID3D12Resource>* r : {std::addressof(aa_depth_), std::addressof(aa_motion_), std::addressof(aa_out_),
++                                          std::addressof(aa_vk_color_), std::addressof(aa_vk_rx_)}) {
++            ID3D12Resource* raw = r->Get();
++            *r = nullptr;
++            if (raw) linux_fsr::DropImage(raw);
++        }
++        aa_vk_ = false;
++    }
++#endif
 +    if (aa_depth_) Release(std::move(aa_depth_));
 +    if (aa_motion_) Release(std::move(aa_motion_));
 +    if (aa_out_) Release(std::move(aa_out_));
++    if (aa_vk_color_) Release(std::move(aa_vk_color_));
++    if (aa_vk_rx_) Release(std::move(aa_vk_rx_));
++#ifndef _WIN32
++    if (vk) {
++        // Linux's AMD FSR on Vulkan: every input and the output an image of its own, in COMMON (Vulkan's GENERAL)
++        auto own = [&](ComPtr<ID3D12Resource>& r, D3D12_RESOURCE_STATES& st, DXGI_FORMAT f, bool rt) {
++            r.Attach(linux_fsr::MakeImage(dev_.Get(), w, h, f, rt));
++            st = D3D12_RESOURCE_STATE_COMMON;
++            return r != nullptr;
++        };
++        bool made = own(aa_depth_, aa_depth_state_, DXGI_FORMAT_R32_FLOAT, true) &&
++                    own(aa_motion_, aa_motion_state_, DXGI_FORMAT_R16G16_FLOAT, true) &&
++                    own(aa_out_, aa_out_state_, DXGI_FORMAT_R8G8B8A8_UNORM, false) &&
++                    own(aa_vk_color_, aa_vk_color_state_, fmt, false) &&
++                    own(aa_vk_rx_, aa_vk_rx_state_, DXGI_FORMAT_R8_UNORM, false);
++        if (made) {
++            dev_->CreateRenderTargetView(aa_depth_.Get(), nullptr, Cpu(rtv_heap_.Get(), kAaRtv, rtv_inc_));
++            dev_->CreateRenderTargetView(aa_motion_.Get(), nullptr, Cpu(rtv_heap_.Get(), kAaRtv + 1, rtv_inc_));
++            aa_out_fmt_ = DXGI_FORMAT_R8G8B8A8_UNORM;
++            aa_w_ = w;
++            aa_h_ = h;
++            aa_fmt_ = fmt;
++            aa_vk_ = true;
++            return true;
++        }
++        LOGR("antialias: AMD FSR's images were not made at %ux%u", w, h);
++        aa_depth_ = aa_motion_ = aa_out_ = aa_vk_color_ = aa_vk_rx_ = nullptr;
++        return false;
++    }
++#endif
++    aa_vk_ = false;
 +    auto rt = [&](ComPtr<ID3D12Resource>& r, D3D12_RESOURCE_STATES& st, DXGI_FORMAT f, uint32_t rtv) {
 +        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
 +        D3D12_RESOURCE_DESC td = Texture2DDesc(f, w, h);
@@ -4233,7 +4298,30 @@ index fe65837..d85b83c 100644
 +    aa_t_ = now;
 +    aa_had_view_ = have;
 +    bool taa = aa_->Own();
-+    bool ran = taa ? TaaFrame(t, f) : aa_->Run(cl_.Get(), f);
++    bool ran = false;
++    if (aa_->VulkanImages() && aa_vk_) {
++        // Linux's AMD FSR on Vulkan: the frame's colour and effects copied into its own images, every input and the
++        // output in COMMON (Vulkan's GENERAL), the frame so far submitted and done; FSR then runs on the queue, and
++        // the frame goes on after it
++        Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_SOURCE);
++        Transition(aa_vk_color_.Get(), aa_vk_color_state_, D3D12_RESOURCE_STATE_COPY_DEST);
++        cl_->CopyResource(aa_vk_color_.Get(), t.res.Get());
++        if (rx) {
++            Transition(aa_rx_.Get(), aa_rx_state_, D3D12_RESOURCE_STATE_COPY_SOURCE);
++            Transition(aa_vk_rx_.Get(), aa_vk_rx_state_, D3D12_RESOURCE_STATE_COPY_DEST);
++            cl_->CopyResource(aa_vk_rx_.Get(), aa_rx_.Get());
++        }
++        for (auto [r, st] : {std::pair{aa_vk_color_.Get(), &aa_vk_color_state_}, std::pair{aa_vk_rx_.Get(), &aa_vk_rx_state_},
++                             std::pair{aa_depth_.Get(), &aa_depth_state_}, std::pair{aa_motion_.Get(), &aa_motion_state_},
++                             std::pair{aa_out_.Get(), &aa_out_state_}})
++            Transition(r, *st, D3D12_RESOURCE_STATE_COMMON);
++        Flush();
++        f.color = aa_vk_color_.Get();
++        f.reactive = rx ? aa_vk_rx_.Get() : nullptr;
++        ran = aa_->RunQueue(f);
++    } else {
++        ran = taa ? TaaFrame(t, f) : aa_->Run(cl_.Get(), f);
++    }
 +    if (ran) {
 +        if (!aa_said_) {
 +            LOGR("antialias: %s on the frame's 3D at %ux%u%s", AaName(), t.w, t.h,
@@ -4927,7 +5015,7 @@ index fe65837..d85b83c 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +5519,209 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5594,209 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -5138,7 +5226,7 @@ index fe65837..d85b83c 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +5731,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5806,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -5149,7 +5237,7 @@ index fe65837..d85b83c 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +5751,12 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5826,12 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -5162,7 +5250,7 @@ index fe65837..d85b83c 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +5767,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +5842,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -5195,7 +5283,7 @@ index fe65837..d85b83c 100644
      }
  }
  
-@@ -3317,12 +5805,14 @@ void LogPerf() {
+@@ -3317,12 +5880,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -5214,7 +5302,7 @@ index fe65837..d85b83c 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +5821,98 @@ void LogPerf() {
+@@ -3331,25 +5896,98 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -5318,7 +5406,7 @@ index fe65837..d85b83c 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +5923,33 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +5998,33 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -5352,7 +5440,7 @@ index fe65837..d85b83c 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +5968,44 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +6043,50 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -5371,13 +5459,19 @@ index fe65837..d85b83c 100644
 +    if (kind == framegen::kAaFsr || (kind == framegen::kAaDlss && !pick)) {
 +        if (!aa_fsr_ && !aa_fsr_tried_) {
 +            aa_fsr_tried_ = true;
++#ifdef _WIN32
 +            aa_fsr_ = OwnTaaChosen() ? framegen::MakeOwnTaa() : framegen::MakeAntiAlias(dev_.Get(), framegen::kAaFsr);
++#else
++            const char* own = std::getenv("XBE_TAA");
++            if (!(own && *own == '1')) aa_fsr_ = linux_fsr::MakeFsr(dev_.Get(), queue_.Get());
++            if (!aa_fsr_) aa_fsr_ = framegen::MakeOwnTaa();
++#endif
 +        }
 +        pick = aa_fsr_.get();
 +    }
 +    if (pick != aa_) {
 +        if (pick)
-+            LOGR("antialias: %s%s", pick->Own() ? "TAA" : framegen::AntiAliasName(pick->Kind()),
++            LOGR("antialias: %s%s", pick->VulkanImages() ? "AMD FSR (Vulkan)" : pick->Own() ? "TAA" : framegen::AntiAliasName(pick->Kind()),
 +                 kind == framegen::kAaDlss && pick->Kind() != framegen::kAaDlss ? ", NVIDIA DLSS not running" : "");
 +        aa_ = pick;
 +        aa_had_view_ = aa_said_ = scene_next_ = false;
@@ -5399,7 +5493,7 @@ index fe65837..d85b83c 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +6013,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +6094,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6626,10 +6720,10 @@ index 0000000..b6aa1f8
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/framegen.h b/runtime/gpu/framegen.h
 new file mode 100644
-index 0000000..9d5680b
+index 0000000..9a1e46a
 --- /dev/null
 +++ b/runtime/gpu/framegen.h
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,151 @@
 +// Frame generation: a frame made between each two the title draws, by AMD FidelityFX Super Resolution 3 frame
 +// generation (any Direct3D 12 card) or NVIDIA DLSS frame generation through Streamline (GeForce RTX 40 and 50). And
 +// the frame's anti-aliasing and upscaling (AntiAlias), by AMD FSR or NVIDIA DLSS.
@@ -6766,6 +6860,11 @@ index 0000000..9d5680b
 +    virtual void FrameDone() {}
 +    // the renderer's own pass rather than a vendor's: Run records nothing, the renderer draws it (MakeOwnTaa)
 +    virtual bool Own() const { return false; }
++    // Linux's AMD FSR on Vulkan (linux/fsr_vk.h): its inputs and output are images of its own, made by
++    // linux_fsr::MakeImage, and it runs on the queue (RunQueue) once the renderer has submitted the frame so far and the
++    // GPU is done with it, each in COMMON, rather than in the command list (Run)
++    virtual bool VulkanImages() const { return false; }
++    virtual bool RunQueue(const Frame&) { return false; }
 +};
 +
 +// AntiAliasKind's, null when its files are not there or the card cannot (logged)
@@ -7862,6 +7961,406 @@ index 0000000..dcfa32b
 +#include "windows.h"
 +#include <vkd3d_dxgibase.h>
 +#include <vkd3d_dxgiformat.h>
+diff --git a/runtime/linux/fsr_vk.cpp b/runtime/linux/fsr_vk.cpp
+new file mode 100644
+index 0000000..9a07b74
+--- /dev/null
++++ b/runtime/linux/fsr_vk.cpp
+@@ -0,0 +1,357 @@
++// Linux: AMD FSR 3's upscaler on Vulkan (linux/fsr_vk.h)
++#ifndef _WIN32
++#include "linux/fsr_vk.h"
++
++#ifdef XBE_FSR_VK
++#include <FidelityFX/host/backends/vk/ffx_vk.h>
++#include <FidelityFX/host/ffx_fsr3upscaler.h>
++#include <vkd3d.h>
++
++#include <algorithm>
++#include <cmath>
++#include <mutex>
++#include <unordered_map>
++#include <vector>
++
++#include "core/log.h"
++
++namespace gpu::linux_fsr {
++
++namespace {
++
++// this module's images, by the D3D12 resource over each
++struct Image {
++    VkDevice device = VK_NULL_HANDLE;
++    VkImage image = VK_NULL_HANDLE;
++    VkDeviceMemory memory = VK_NULL_HANDLE;
++    VkImageCreateInfo info{};
++    bool storage = false;
++};
++std::mutex g_images_m;
++std::unordered_map<ID3D12Resource*, Image> g_images;
++
++uint32_t MemoryType(VkPhysicalDevice pd, uint32_t bits, VkMemoryPropertyFlags want) {
++    VkPhysicalDeviceMemoryProperties mp;
++    vkGetPhysicalDeviceMemoryProperties(pd, &mp);
++    for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
++        if ((bits >> i & 1) && (mp.memoryTypes[i].propertyFlags & want) == want) return i;
++    return UINT32_MAX;
++}
++
++bool Find(ID3D12Resource* r, Image& out) {
++    if (!r) return false;
++    std::lock_guard lock(g_images_m);
++    auto it = g_images.find(r);
++    if (it == g_images.end()) return false;
++    out = it->second;
++    return true;
++}
++
++void Message(FfxMsgType type, const wchar_t* text) {
++    char b[512];
++    std::snprintf(b, sizeof(b), "%ls", text);
++    LOGR("antialias: AMD FSR %s: %s", type == FFX_MESSAGE_TYPE_ERROR ? "error" : "warning", b);
++}
++
++// AMD's ratios of the output's size to the size drawn, by quality: FSR's Quality, Balanced, Performance
++float Ratio(uint32_t quality) {
++    using namespace framegen;
++    return quality == kUpQuality ? 1.5f : quality == kUpBalanced ? 1.7f : quality == kUpPerformance ? 2.0f : 1.0f;
++}
++
++class Fsr final : public framegen::AntiAlias {
++public:
++    ~Fsr() override {
++        if (vkd_) vkDeviceWaitIdle(vkd_);
++        Unmake();
++        if (fence_) vkDestroyFence(vkd_, fence_, nullptr);
++        if (pool_) vkDestroyCommandPool(vkd_, pool_, nullptr);
++    }
++
++    bool Init(ID3D12Device* dev, ID3D12CommandQueue* queue) {
++        queue_ = queue;
++        vkd_ = vkd3d_get_vk_device(dev);
++        pd_ = vkd3d_get_vk_physical_device(dev);
++        family_ = vkd3d_get_vk_queue_family_index(queue);
++        // the backend's scratch, 64 byte aligned as its arrays in it are (the fork built with them aligned so), for two
++        // effect contexts: the upscaler's and its shared images' (the dilated depth and motion it keeps between frames)
++        size_t n = ffxGetScratchMemorySizeVK(pd_, kContexts);
++        scratch_.assign(n + 64, 0);
++        void* base = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(scratch_.data()) + 63) & ~uintptr_t(63));
++        // the backend keeps the device's description, not a copy: a member, alive as long as it
++        dc_ = {vkd_, pd_, vkGetDeviceProcAddr};
++        FfxErrorCode e = ffxGetInterfaceVK(&iface_, ffxGetDeviceVK(&dc_), base, n, kContexts);
++        if (e != FFX_OK) {
++            LOGR("antialias: AMD FSR's Vulkan backend did not start (%d)", int(e));
++            return false;
++        }
++        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
++        pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++        pci.queueFamilyIndex = family_;
++        VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++        fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
++        if (vkCreateCommandPool(vkd_, &pci, nullptr, &pool_) != VK_SUCCESS) return false;
++        ai.commandPool = pool_;
++        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++        ai.commandBufferCount = 1;
++        if (vkAllocateCommandBuffers(vkd_, &ai, &cmd_) != VK_SUCCESS) return false;
++        if (vkCreateFence(vkd_, &fci, nullptr, &fence_) != VK_SUCCESS) return false;
++        return true;
++    }
++
++    uint32_t Kind() const override { return framegen::kAaFsr; }
++
++    void RenderSize(uint32_t w, uint32_t h, uint32_t quality, uint32_t& rw, uint32_t& rh) override {
++        float ratio = Ratio(quality);
++        rw = std::max(1u, uint32_t(float(w) / ratio));
++        rh = std::max(1u, uint32_t(float(h) / ratio));
++    }
++
++    void Jitter(uint64_t frame, float ratio, float& x, float& y) const override {
++        int32_t phases = std::max(8, int32_t(8.0f * ratio * ratio));
++        if (ffxFsr3UpscalerGetJitterOffset(&x, &y, int32_t(frame % uint64_t(phases)), phases) != FFX_OK) x = y = 0;
++    }
++
++    bool VulkanImages() const override { return true; }
++    bool Run(ID3D12GraphicsCommandList*, const Frame&) override { return false; }  // RunQueue's
++
++    bool RunQueue(const Frame& f) override {
++        Image color, depth, motion, reactive, output;
++        if (!Find(f.color, color) || !Find(f.depth, depth) || !Find(f.motion, motion) || !Find(f.output, output) ||
++            !f.w || !f.h || !f.rw || !f.rh) {
++            LOG_FIRST(2, "antialias: AMD FSR's inputs are not its own images");
++            return false;
++        }
++        bool have_rx = Find(f.reactive, reactive);
++        bool inverted = f.view.near_w > f.view.far_w;
++        if (made_ && (f.w != w_ || f.h != h_ || inverted != inverted_)) {
++            vkDeviceWaitIdle(vkd_);
++            Unmake();
++        }
++        bool fresh = !made_;
++        if (!made_) {
++            FfxFsr3UpscalerContextDescription c{};
++            // gamma-encoded colour as the game drew it, exposure found by AMD, depth as the view says; the size drawn
++            // changes with the setting
++            c.flags = FFX_FSR3UPSCALER_ENABLE_AUTO_EXPOSURE | FFX_FSR3UPSCALER_ENABLE_DYNAMIC_RESOLUTION |
++                      (inverted ? FFX_FSR3UPSCALER_ENABLE_DEPTH_INVERTED : 0u);
++            c.maxRenderSize = {f.w, f.h};
++            c.maxUpscaleSize = {f.w, f.h};
++            c.fpMessage = Message;
++            c.backendInterface = iface_;
++            FfxErrorCode e = ffxFsr3UpscalerContextCreate(&ctx_, &c);
++            if (e != FFX_OK) {
++                LOG_FIRST(4, "antialias: AMD FSR's context was not made (%d) at %ux%u", int(e), f.w, f.h);
++                return false;
++            }
++            made_ = true;
++            // the images the upscaler shares with what follows it (FSR's frame generation; here only itself): made by
++            // the caller in this API, in an effect context of their own
++            FfxFsr3UpscalerSharedResourceDescriptions sd{};
++            if (iface_.fpCreateBackendContext(&iface_, FFX_EFFECT_SHAREDRESOURCES, nullptr, &shared_id_) != FFX_OK ||
++                ffxFsr3UpscalerGetSharedResourceDescriptions(&ctx_, &sd) != FFX_OK ||
++                iface_.fpCreateResource(&iface_, &sd.dilatedDepth, shared_id_, &shared_[0]) != FFX_OK ||
++                iface_.fpCreateResource(&iface_, &sd.dilatedMotionVectors, shared_id_, &shared_[1]) != FFX_OK ||
++                iface_.fpCreateResource(&iface_, &sd.reconstructedPrevNearestDepth, shared_id_, &shared_[2]) != FFX_OK) {
++                LOG_FIRST(4, "antialias: AMD FSR's shared images were not made at %ux%u", f.w, f.h);
++                Unmake();
++                return false;
++            }
++            shared_made_ = true;
++            w_ = f.w;
++            h_ = f.h;
++            inverted_ = inverted;
++            LOGR("antialias: AMD FSR 3 on Vulkan, at %ux%u", f.w, f.h);
++        }
++        vkWaitForFences(vkd_, 1, &fence_, VK_TRUE, UINT64_MAX);
++        vkResetFences(vkd_, 1, &fence_);
++        vkResetCommandBuffer(cmd_, 0);
++        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++        vkBeginCommandBuffer(cmd_, &bi);
++        // what the frame's commands wrote, seen by FSR's; and FSR's by what follows it on the queue
++        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++        mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
++        mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb,
++                             0, nullptr, 0, nullptr);
++        // every image in GENERAL, the layout vkd3d keeps them in while COMMON; FSR puts each back in the state given
++        auto res = [&](const Image& im, const wchar_t* name, bool uav) {
++            FfxResourceDescription d =
++                ffxGetImageResourceDescriptionVK(im.image, im.info, uav ? FFX_RESOURCE_USAGE_UAV : FFX_RESOURCE_USAGE_READ_ONLY);
++            return ffxGetResourceVK(reinterpret_cast<void*>(im.image), d, name, FFX_RESOURCE_STATE_UNORDERED_ACCESS);
++        };
++        FfxFsr3UpscalerDispatchDescription d{};
++        d.commandList = ffxGetCommandListVK(cmd_);
++        d.color = res(color, L"FSR color", false);
++        d.depth = res(depth, L"FSR depth", false);
++        d.motionVectors = res(motion, L"FSR motion", false);
++        if (have_rx) d.reactive = res(reactive, L"FSR reactive", false);
++        d.output = res(output, L"FSR output", true);
++        d.dilatedDepth = iface_.fpGetResource(&iface_, shared_[0]);
++        d.dilatedMotionVectors = iface_.fpGetResource(&iface_, shared_[1]);
++        d.reconstructedPrevNearestDepth = iface_.fpGetResource(&iface_, shared_[2]);
++        d.jitterOffset = {f.jitter[0], f.jitter[1]};
++        d.motionVectorScale = {float(f.rw), float(f.rh)};  // UV units to pixels of the size drawn
++        d.renderSize = {f.rw, f.rh};
++        d.upscaleSize = {f.w, f.h};
++        d.enableSharpening = f.sharpness > 0;
++        d.sharpness = f.sharpness;
++        d.frameTimeDelta = f.frame_ms;
++        d.preExposure = 1;
++        d.reset = f.reset || fresh;
++        d.cameraNear = f.view.near_w;
++        d.cameraFar = f.view.far_w;
++        d.cameraFovAngleVertical = f.view.fov_y;
++        d.viewSpaceToMetersFactor = 0.01f;  // the title's units are about centimetres
++        FfxErrorCode e = ffxFsr3UpscalerContextDispatch(&ctx_, &d);
++        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb,
++                             0, nullptr, 0, nullptr);
++        vkEndCommandBuffer(cmd_);
++        if (e != FFX_OK) {
++            LOG_FIRST(4, "antialias: AMD FSR dispatch %d at %ux%u from %ux%u", int(e), f.w, f.h, f.rw, f.rh);
++            return false;  // the fence stays unsignalled: signal it by an empty submit
++        }
++        VkQueue q = vkd3d_acquire_vk_queue(queue_);
++        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
++        si.commandBufferCount = 1;
++        si.pCommandBuffers = &cmd_;
++        VkResult r = vkQueueSubmit(q, 1, &si, fence_);
++        vkd3d_release_vk_queue(queue_);
++        if (r != VK_SUCCESS) {
++            LOG_FIRST(4, "antialias: AMD FSR's commands were not submitted (%d)", int(r));
++            return false;
++        }
++        // done before the frame goes on, as the renderer's own commands after it read its output
++        vkWaitForFences(vkd_, 1, &fence_, VK_TRUE, UINT64_MAX);
++        return true;
++    }
++
++private:
++    static constexpr size_t kContexts = 2;
++
++    void Unmake() {
++        if (shared_made_) {
++            for (FfxResourceInternal& r : shared_) iface_.fpDestroyResource(&iface_, r, shared_id_);
++            iface_.fpDestroyBackendContext(&iface_, shared_id_);
++            shared_made_ = false;
++        }
++        if (made_) ffxFsr3UpscalerContextDestroy(&ctx_);
++        made_ = false;
++    }
++
++    ID3D12CommandQueue* queue_ = nullptr;
++    VkDevice vkd_ = VK_NULL_HANDLE;
++    VkPhysicalDevice pd_ = VK_NULL_HANDLE;
++    uint32_t family_ = 0;
++    std::vector<uint8_t> scratch_;
++    VkDeviceContext dc_{};
++    FfxInterface iface_{};
++    FfxFsr3UpscalerContext ctx_{};
++    bool made_ = false, inverted_ = false;
++    FfxUInt32 shared_id_ = 0;
++    FfxResourceInternal shared_[3] = {};
++    bool shared_made_ = false;
++    uint32_t w_ = 0, h_ = 0;
++    VkCommandPool pool_ = VK_NULL_HANDLE;
++    VkCommandBuffer cmd_ = VK_NULL_HANDLE;
++    VkFence fence_ = VK_NULL_HANDLE;
++};
++
++}  // namespace
++
++bool Built() { return true; }
++
++ID3D12Resource* MakeImage(ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT format, bool render_target) {
++    VkDevice vkd = vkd3d_get_vk_device(dev);
++    VkPhysicalDevice pd = vkd3d_get_vk_physical_device(dev);
++    VkFormat vf = vkd3d_get_vk_format(format);
++    VkFormatProperties fp;
++    vkGetPhysicalDeviceFormatProperties(pd, vf, &fp);
++    bool storage = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
++    Image im;
++    im.device = vkd;
++    im.storage = storage;
++    im.info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
++    im.info.imageType = VK_IMAGE_TYPE_2D;
++    im.info.format = vf;
++    im.info.extent = {w, h, 1};
++    im.info.mipLevels = 1;
++    im.info.arrayLayers = 1;
++    im.info.samples = VK_SAMPLE_COUNT_1_BIT;
++    im.info.tiling = VK_IMAGE_TILING_OPTIMAL;
++    im.info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
++                    (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0) | (render_target ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0);
++    im.info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    if (vkCreateImage(vkd, &im.info, nullptr, &im.image) != VK_SUCCESS) {
++        LOGR("antialias: no %ux%u Vulkan image of format %d for AMD FSR", w, h, int(vf));
++        return nullptr;
++    }
++    VkMemoryRequirements req;
++    vkGetImageMemoryRequirements(vkd, im.image, &req);
++    VkMemoryAllocateInfo mi{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++    mi.allocationSize = req.size;
++    mi.memoryTypeIndex = MemoryType(pd, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++    if (mi.memoryTypeIndex == UINT32_MAX) mi.memoryTypeIndex = MemoryType(pd, req.memoryTypeBits, 0);
++    if (vkAllocateMemory(vkd, &mi, nullptr, &im.memory) != VK_SUCCESS) {
++        vkDestroyImage(vkd, im.image, nullptr);
++        return nullptr;
++    }
++    vkBindImageMemory(vkd, im.image, im.memory, 0);
++    vkd3d_image_resource_create_info ri{};
++    ri.type = VKD3D_STRUCTURE_TYPE_IMAGE_RESOURCE_CREATE_INFO;
++    ri.vk_image = im.image;
++    ri.desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    ri.desc.Width = w;
++    ri.desc.Height = h;
++    ri.desc.DepthOrArraySize = 1;
++    ri.desc.MipLevels = 1;
++    ri.desc.Format = format;
++    ri.desc.SampleDesc.Count = 1;
++    ri.desc.Flags = (render_target ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE) |
++                    (storage ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
++    ri.flags = VKD3D_RESOURCE_INITIAL_STATE_TRANSITION;
++    ID3D12Resource* r = nullptr;
++    if (FAILED(vkd3d_create_image_resource(dev, &ri, &r))) {
++        vkFreeMemory(vkd, im.memory, nullptr);
++        vkDestroyImage(vkd, im.image, nullptr);
++        return nullptr;
++    }
++    std::lock_guard lock(g_images_m);
++    g_images[r] = im;
++    return r;
++}
++
++void DropImage(ID3D12Resource* resource) {
++    Image im;
++    {
++        std::lock_guard lock(g_images_m);
++        auto it = g_images.find(resource);
++        if (it == g_images.end()) return;
++        im = it->second;
++        g_images.erase(it);
++    }
++    vkDestroyImage(im.device, im.image, nullptr);
++    vkFreeMemory(im.device, im.memory, nullptr);
++}
++
++std::unique_ptr<framegen::AntiAlias> MakeFsr(ID3D12Device* dev, ID3D12CommandQueue* queue) {
++    auto fsr = std::make_unique<Fsr>();
++    if (!fsr->Init(dev, queue)) return nullptr;
++    return fsr;
++}
++
++}  // namespace gpu::linux_fsr
++
++#else
++
++namespace gpu::linux_fsr {
++bool Built() { return false; }
++ID3D12Resource* MakeImage(ID3D12Device*, uint32_t, uint32_t, DXGI_FORMAT, bool) { return nullptr; }
++void DropImage(ID3D12Resource*) {}
++std::unique_ptr<framegen::AntiAlias> MakeFsr(ID3D12Device*, ID3D12CommandQueue*) { return nullptr; }
++}  // namespace gpu::linux_fsr
++
++#endif
++#endif
+diff --git a/runtime/linux/fsr_vk.h b/runtime/linux/fsr_vk.h
+new file mode 100644
+index 0000000..194d3d1
+--- /dev/null
++++ b/runtime/linux/fsr_vk.h
+@@ -0,0 +1,31 @@
++#pragma once
++// Linux: AMD FSR 3's upscaler on Vulkan, in AMD FSR's place among the frame's anti-aliasing (framegen::AntiAlias). The
++// FidelityFX SDK 1.1.4's Vulkan backend, built for Linux (an unofficial fork's, upscaler only), runs on vkd3d's own
++// Vulkan device and queue. FSR takes Vulkan images, and vkd3d gives no image of a resource it made, so the inputs and the
++// output are images of this module's, wrapped as D3D12 resources for the renderer (MakeImage): it draws its depth and
++// motion into them and copies the frame's colour in. Built with XBE_FSR_VK (XBE_FSR_VK_DIR, the SDK's built tree); without
++// it AMD FSR's place is the renderer's own TAA.
++#include <cstdint>
++#include <memory>
++
++#include "d3d12.h"
++#include "gpu/framegen.h"
++
++namespace gpu::linux_fsr {
++
++// AMD FSR 3 on Vulkan is in this build (XBE_FSR_VK)
++bool Built();
++
++// a w x h image of this module's as a D3D12 resource in COMMON (Vulkan's GENERAL layout), sampled, stored to (where the
++// format allows: render_target formats and RGBA always) and copied to or from; a render target too when asked. Null
++// when it cannot be made (logged)
++ID3D12Resource* MakeImage(ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT format, bool render_target);
++
++// an image MakeImage made, its resource released and the GPU done with it: its Vulkan image and memory freed
++void DropImage(ID3D12Resource* resource);
++
++// AMD FSR 3's upscaler on the device's Vulkan device and the queue's; null when it cannot be (logged). Its frames run
++// through AntiAlias::RunQueue, after the renderer has submitted the frame so far and the GPU is done with it
++std::unique_ptr<framegen::AntiAlias> MakeFsr(ID3D12Device* dev, ID3D12CommandQueue* queue);
++
++}  // namespace gpu::linux_fsr
 diff --git a/runtime/linux/game_code.cpp b/runtime/linux/game_code.cpp
 new file mode 100644
 index 0000000..ff5aebd

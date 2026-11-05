@@ -300,13 +300,23 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled(running ? "AMD FSR in its place (logs\\castlevania.log)" : "not running (logs\\castlevania.log)");
     }
 #else
+#ifdef CV_FSR_VK
+    // Linux: AMD FSR 3 on Vulkan (the SDK's linux/fsr_vk.cpp) in its place, the renderer's own TAA where it cannot run
+    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by AMD FSR 3 on any graphics "
+                         "card (NVIDIA DLSS is Windows only).");
+#else
     // Linux: AMD's and NVIDIA's libraries are Windows ones; the renderer's own TAA takes AMD FSR's place (setting 1)
     Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by the port's own TAA (AMD FSR "
                          "and NVIDIA DLSS are Windows only).");
+#endif
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
         if (g_antialias > 1) g_antialias = 1;  // DLSS chosen on Windows: the TAA here
+#ifdef CV_FSR_VK
+        save |= Choice<uint32_t>("##aa", g_antialias, {0, 1}, {"Off", "AMD FSR"});
+#else
         save |= Choice<uint32_t>("##aa", g_antialias, {0, 1}, {"Off", "TAA"});
+#endif
     }
 #endif
     Row("Upscaling", "The 3D world drawn below the screen's resolution and rebuilt to it by the anti-aliasing above, "

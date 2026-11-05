@@ -55,6 +55,7 @@ his wall). After a test fails the next plays a fresh game. `--alone` plays every
 | NVIDIA DLSS | `aa-dlss` (*Windows*, a GeForce RTX) | DLSS (DLAA) at the start, Quality drawing two thirds across |
 | Frame generation | `fg` (*Windows*) | FSR 3 generating standing and turning: twice the frames shown, the game at 60, presented without v-sync on a screen whose refresh is not a multiple of 120 |
 | The renderer's own TAA (Linux's anti-aliasing) | `taa` | the TAA on the 3D (on Windows by `XBE_TAA=1`), still from frame to frame, off and on, Performance upscaling, the camera turned |
+| AMD FSR on Linux | `fsr-linux` (*Linux*) | AMD FSR 3 on Vulkan on the 3D at full size, still from frame to frame, off and on, Performance upscaling, the camera turned (as `taa` checks the own TAA, which `XBE_TAA=1` keeps there) |
 | HDR on Linux | `hdr-linux` (*Linux*) | the HDR output made whatever the desktop (`XBE_HDR_FORCE=1`): HDR10 back buffers, the frame's highlights lifted past scene white at 200 nits (`XBE_HDR_STATS`), off and on again with the setting; the HDR10 swap chain on a desktop in HDR is checked by hand |
 | Ambient occlusion | `ao` | with no anti-aliasing: the stone darker where it meets at High, still from frame to frame, lighter with it off, Low between |
 | 16:10 widescreen | `wide-1610` | at the Steam Deck's 1280x800: no black bars, the HUD at the edges, 16:9 putting the bars back while playing, the pause menu to both sides |

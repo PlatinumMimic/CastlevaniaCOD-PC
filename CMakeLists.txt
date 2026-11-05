@@ -1,7 +1,7 @@
 # Castlevania: Curse of Darkness (original Xbox), statically recompiled
 
 cmake_minimum_required(VERSION 3.25)
-project(castlevania VERSION 1.8.5 LANGUAGES C CXX)
+project(castlevania VERSION 1.8.6 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,6 +82,10 @@ foreach(exe ${CV_RELEASES})
         target_link_libraries(${exe} PRIVATE mfplat mfreadwrite mfuuid d3d11)
     else()
         target_include_directories(${exe} SYSTEM PRIVATE ${CV_FFMPEG_INCLUDE})
+        # AMD FSR 3 on Vulkan in the SDK (XBE_FSR_VK_DIR): the menus say so
+        if(XBE_FSR_VK_LIBS)
+            target_compile_definitions(${exe} PRIVATE CV_FSR_VK)
+        endif()
         target_link_libraries(${exe} PRIVATE ${CV_FFMPEG_LIBS})
         set_property(TARGET ${exe} APPEND PROPERTY BUILD_RPATH ${CV_FFMPEG_LIB_DIR})
     endif()
@@ -132,6 +136,10 @@ target_include_directories(CastlevaniaLauncher PRIVATE ${XBE_SDK_DIR}/runtime ${
                            ${sdl3_SOURCE_DIR}/include)
 target_include_directories(CastlevaniaLauncher SYSTEM PRIVATE ${imgui_SOURCE_DIR} ${XBE_VKD3D_INCLUDE} ${stb_SOURCE_DIR})
 target_compile_definitions(CastlevaniaLauncher PRIVATE NOMINMAX WIDL_EXPLICIT_AGGREGATE_RETURNS)
+# the game has AMD FSR 3 on Vulkan (the SDK's XBE_FSR_VK_DIR): the launcher says so
+if(XBE_FSR_VK_LIBS)
+    target_compile_definitions(CastlevaniaLauncher PRIVATE CV_FSR_VK)
+endif()
 target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall -fconstexpr-steps=8388608)
 target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus SDL3::SDL3-static ${XBE_VKD3D_LIB}
                       Vulkan::Vulkan dl pthread)

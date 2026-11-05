@@ -41,6 +41,11 @@ Material Icons (https://github.com/google/material-design-icons), fonts/Material
 Licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright Google LLC.
 
 
+AMD FidelityFX SDK 1.1.4, its FSR 3 upscaler and Vulkan backend, in the game's executables: Linux's anti-aliasing and
+upscaling. From the unofficial Linux fork https://github.com/DethRaid/FidelityFX-SDK-Linux (commit 84aa556), with this
+port's tools/linux/fidelityfx-linux.patch; built by tools/linux/fidelityfx.sh. Its licence, the MIT License, follows
+this file's other notices.
+
 Clang and LLD (https://llvm.org), compiler/clang and compiler/ld.lld: the LLVM project's own Linux build, unmodified;
 Apache License 2.0 with LLVM Exceptions, see compiler/LLVM-LICENSE.txt.
 

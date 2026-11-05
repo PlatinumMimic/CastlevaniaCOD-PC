@@ -82,8 +82,9 @@ On top of Pazzi7054's port:
   metal take the light by their normal maps and show depth by their height maps (parallax). By Calm-Consideration41.
 - **Anti-aliasing and upscaling** - AMD FSR on any graphics card, or NVIDIA DLSS on a GeForce RTX, smooth the 3D's
   edges over the frames, and can draw it below the screen's resolution and rebuild it, for a higher frame rate on a
-  laptop or a handheld; the launcher downloads their files from AMD and NVIDIA. On Linux, where those do not run, this
-  port's own TAA does both (the original game has none). By Calm-Consideration41 (the TAA, this fork's).
+  laptop or a handheld; the launcher downloads their files from AMD and NVIDIA. On Linux AMD FSR 3 does both too, on
+  Vulkan, built into the game (since 1.8.6; before, this port's own TAA, which stays for a card FSR can't run on). By
+  Calm-Consideration41 (on Linux, this fork's).
 - **Frame generation** (Windows) - a frame made between each two the game draws, by AMD FSR 3 or NVIDIA DLSS, for twice
   the frame rate on a fast screen. By Calm-Consideration41.
 - **Ambient occlusion** - soft shadow where surfaces meet, with anti-aliasing or without. By Calm-Consideration41.
@@ -165,7 +166,7 @@ On a freshly installed Windows there is nothing to download besides the release 
 which draws the game's Direct3D 12 with Vulkan, and FFmpeg, which plays the HD movies; `fonts` the launcher's fonts
 (URW's P052 for its Palatino, and Material Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs
 installing besides a Vulkan driver (see [To Play on Linux](#to-play-on-linux)), and no root: an HD movie pack plays
-with the FFmpeg in `lib`, and anti-aliasing and upscaling are the port's own TAA, which needs nothing either. HDR needs a
+with the FFmpeg in `lib`, and anti-aliasing and upscaling are AMD FSR 3, built into the game, which needs nothing either. HDR needs a
 desktop with HDR on, on Wayland: KDE Plasma 6, GNOME 48 or later, or a Steam Deck's game mode (gamescope). Frame
 generation is Windows only for now: AMD's and NVIDIA's libraries are Windows ones.
 
@@ -343,8 +344,10 @@ background first); the size pictures load at applies from the next start.
 - **Anti-Aliasing** - Smooth, steady edges on the 3D, gathered over the frames: AMD FSR on any graphics card, NVIDIA
   DLSS on a GeForce RTX (from the game's next start once chosen), their files downloaded by the launcher's Graphics
   page from AMD and NVIDIA (the game loads them only signed by AMD or NVIDIA, the launcher checks their SHA-256). On
-  Linux this port's own TAA, as the AMD and NVIDIA libraries the port loads are Windows ones. The HUD and menus stay
-  sharp. By Calm-Consideration41 (the TAA, this fork's).
+  Linux AMD FSR 3 on Vulkan, built into the game from AMD's FidelityFX SDK (an unofficial Linux build of its 1.1.4,
+  patched by this port), on any graphics card; where it can't run, this port's own TAA in its place
+  (`XBE_TAA=1` chooses that). NVIDIA DLSS is Windows only. The HUD and menus stay sharp. By Calm-Consideration41 (on
+  Linux, this fork's).
 - **Upscaling** - The 3D drawn below the screen's resolution and rebuilt to it by the anti-aliasing: Quality (two
   thirds across), Balanced or Performance (half), for a higher frame rate on a slower graphics card or a handheld.
 - **Sharpening** - FSR's and the TAA's, 0 to 100% (30% by default).
@@ -542,7 +545,9 @@ with only its H.264 and HEVC decoders, MP4 demuxer and swscale; `tools/linux/rel
 3. Put the game in `assets` (extracted; `default.xbe` must be there), as above.
 4. `cmake -S CastlevaniaCOD-PC -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang
    -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2
-   -DXBE_VKD3D_DIR=$HOME/vkd3d`, then `ninja -C build Castlevania Castlevania_code CastlevaniaLauncher`. The generated
+   -DXBE_VKD3D_DIR=$HOME/vkd3d` (and for AMD FSR, `-DXBE_FSR_VK_DIR=<cache>/fidelityfx` once
+   `tools/linux/fidelityfx.sh <cache>` has built it; without it the own TAA takes its place), then
+   `ninja -C build Castlevania Castlevania_code CastlevaniaLauncher`. The generated
    code goes to `build/generated`, so a Windows build of the same checkout keeps its own. `Castlevania.so` is linked
    beside `Castlevania` with the game code; the game finds `assets` in a folder above it, or link one into `build`.
 
@@ -761,9 +766,9 @@ Changes this game needed beyond the generated config:
   Mesa's dozen (Vulkan on Windows' Direct3D 12), on X11 and Wayland: both releases install, build their game code and
   play the new game, widescreen and room tests at 60 frames per second on the RTX 3060, with the same pictures as on
   Windows. It has not been tried on a Linux PC's own graphics drivers yet.
-- Linux has no frame generation yet, and its anti-aliasing and upscaling are this port's own TAA, not AMD FSR or
-  NVIDIA DLSS: the AMD and NVIDIA libraries the port loads are Windows ones. The TAA is new and has been tested in the
-  first areas only.
+- Linux has no frame generation yet: the Linux build of AMD's FidelityFX SDK has none, and NVIDIA's is Windows only.
+  Its anti-aliasing and upscaling by AMD FSR 3 are new (1.8.6): tested in WSL on an NVIDIA card through Mesa's dozen,
+  not yet on a Linux PC's own graphics drivers. Each frame waits for the GPU once more with it than with the TAA.
 - HDR on Linux is new (1.8.5): its picture was tested in WSL, where the desktop has no HDR, but not yet shown on a
   Linux desktop in HDR.
 - Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
@@ -786,8 +791,10 @@ sponsored by them, and it is not an official product. Nothing here is sold.
 - The HD texture packs linked under [HD Textures](#hd-textures) are their makers' own work, made for the PS2 game.
   They are not part of this repository or its releases, which neither host nor include any of their pictures. The
   same goes for the HD movie pack linked under [HD Movies](#hd-movies), which is made from the game's movies.
-- AMD's FidelityFX and NVIDIA's DLSS and Streamline libraries are not in the releases either: the launcher downloads
-  them from AMD's and NVIDIA's own releases, under their licences, which it saves beside them.
+- AMD's FidelityFX and NVIDIA's DLSS and Streamline libraries are not in the Windows release either: the launcher
+  downloads them from AMD's and NVIDIA's own releases, under their licences, which it saves beside them. The Linux
+  release has AMD's FSR 3 upscaler built into the game from the FidelityFX SDK's source (MIT), its licence in
+  `THIRD_PARTY.txt`.
 - The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an
   executable from `build.bat`, are for your personal use only. Do not distribute them, generated code or game files.
 - The cover at the top is fan art made for this project with an AI image model, after a screenshot of the port's

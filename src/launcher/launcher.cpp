@@ -2250,7 +2250,11 @@ const char* PresetName(int p) {
 const char* AntiAliasName(uint32_t aa) { return aa == 2 ? "NVIDIA DLSS" : aa == 1 ? "AMD FSR" : T("Off"); }
 #else
 // Linux: the port's own TAA, whatever was chosen on Windows
+#ifdef CV_FSR_VK
+const char* AntiAliasName(uint32_t aa) { return aa ? "AMD FSR" : T("Off"); }  // AMD FSR 3 on Vulkan
+#else
 const char* AntiAliasName(uint32_t aa) { return aa ? "TAA" : T("Off"); }
+#endif
 #endif
 
 // the launcher's state and its one screen
@@ -2815,6 +2819,14 @@ private:
         else if (aa == 2) ControlNote(kMuted, T("From the game's next start."));
         EndSetting();
         if (aa) VendorFiles(AntiAliasVendor());
+#elif defined(CV_FSR_VK)
+        BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world, gathered over the frames by "
+                                           "AMD FSR 3 on any graphics card (NVIDIA DLSS is Windows only). The HUD and menus "
+                                           "stay sharp."),
+                     true);
+        if (aa > 1) aa = 1;  // DLSS chosen on Windows: AMD FSR here
+        Segmented<uint32_t>("aa", aa, {0, 1}, {T("Off"), "AMD FSR"});
+        EndSetting();
 #else
         BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world, gathered over the frames by "
                                            "the port's own TAA (AMD FSR and NVIDIA DLSS are Windows only). The HUD and "
@@ -2845,7 +2857,7 @@ private:
         }
         EndSetting();
         BeginOff(AntiAliasVendor() != 1);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(CV_FSR_VK)
         BeginSetting(T("Sharpening"), T("Brings back fine texture detail after AMD FSR smooths the picture; too much "
                                         "outlines the edges. 30% suits most."));
 #else

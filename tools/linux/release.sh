@@ -25,8 +25,9 @@ if [ "${1:-}" != "--inside" ]; then
     mkdir -p "$CACHE" "$WORK"
     [ -f "$REPO/assets/default.xbe" ] || { echo "  Put the game's default.xbe in assets first, see README.md."; exit 1; }
     [ -f "$REPO/assets/eu/default.xbe" ] || { echo "  Put the European release's default.xbe in assets/eu first."; exit 1; }
-    echo "[1/5] Build machine"
+    echo "[1/5] Build machine, AMD FSR's Vulkan libraries (tools/linux/fidelityfx.sh, built here: see it)"
     podman build -q -t cvcod-linux-build -f "$HERE/Containerfile" "$HERE" > /dev/null
+    bash "$HERE/fidelityfx.sh" "$CACHE"
     # the repository read only but out/, where the release goes; the SDK beside it, as CMakeLists.txt finds it
     mkdir -p "$REPO/out/release"
     exec podman run --rm --userns=keep-id -e "VERSION=$VERSION" \
@@ -81,7 +82,7 @@ B=/work/build
 LINK="-Wl,--disable-new-dtags"
 cmake -S $SRC -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2 \
     -DCMAKE_EXE_LINKER_FLAGS="$LINK" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DXBE_VKD3D_DIR=/work/vkd3d \
-    -DCV_FFMPEG_DIR=/work/ffmpeg -DCV_GAME_ICON=OFF \
+    -DCV_FFMPEG_DIR=/work/ffmpeg -DCV_GAME_ICON=OFF -DXBE_FSR_VK_DIR=/cache/fidelityfx \
     > /work/release_build_log.txt 2>&1 || { echo "      configuring failed, see $CV_WORK/release_build_log.txt"; exit 1; }
 cmake --build $B --target Castlevania CastlevaniaEU CastlevaniaLauncher xbe_recomp Castlevania_hooks CastlevaniaEU_hooks \
     -- -k 0 >> /work/release_build_log.txt 2>&1 ||
@@ -107,7 +108,8 @@ cp $B/fonts/MaterialIcons-Regular.ttf /cache/P052-*.otf $PKG/fonts/
 cp $SRC/tools/release/README-linux.txt $PKG/README.txt
 cp $SRC/LICENSE $PKG/LICENSE.txt
 cat /src/XboxXBE-Recomp/THIRD_PARTY.txt $SRC/tools/release/THIRD_PARTY-port.txt $SRC/tools/linux/THIRD_PARTY-linux.txt \
-    /cache/urw-base35-LICENSE.txt /cache/urw-base35-COPYING.txt /work/ffmpeg-src/COPYING.LGPLv2.1 > $PKG/THIRD_PARTY.txt
+    /cache/fidelityfx/LICENSE.txt /cache/urw-base35-LICENSE.txt /cache/urw-base35-COPYING.txt \
+    /work/ffmpeg-src/COPYING.LGPLv2.1 > $PKG/THIRD_PARTY.txt
 echo "Put your game here: its disc image (.iso), or the extracted disc (default.xbe with its folders)." > "$PKG/assets/PUT YOUR GAME HERE.txt"
 echo "Optional: an HD texture pack made for PCSX2. Put its replacement pictures here (.png or .dds files, folders inside are fine)." > "$PKG/textures/PUT A TEXTURE PACK HERE.txt"
 # files copied from a Windows drive come out executable: only the programs are (a file manager offers to run the rest)

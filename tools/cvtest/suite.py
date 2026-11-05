@@ -215,6 +215,8 @@ def tests():
         scenario("fg", needs=["vendor"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
         # 1.8.5: Linux's HDR output, made whatever the desktop (XBE_HDR_FORCE), its frame measured
         scenario("hdr-linux", platforms=["linux"]),
+        # 1.8.6: Linux's anti-aliasing and upscaling by AMD FSR 3 on Vulkan
+        scenario("fsr-linux", platforms=["linux"]),
         # Linux only: on Windows they would take the PC's own screen and keyboard
         scenario("display", env={"CV_WAYLAND": "1"}, platforms=["linux"]),
         scenario("keyboard", platforms=["linux"]),
