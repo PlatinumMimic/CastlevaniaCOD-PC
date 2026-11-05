@@ -18,6 +18,7 @@ else copied). Then
 The report is cvtest's, in out/test/install-<scenario>-<time>, the checks and the first start before the steps.
 The install is deleted after a run that passed, unless --keep.
 """
+import json
 import os
 import shutil
 import struct
@@ -128,6 +129,18 @@ def check_fonts(launcher, env):
             "ok": r.returncode == 0 and not errors, "errors": errors, "warnings": []}
 
 
+def download_dlss(launcher, env):
+    """NVIDIA DLSS's files from NVIDIA, by the installed launcher as its Graphics page downloads them
+    (--download-framegen 2): NVIDIA's DLSS SDK's headers, NGX loader and DLSS library, each checked against its
+    SHA-256, which the game builds its bridge to NGX from"""
+    r = subprocess.run([str(launcher), "--download-framegen", "2"], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", env=env, timeout=900)
+    errors = [] if r.returncode == 0 else [f"--download-framegen 2 ended with {r.returncode}: "
+                                           f"{(r.stdout + r.stderr).strip()[-300:]}"]
+    return {"step": "package", "label": "launcher: NVIDIA DLSS's files downloaded from NVIDIA, as pinned",
+            "ok": not errors, "errors": errors, "warnings": []}
+
+
 def put_game(game, assets):
     """the player's copy into assets: hard links, else copies"""
     def place(src, dst):
@@ -222,12 +235,18 @@ def check_package_linux(pkg):
 
 
 def check_contents_linux(pkg):
+    # the one source is the SDK's bridge to NVIDIA's NGX, compiled on the player's PC (runtime/linux/dlss_vk.h); and
+    # nothing of NVIDIA's: its DLSS SDK's files are the player's own download
+    bridge = pkg / "compiler" / "ngx" / "cv_ngx.cpp"
     errors = [f"game file in the package: {p.relative_to(pkg)}" for p in pkg.rglob("*")
-              if p.suffix.lower() in (".xbe", ".iso", ".cpp", ".o") or p.name in ("Castlevania.so", "CastlevaniaEU.so")
-              or p.name.startswith("x86_recomp")]
+              if (p.suffix.lower() in (".xbe", ".iso", ".cpp", ".o") and p != bridge)
+              or p.name in ("Castlevania.so", "CastlevaniaEU.so") or p.name.startswith("x86_recomp")]
+    errors += [f"NVIDIA's file in the package: {p.relative_to(pkg)}" for p in pkg.rglob("*")
+               if p.name.startswith(("nvsdk_ngx", "libnvsdk_ngx", "libnvidia-ngx", "libcv_ngx")) or p.name == "dlss"]
     for need in ("Castlevania", "CastlevaniaEU", "CastlevaniaLauncher", "compiler/xbe_recomp", "compiler/clang",
                  "compiler/ld.lld", "compiler/config/game.toml", "compiler/config/game_eu.toml",
-                 "compiler/Castlevania.hooks", "compiler/CastlevaniaEU.hooks", "lib/libvkd3d.so.1",
+                 "compiler/Castlevania.hooks", "compiler/CastlevaniaEU.hooks", "compiler/ngx/cv_ngx.cpp",
+                 "compiler/ngx/cv_ngx.h", "compiler/ngx/stub/vulkan/vulkan.h", "lib/libvkd3d.so.1",
                  "lib/libvkd3d-shader.so.1", "lib/libvkd3d-utils.so.1", "fonts/MaterialIcons-Regular.ttf",
                  "fonts/P052-Roman.otf", "fonts/P052-Bold.otf", "fonts/P052-BoldItalic.otf", "assets", "textures"):
         if not (pkg / need).exists():
@@ -259,6 +278,8 @@ def main_linux(release, game, scenario):
                                       "VK_ICD_FILENAMES", "GALLIUM_DRIVER") if k in os.environ}
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
     checks.append(check_fonts(pkg / "CastlevaniaLauncher", env))
+    if json.loads(scenario.read_text(encoding="utf-8")).get("vendor"):
+        checks.append(download_dlss(pkg / "CastlevaniaLauncher", env))
     ok = cvtest.run(str(scenario), None, False, install=pkg, env=env, checks=checks)
     return ok, root
 

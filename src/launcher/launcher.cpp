@@ -42,6 +42,8 @@ extern char** environ;
 #include <cctype>
 #include <cmath>
 #include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -730,16 +732,65 @@ const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fid
 const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
                                      L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
 
-// all of a kind's files there, beside the game (FSR) or in its streamline folder (DLSS)
-// AMD's and NVIDIA's files to download: Windows only, their libraries being Windows ones
-#ifdef _WIN32
-constexpr bool kVendorFiles = true;
-#else
-constexpr bool kVendorFiles = false;
+#ifndef _WIN32
+// Linux: NVIDIA DLSS's files from NVIDIA's DLSS SDK on GitHub, which the game builds its bridge to NVIDIA's NGX from on
+// this PC (the SDK's runtime/linux/dlss_vk.h): its headers, its NGX loader and the DLSS library, each pinned by its
+// SHA-256 and size, and NVIDIA's licence. AMD FSR is built into the game there
+constexpr const char* kDlssSdkRaw = "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/";
+constexpr const char* kDlssSdkLicence = "https://github.com/NVIDIA/DLSS/blob/v310.9.16/LICENSE.txt";
+struct DlssSdkFile {
+    const char* from;  // in the SDK
+    const char* to;    // in the game's folder
+    const char* sha256;
+    uint64_t size;
+};
+const DlssSdkFile kDlssSdkFiles[] = {
+    {"LICENSE.txt", "licences/NVIDIA-DLSS-SDK-licence.txt",
+     "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0", 26620},
+    {"include/nvsdk_ngx.h", "dlss/include/nvsdk_ngx.h",
+     "dc38e7467cf415379c9d12ae1b6e4a494c453ed92720fb53e92aecb523e7b848", 40289},
+    {"include/nvsdk_ngx_defs.h", "dlss/include/nvsdk_ngx_defs.h",
+     "ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e", 44313},
+    {"include/nvsdk_ngx_defs_vk.h", "dlss/include/nvsdk_ngx_defs_vk.h",
+     "0a24d0861ace7d6b9362a67b7f08bea1b33ea123c5ce730b19133de8a891d031", 3196},
+    {"include/nvsdk_ngx_helpers.h", "dlss/include/nvsdk_ngx_helpers.h",
+     "5bcbadfe7478b802cf6d3aca4dc5ddd7d0889b99726e69c63f9e9bd555f44471", 5317},
+    {"include/nvsdk_ngx_helpers_cuda.h", "dlss/include/nvsdk_ngx_helpers_cuda.h",
+     "f2851a76107bdf4fbcb7b261f3c35573c312d8ecb4bc18fb02d9e2cec7705042", 3593},
+    {"include/nvsdk_ngx_helpers_d3d.h", "dlss/include/nvsdk_ngx_helpers_d3d.h",
+     "ec75224f36ed6580baaf250fa83620405ad81a1d98c2c436654a0c9cf6a6b8ba", 31976},
+    {"include/nvsdk_ngx_helpers_vk.h", "dlss/include/nvsdk_ngx_helpers_vk.h",
+     "c192bff72138f12f770db48e12c1d8f712dfc81ea0e8e055ebb27d8dd1b31623", 19720},
+    {"include/nvsdk_ngx_params.h", "dlss/include/nvsdk_ngx_params.h",
+     "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc", 7744},
+    {"include/nvsdk_ngx_vk.h", "dlss/include/nvsdk_ngx_vk.h",
+     "2d364ce7132881eb669e9498fd570d74cba563b1fbebc82c235f8e1ad2dd8b6d", 38382},
+    {"lib/Linux_x86_64/libnvsdk_ngx.a", "dlss/libnvsdk_ngx.a",
+     "d3c50bb0d9624fc35e502a8e929b8fc1e2b505017ebdb84c0d5b627e11a235df", 89002},
+    {"lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.310.9.16", "dlss/libnvidia-ngx-dlss.so.310.9.16",
+     "30982c937afed85c96b8d313323de9a650a2eec6de1bb0f714b21750f4ce98f6", 59481944},
+};
 #endif
 
+// the kinds whose files are downloaded (1 AMD FSR, 2 NVIDIA DLSS): on Windows both, AMD's and NVIDIA's libraries; on
+// Linux NVIDIA DLSS's, AMD FSR being built into the game there
+bool NeedsFiles(uint32_t kind) {
+#ifdef _WIN32
+    return kind == 1 || kind == 2;
+#else
+    return kind == 2;
+#endif
+}
+
+// all of a kind's files there: beside the game (FSR) or in its streamline folder (DLSS); on Linux DLSS's in dlss
 bool HaveFrameGen(const fs::path& game, uint32_t kind) {
     std::error_code ec;
+#ifndef _WIN32
+    if (kind != 2) return true;
+    for (const DlssSdkFile& f : kDlssSdkFiles)
+        if (!fs::is_regular_file(game / f.to, ec)) return false;
+    return true;
+#endif
     if (kind == 1) {
         for (const wchar_t* f : kFsrFiles)
             if (!fs::is_regular_file(game / f, ec)) return false;
@@ -953,14 +1004,182 @@ struct FrameGenDownload {
 };
 
 #else
-// Linux: the vendors' libraries are Windows DLLs, so nothing is downloaded (DLSS does not run there; FSR is the
-// renderer's own)
+// SHA-256 (FIPS 180-4), for the downloads' pins
+struct Sha256 {
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    uint8_t buf[64] = {};
+    size_t n = 0;
+    uint64_t bits = 0;
+
+    static uint32_t R(uint32_t x, int k) { return x >> k | x << (32 - k); }
+    void Block(const uint8_t* p) {
+        static const uint32_t kK[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        };
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++)
+            w[i] = uint32_t(p[4 * i]) << 24 | uint32_t(p[4 * i + 1]) << 16 | uint32_t(p[4 * i + 2]) << 8 | p[4 * i + 3];
+        for (int i = 16; i < 64; i++) {
+            uint32_t s0 = R(w[i - 15], 7) ^ R(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            uint32_t s1 = R(w[i - 2], 17) ^ R(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t t1 = k + (R(e, 6) ^ R(e, 11) ^ R(e, 25)) + ((e & f) ^ (~e & g)) + kK[i] + w[i];
+            uint32_t t2 = (R(a, 2) ^ R(a, 13) ^ R(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            k = g;
+            g = f;
+            f = e;
+            e = d + t1;
+            d = c;
+            c = b;
+            b = a;
+            a = t1 + t2;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+        h[5] += f;
+        h[6] += g;
+        h[7] += k;
+    }
+    void Update(const uint8_t* p, size_t len) {
+        bits += uint64_t(len) * 8;
+        while (len) {
+            size_t k = std::min(len, sizeof(buf) - n);
+            std::memcpy(buf + n, p, k);
+            n += k;
+            p += k;
+            len -= k;
+            if (n == sizeof(buf)) {
+                Block(buf);
+                n = 0;
+            }
+        }
+    }
+    std::string Hex() {
+        uint64_t total = bits;
+        buf[n++] = 0x80;
+        if (n > 56) {
+            while (n < 64) buf[n++] = 0;
+            Block(buf);
+            n = 0;
+        }
+        while (n < 56) buf[n++] = 0;
+        for (int i = 7; i >= 0; i--) buf[n++] = uint8_t(total >> (8 * i));
+        Block(buf);
+        std::string hex;
+        for (uint32_t v : h)
+            for (int s = 28; s >= 0; s -= 4) hex += "0123456789abcdef"[(v >> s) & 15];
+        return hex;
+    }
+};
+
+// a file's SHA-256 in hex, read a megabyte at a time; empty when it cannot be read
+std::string Sha256File(const fs::path& file) {
+    std::ifstream f(file, std::ios::binary);
+    if (!f) return {};
+    Sha256 s;
+    std::vector<char> buf(1 << 20);
+    while (f) {
+        f.read(buf.data(), std::streamsize(buf.size()));
+        if (f.gcount() > 0) s.Update(reinterpret_cast<const uint8_t*>(buf.data()), size_t(f.gcount()));
+    }
+    return s.Hex();
+}
+
+// Linux: NVIDIA DLSS's files (kDlssSdkFiles) by the system's curl, else its wget
 struct FrameGenDownload {
     std::atomic<bool> running{false};
     std::atomic<float> progress{0};
     std::atomic<uint32_t> kind{0};
     std::string result;
-    void Start(uint32_t, fs::path) {}
+    std::thread worker;
+
+    // url to file through a .part beside it, so a file is whole or not there; its progress by the part's size. code: the
+    // tool's exit code, 127 when there is neither
+    bool Fetch(const std::string& url, const fs::path& to, uint64_t size, float from, float span, int& code) {
+        fs::path part = to;
+        part += ".part";
+        std::error_code ec;
+        fs::remove(part, ec);
+        code = 127;
+        for (int tool = 0; tool < 2; tool++) {
+            std::vector<std::string> args =
+                tool == 0 ? std::vector<std::string>{"curl", "-fsSL", "--retry", "2", "--connect-timeout", "30", "-o", part.string(), url}
+                          : std::vector<std::string>{"wget", "-q", "-t", "3", "-T", "30", "-O", part.string(), url};
+            std::vector<char*> argv;
+            for (std::string& a : args) argv.push_back(a.data());
+            argv.push_back(nullptr);
+            pid_t pid = 0;
+            if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0) continue;  // not here: the other
+            int status = 0;
+            for (;;) {
+                pid_t r = waitpid(pid, &status, WNOHANG);
+                if (r == pid || (r < 0 && errno != EINTR)) break;
+                uint64_t have = fs::file_size(part, ec);
+                if (!ec && size) progress = from + span * float(std::min(1.0, double(have) / double(size)));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+            if (code == 0 && fs::file_size(part, ec) > 0 && !ec) {
+                fs::rename(part, to, ec);
+                if (!ec) return true;
+                code = 1;
+            }
+            fs::remove(part, ec);
+            return false;  // the tool ran and failed: the other would too
+        }
+        return false;
+    }
+
+    void Start(uint32_t k, fs::path game) {
+        if (running || k != 2) return;
+        if (worker.joinable()) worker.join();
+        running = true;
+        progress = 0;
+        kind = k;
+        result.clear();
+        worker = std::thread([this, game] {
+            uint64_t total = 0, done = 0;
+            for (const DlssSdkFile& f : kDlssSdkFiles) total += f.size;
+            int code = 0;
+            bool ok = true;
+            std::error_code ec;
+            for (const DlssSdkFile& f : kDlssSdkFiles) {
+                fs::path to = game / f.to;
+                fs::create_directories(to.parent_path(), ec);
+                float from = float(double(done) / double(total)), span = float(double(f.size) / double(total));
+                done += f.size;
+                if (fs::is_regular_file(to, ec) && fs::file_size(to, ec) == f.size && Sha256File(to) == f.sha256) continue;
+                ok = Fetch(std::string(kDlssSdkRaw) + f.from, to, f.size, from, span, code);
+                if (ok && Sha256File(to) != f.sha256) {
+                    // not the file NVIDIA released at that version: never used
+                    fs::remove(to, ec);
+                    ok = false;
+                    code = 200;
+                }
+                if (!ok) break;
+            }
+            progress = 1;
+            result = ok ? T("Downloaded. The game uses them from its next start.")
+                        : F("The download failed (error {}): check the connection and try again.", {std::to_string(code)});
+            running = false;
+        });
+    }
+    ~FrameGenDownload() {
+        if (worker.joinable()) worker.join();
+    }
 };
 #endif
 
@@ -2601,7 +2820,7 @@ private:
         ImGui::Dummy({0, S(8)});
         // anti-aliasing is on by default but its vendor's files are not in the download: without them it and
         // upscaling do nothing, so say so where everyone looks
-        if (kVendorFiles && settings_.antialiasing && !HaveFrameGen(ExeDir(), AntiAliasVendor())) {
+        if (settings_.antialiasing && NeedsFiles(AntiAliasVendor()) && !HaveFrameGen(ExeDir(), AntiAliasVendor())) {
             Status(kIconWarn, kAmber, F("Anti-aliasing ({}) needs its files: download them on the Graphics page.",
                                         {AntiAliasName(AntiAliasVendor())}));
             ImGui::Dummy({0, S(4)});
@@ -2667,9 +2886,14 @@ private:
             Status(kIconWarn, kAmber, fsr ? T("AMD FSR's files are not here yet") : T("NVIDIA DLSS's files are not here yet"));
             Wrapped(g_small, kMuted, fsr ? T("From AMD's own release on GitHub. The files are AMD's, under AMD's licence, "
                                              "which is saved with them; they are not part of this game's download.")
-                                         : T("From NVIDIA's own Streamline release on GitHub (about 280 MB, of which the game "
-                                             "keeps 70). The files are NVIDIA's, under NVIDIA's licences, which are saved "
-                                             "with them; they are not part of this game's download."));
+                                         : T(CV_WIN_LINUX("From NVIDIA's own Streamline release on GitHub (about 280 MB, "
+                                                          "of which the game keeps 70). The files are NVIDIA's, under "
+                                                          "NVIDIA's licences, which are saved with them; they are not "
+                                                          "part of this game's download.",
+                                                          "From NVIDIA's own DLSS SDK on GitHub (about 60 MB). The files "
+                                                          "are NVIDIA's, under NVIDIA's licence, which is saved with them; "
+                                                          "they are not part of this game's download. The game links "
+                                                          "itself to them on this PC.")));
             ImGui::Dummy({0, S(4)});
             ImGui::BeginDisabled(fg_download_.running);
             if (Button(fsr ? T("Download from AMD") : T("Download from NVIDIA"), {0, 0}, Kind::Primary))
@@ -2677,7 +2901,8 @@ private:
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (Button(T("Read the licence"), {0, 0}, Kind::Secondary))
-                ShellExecuteW(nullptr, L"open", Wide(fsr ? kFsrLicence : kDlssLicence).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                ShellExecuteW(nullptr, L"open", Wide(fsr ? kFsrLicence : CV_WIN_LINUX(kDlssLicence, kDlssSdkLicence)).c_str(),
+                              nullptr, nullptr, SW_SHOWNORMAL);
         }
         if (!fg_download_.running && !fg_download_.result.empty() && fg_download_.kind == k) {
             Note(fg_download_.result);
@@ -2685,11 +2910,10 @@ private:
         }
     }
 
-    // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR (on Linux, where
-    // the port's own TAA takes FSR's place, always)
+    // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR
     uint32_t AntiAliasVendor() const {
         uint32_t aa = settings_.antialiasing;
-        return aa == 2 && (!kVendorFiles || !RtxCard(UsedGpu().name)) ? 1 : aa;
+        return aa == 2 && !RtxCard(UsedGpu().name) ? 1 : aa;
     }
 
     // frame generation's warnings, and its files when anti-aliasing's card above does not show them already
@@ -2820,13 +3044,14 @@ private:
         EndSetting();
         if (aa) VendorFiles(AntiAliasVendor());
 #elif defined(CV_FSR_VK)
-        BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world, gathered over the frames by "
-                                           "AMD FSR 3 on any graphics card (NVIDIA DLSS is Windows only). The HUD and menus "
-                                           "stay sharp."),
+        // Linux: AMD FSR built into the game; NVIDIA DLSS from NVIDIA's DLSS SDK, which the game links itself to
+        BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world. AMD FSR works on any "
+                                           "graphics card; NVIDIA DLSS needs a GeForce RTX. The HUD and menus stay sharp."),
                      true);
-        if (aa > 1) aa = 1;  // DLSS chosen on Windows: AMD FSR here
-        Segmented<uint32_t>("aa", aa, {0, 1}, {T("Off"), "AMD FSR"});
+        Segmented<uint32_t>("aa", aa, {0, 1, 2}, {T("Off"), "AMD FSR", "NVIDIA DLSS"});
+        if (aa == 2 && AntiAliasVendor() != 2) ControlNote(kAmber, T("This graphics card has no DLSS: the game uses AMD FSR."));
         EndSetting();
+        if (aa == 2 && AntiAliasVendor() == 2) VendorFiles(2);
 #else
         BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world, gathered over the frames by "
                                            "the port's own TAA (AMD FSR and NVIDIA DLSS are Windows only). The HUD and "
@@ -3512,6 +3737,17 @@ int main(int argc, char** argv) {
     for (int a = 1; a < argc; a++)
         if (!std::strcmp(argv[a], "--check-fonts")) return CheckFonts();
         else if (!std::strcmp(argv[a], "--list-gpus")) return ListGpus();
+        else if (!std::strcmp(argv[a], "--download-framegen") && a + 1 < argc) {
+            // --download-framegen 2: the Graphics page's download of NVIDIA DLSS's files, without the window; exit code
+            // 0 once they are there
+            uint32_t kind = uint32_t(std::strtoul(argv[a + 1], nullptr, 10));
+            if (kind != 2) return 2;
+            FrameGenDownload d;
+            d.Start(kind, ExeDir());
+            if (d.worker.joinable()) d.worker.join();
+            if (!d.result.empty()) std::printf("%s\n", d.result.c_str());
+            return HaveFrameGen(ExeDir(), kind) ? 0 : 1;
+        }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL failed to start: %s\n", SDL_GetError());
         return 1;

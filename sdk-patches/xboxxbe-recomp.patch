@@ -48,7 +48,7 @@ index d4d3144..f2e4702 100644
 +COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 +OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 diff --git a/cmake/XbeRecomp.cmake b/cmake/XbeRecomp.cmake
-index 22e033f..09422d6 100644
+index 22e033f..3e9db0d 100644
 --- a/cmake/XbeRecomp.cmake
 +++ b/cmake/XbeRecomp.cmake
 @@ -22,6 +22,11 @@ set(SDL_GPU OFF CACHE BOOL "" FORCE)
@@ -63,7 +63,7 @@ index 22e033f..09422d6 100644
  
  # What the game needs to build its code on the player's PC (runtime/app/game_code.cpp), beside the executables: the
  # recompiler, clang and lld from the toolchain building this, the game's configs, the XDK layouts they include and the
-@@ -39,11 +44,19 @@ foreach(layout ${XBE_LAYOUTS})
+@@ -39,15 +44,34 @@ foreach(layout ${XBE_LAYOUTS})
      list(APPEND XBE_COPY_LAYOUTS COMMAND ${CMAKE_COMMAND} -E make_directory ${XBE_COMPILER_DIR}/xdk/${build}
           COMMAND ${CMAKE_COMMAND} -E copy_if_different ${layout} ${XBE_COMPILER_DIR}/xdk/${build})
  endforeach()
@@ -76,6 +76,16 @@ index 22e033f..09422d6 100644
 +    set(XBE_COPY_TOOLCHAIN COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_SDK_DIR}/tools/LLVM-LICENSE.txt
 +        ${XBE_COMPILER_DIR})
 +endif()
++if(NOT WIN32)
++    # NVIDIA DLSS's bridge (runtime/linux/ngx/cv_ngx.cpp), compiled on the player's PC with the parts of NVIDIA's DLSS SDK
++    # they downloaded (runtime/linux/dlss_vk.h)
++    set(XBE_NGX ${XBE_SDK_DIR}/runtime/linux/ngx)
++    set(XBE_COPY_NGX COMMAND ${CMAKE_COMMAND} -E make_directory ${XBE_COMPILER_DIR}/ngx/stub/vulkan
++        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_NGX}/cv_ngx.cpp ${XBE_NGX}/cv_ngx.h ${XBE_COMPILER_DIR}/ngx
++        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_NGX}/stub/stdbool.h ${XBE_NGX}/stub/stddef.h
++                ${XBE_NGX}/stub/stdint.h ${XBE_NGX}/stub/wchar.h ${XBE_COMPILER_DIR}/ngx/stub
++        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_NGX}/stub/vulkan/vulkan.h ${XBE_COMPILER_DIR}/ngx/stub/vulkan)
++endif()
  add_custom_target(compiler_files ALL
      COMMAND ${CMAKE_COMMAND} -E make_directory ${XBE_COMPILER_DIR}/config ${XBE_COMPILER_DIR}/include/cpu
              ${XBE_COMPILER_DIR}/include/freestanding
@@ -85,7 +95,12 @@ index 22e033f..09422d6 100644
      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_GAME_CONFIGS} ${XBE_COMPILER_DIR}/config
      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_COMPILER_HEADERS} ${XBE_COMPILER_DIR}/include/cpu
      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${XBE_FREESTANDING_HEADERS} ${XBE_COMPILER_DIR}/include/freestanding
-@@ -69,12 +82,48 @@ set(XBE_IMGUI_SOURCES
+     ${XBE_COPY_LAYOUTS}
++    ${XBE_COPY_NGX}
+     VERBATIM)
+ 
+ # x86 to C++ recompiler
+@@ -69,12 +93,48 @@ set(XBE_IMGUI_SOURCES
      ${imgui_SOURCE_DIR}/imgui_draw.cpp
      ${imgui_SOURCE_DIR}/imgui_tables.cpp
      ${imgui_SOURCE_DIR}/imgui_widgets.cpp
@@ -137,7 +152,7 @@ index 22e033f..09422d6 100644
  
  # One executable per recompiled image: the SDK runtime, XBE_HOST_SOURCES shared by every image of the game, and
  # src/<game_dir> hooks only this image has. The image's code goes to <target>.dll beside it, which the executable delay
-@@ -82,20 +131,38 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
+@@ -82,20 +142,38 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
  # release leaves it out and the executable builds it from the player's xbe (runtime/app/game_code.cpp, which compiles
  # with the same flags). Expects assets/<xbe> and the config's out = "generated/<game_dir>". At run time the game may be
  # a disc image instead.
@@ -180,7 +195,7 @@ index 22e033f..09422d6 100644
          COMMAND ${CMAKE_COMMAND} -E touch ${GEN}/codegen.stamp
          DEPENDS xbe_recomp ${configs} ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe}
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-@@ -107,34 +174,117 @@ function(add_xbe_image target xbe config partitions game_dir)
+@@ -107,34 +185,117 @@ function(add_xbe_image target xbe config partitions game_dir)
      set(xbe_file ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe})
      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${xbe_file})
      file(SHA1 ${xbe_file} xbe_sha1)
@@ -1705,7 +1720,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..5ae056d 100644
+index fe65837..d4f1267 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,6 +15,8 @@
@@ -1717,7 +1732,7 @@ index fe65837..5ae056d 100644
  #include <cmath>
  #include <cstdio>
  #include <cstring>
-@@ -27,13 +29,22 @@
+@@ -27,13 +29,24 @@
  
  #include <imgui.h>
  #include <backends/imgui_impl_dx12.h>
@@ -1725,7 +1740,9 @@ index fe65837..5ae056d 100644
  #include <backends/imgui_impl_win32.h>
 +#else
 +// Linux: D3D12 is vkd3d's on Vulkan, the swap chain and ImGui's input SDL's (linux/)
++#include "linux/dlss_vk.h"
 +#include "linux/fsr_vk.h"
++#include "linux/vk_images.h"
 +#include "linux/present.h"
 +#include "linux/sdl_app.h"
 +#endif
@@ -1740,7 +1757,7 @@ index fe65837..5ae056d 100644
  #include "gpu/shaders.h"
  #include "gpu/texture.h"
  #include "gpu/texturedumper.h"
-@@ -52,10 +63,29 @@ constexpr uint64_t kUploadSize = 64ull << 20;
+@@ -52,10 +65,29 @@ constexpr uint64_t kUploadSize = 64ull << 20;
  // a draw starting with less than this left in the frame's ring waits for the GPU and starts the ring over
  constexpr uint64_t kUploadReserve = 8ull << 20;
  constexpr uint32_t kSrvCount = 3 * 32768;
@@ -1770,7 +1787,7 @@ index fe65837..5ae056d 100644
  constexpr uint32_t kQueries = 8192;  // occlusion queries in flight, several frames of counted draws
  constexpr uint32_t kNoQuery = ~0u;
  
-@@ -72,6 +102,7 @@ struct Perf {
+@@ -72,6 +104,7 @@ struct Perf {
      double sig = 0;
      double texup = 0;
      double compile = 0;
@@ -1778,7 +1795,7 @@ index fe65837..5ae056d 100644
      double clear = 0;
      double copy = 0;
      double present = 0;
-@@ -94,10 +125,37 @@ struct Perf {
+@@ -94,10 +127,37 @@ struct Perf {
      uint64_t syncs = 0;
      uint64_t psos = 0;
      uint64_t shaders = 0;
@@ -1816,7 +1833,7 @@ index fe65837..5ae056d 100644
  struct PerfScope {
      double& acc;
      bool on = diag::Perf();
-@@ -140,6 +198,63 @@ float4 psmain(O i) : SV_Target {
+@@ -140,6 +200,63 @@ float4 psmain(O i) : SV_Target {
  }
  )";
  
@@ -1880,7 +1897,7 @@ index fe65837..5ae056d 100644
  // Depth is reversed in a 32 bit float buffer: 1 at the near clip, 0 at the far one, where a float keeps its finest
  // steps; a 24 bit buffer storing z / w lost the steps that told distant surfaces apart
  constexpr DXGI_FORMAT kDepthTypeless = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -148,6 +263,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+@@ -148,6 +265,7 @@ constexpr DXGI_FORMAT kDepthRead = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
  constexpr float kDepthFar = 0;
  
  const char* kDepthHlsl = R"(
@@ -1888,7 +1905,7 @@ index fe65837..5ae056d 100644
  Texture2D<float> img : register(t0);
  SamplerState ps : register(s1);
  struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
-@@ -157,7 +273,7 @@ O vs(uint id : SV_VertexID) {
+@@ -157,7 +275,7 @@ O vs(uint id : SV_VertexID) {
      o.p = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
      return o;
  }
@@ -1897,7 +1914,7 @@ index fe65837..5ae056d 100644
  )";
  
  const char* kClearHlsl = R"(
-@@ -345,6 +461,17 @@ struct Tex {
+@@ -345,6 +463,17 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -1915,7 +1932,7 @@ index fe65837..5ae056d 100644
  };
  
  struct PsoKey {
-@@ -377,6 +504,8 @@ struct PsoKey {
+@@ -377,6 +506,8 @@ struct PsoKey {
      float zslope;
      uint32_t rtfmt;
      uint32_t sprite;  // DrawShaders::sprite
@@ -1924,7 +1941,7 @@ index fe65837..5ae056d 100644
  };
  
  // Blit's settings past the source and its rectangle
-@@ -387,6 +516,7 @@ struct BlitOptions {
+@@ -387,6 +518,7 @@ struct BlitOptions {
      float mul = 1;            // colour scale
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
@@ -1932,7 +1949,7 @@ index fe65837..5ae056d 100644
  };
  
  // Shrink's settings past the source and the size
-@@ -401,11 +531,15 @@ struct ShrinkOptions {
+@@ -401,11 +533,15 @@ struct ShrinkOptions {
  // a draw's four texture stages: BindStageTexturesAndTargets fills them, the constants, views and samplers read them
  struct DrawTextures {
      TexInfo info[4];
@@ -1950,7 +1967,7 @@ index fe65837..5ae056d 100644
  };
  
  // what the last draw set on the command list, so the next one sets only what differs; anything else that sets them
-@@ -549,6 +683,8 @@ private:
+@@ -549,6 +685,8 @@ private:
      ID3D12Resource* BindTexture(const State& s, int stage, DrawTextures& stages);
      ID3D12Resource* BindTargetTexture(const State& s, int stage, const TextureDesc& d, Target& t, bool box,
                                        DrawTextures& stages);
@@ -1959,7 +1976,7 @@ index fe65837..5ae056d 100644
      ID3D12Resource* BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                       DrawTextures& stages);
      bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
-@@ -565,10 +701,10 @@ private:
+@@ -565,10 +703,10 @@ private:
      ID3D12PipelineState* EnsurePipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
      void FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps, D3D12_GRAPHICS_PIPELINE_STATE_DESC& d) const;
      void ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool sprite);
@@ -1972,7 +1989,7 @@ index fe65837..5ae056d 100644
      void UploadConstants(const State& s, const DrawShaders& sh, const PsoKey& k, const DrawTextures& stages,
                           GuestExtent size, DrawConstants& c);
      void FillTextureConstants(const State& s, const DrawShaders& sh, const DrawTextures& stages, DrawConstants& c);
-@@ -583,7 +719,7 @@ private:
+@@ -583,7 +721,7 @@ private:
      void SetTextureViewsAndSamplers(const State& s, const Assembled& a, DrawTextures& stages);
      uint32_t EnsureViewSet(const DrawTextures& stages);
      uint32_t EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp);
@@ -1981,7 +1998,7 @@ index fe65837..5ae056d 100644
      void SetBlendFactorStencilRef(const State& s);
      void UpdateTargetUsed(uint32_t data);
      void DrawGeometry(const Assembled& a);
-@@ -598,10 +734,16 @@ private:
+@@ -598,10 +736,16 @@ private:
      ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
      // Blit's pipeline
      ID3D12PipelineState* EnsureBlitPipeline(DXGI_FORMAT rtv, bool over = false);
@@ -1998,7 +2015,7 @@ index fe65837..5ae056d 100644
      void CreateHeaps();
      uint32_t CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE t, uint32_t n, bool visible, ComPtr<ID3D12DescriptorHeap>& out);
      void CreateBackBufferViews();
-@@ -613,10 +755,59 @@ private:
+@@ -613,10 +757,62 @@ private:
      void FinishCapture(const Surface& front);
      void StartCapture();
      void ResizeSwap();
@@ -2029,8 +2046,11 @@ index fe65837..5ae056d 100644
 +    // the own TAA's pass (framegen::MakeOwnTaa) over the frame, in AntiAliasFrame; false when it can't
 +    bool TaaFrame(Target& t, const framegen::AntiAlias::Frame& f);
 +    const char* AaName() const {
-+        if (aa_ && aa_->VulkanImages()) return "AMD FSR (Vulkan)";
-+        return aa_ && aa_->Own() ? "TAA" : framegen::AntiAliasName(aa_ ? aa_->Kind() : 0);
++        return AaName(aa_);
++    }
++    static const char* AaName(const framegen::AntiAlias* a) {
++        if (a && a->VulkanImages()) return a->Kind() == framegen::kAaDlss ? "NVIDIA DLSS (Vulkan)" : "AMD FSR (Vulkan)";
++        return a && a->Own() ? "TAA" : framegen::AntiAliasName(a ? a->Kind() : 0);
 +    }
 +    ID3D12PipelineState* EnsureAoApplyPipeline(DXGI_FORMAT rtv);
 +    // XBE_PERF: a GPU timestamp at the start of a part of the frame (GpuMark); GpuFrameEnd resolves the frame's,
@@ -2058,7 +2078,7 @@ index fe65837..5ae056d 100644
      void ReleaseOldTextures();
      void ResetFrame();
      void CountFps();
-@@ -665,6 +856,7 @@ private:
+@@ -665,6 +861,7 @@ private:
          uint32_t color;
          float z;
          uint32_t stencil;
@@ -2066,7 +2086,7 @@ index fe65837..5ae056d 100644
      };
      void ClearTarget(Target& t, const State& s, const ClearArgs& c, std::vector<D3D12_RECT>& rs);
      void ClearChannels(Target& t, const float col[4], uint8_t mask, const std::vector<D3D12_RECT>& rs);
-@@ -675,8 +867,9 @@ private:
+@@ -675,8 +872,9 @@ private:
          uint32_t src_rects;
          uint32_t dst_points;
      };
@@ -2077,7 +2097,7 @@ index fe65837..5ae056d 100644
      void CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state, Target& dst_t,
                        const CopyList& l);
      // the target as a guest sized BGRA copy source, and the shrunk copy that holds it when it is not one already
-@@ -691,10 +884,16 @@ private:
+@@ -691,10 +889,16 @@ private:
      ID3D12Resource* PrepareLateSource(Target& t, Late& l);
      void RecordLateCopy(Late& l, uint32_t slot, ID3D12Resource* src);
  
@@ -2094,7 +2114,7 @@ index fe65837..5ae056d 100644
      ComPtr<ID3D12Resource> bb_[kFrames];
      ComPtr<ID3D12Fence> fence_;
      HANDLE event_ = nullptr;
-@@ -708,6 +907,9 @@ private:
+@@ -708,6 +912,9 @@ private:
      // the constants last uploaded in this command list, reused while a draw's are the same; 0 after a submit
      decltype(State::vsc) last_vsc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_vsc_gpu_ = 0;
@@ -2104,7 +2124,7 @@ index fe65837..5ae056d 100644
      DrawConstants last_dc_{};
      D3D12_GPU_VIRTUAL_ADDRESS last_dc_gpu_ = 0;
      ComPtr<ID3D12GraphicsCommandList> cl_;
-@@ -766,6 +968,10 @@ private:
+@@ -766,6 +973,10 @@ private:
      uint32_t bb_w_ = 0;
      uint32_t bb_h_ = 0;
      float scale_ = 1.0f;
@@ -2115,7 +2135,7 @@ index fe65837..5ae056d 100644
      // surfaces locked without a wait: copies in flight, the newest finished one goes to guest memory
      struct Late {
          ComPtr<ID3D12Resource> rb[kFrames];
-@@ -801,6 +1007,142 @@ private:
+@@ -801,6 +1012,142 @@ private:
      std::vector<Query> counted_;  // since the last ClearReport
      std::deque<Report> reports_;
      bool tearing_ = false;
@@ -2258,7 +2278,7 @@ index fe65837..5ae056d 100644
      uint64_t presents_ = 0;
      double fps_ = 0;
      std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
-@@ -811,9 +1153,13 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -811,9 +1158,13 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      g_reversed_depth = true;
      guest_w_ = width;
      guest_h_ = height;
@@ -2274,13 +2294,16 @@ index fe65837..5ae056d 100644
      CreateHeaps();
      CreateBackBufferViews();
      if (!CreateRootSignature()) return false;
-@@ -827,19 +1173,71 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
+@@ -827,19 +1178,74 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
      return true;
  }
  
 +#ifndef _WIN32
 +// Linux: vkd3d's device on the Vulkan device the settings name, else the fastest (linux/present.cpp)
 +bool D3D12Backend::CreateDevice() {
++    // NVIDIA DLSS's files, when the player has them: the Vulkan instance and device made with what it asks for, so it can be
++    // chosen while playing
++    linux_dlss::Load();
 +    std::string name;
 +    if (!linux_present::CreateDevice(app::Get().gpu, dev_.ReleaseAndGetAddressOf(), name)) {
 +        LOGE("d3d12: no device");
@@ -2350,7 +2373,7 @@ index fe65837..5ae056d 100644
          FAILED(D3D12CreateDevice((adapter = nullptr).Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
          LOGE("d3d12: no device");
          return false;
-@@ -850,6 +1248,8 @@ bool D3D12Backend::CreateDevice() {
+@@ -850,6 +1256,8 @@ bool D3D12Backend::CreateDevice() {
      D3D12_COMMAND_QUEUE_DESC qd{};
      qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
      dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue_));
@@ -2359,7 +2382,7 @@ index fe65837..5ae056d 100644
      ComPtr<IDXGIFactory5> f5;
      BOOL tear = FALSE;
      if (SUCCEEDED(factory_.As(&f5))) f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear));
-@@ -857,6 +1257,40 @@ bool D3D12Backend::CreateDevice() {
+@@ -857,6 +1265,40 @@ bool D3D12Backend::CreateDevice() {
      return true;
  }
  
@@ -2400,7 +2423,7 @@ index fe65837..5ae056d 100644
  bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      RECT rc;
      GetClientRect(hwnd, &rc);
-@@ -871,6 +1305,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -871,6 +1313,11 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sd.BufferCount = kFrames;
      sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
      sd.Flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
@@ -2412,7 +2435,7 @@ index fe65837..5ae056d 100644
      ComPtr<IDXGISwapChain1> sc1;
      if (FAILED(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sd, nullptr, nullptr, &sc1))) {
          LOGE("d3d12: no swap chain");
-@@ -880,6 +1319,7 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
+@@ -880,6 +1327,7 @@ bool D3D12Backend::CreateSwapChain(HWND hwnd) {
      sc1.As(&swap_);
      return true;
  }
@@ -2420,7 +2443,7 @@ index fe65837..5ae056d 100644
  
  uint32_t D3D12Backend::CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE t, uint32_t n, bool visible,
                                    ComPtr<ID3D12DescriptorHeap>& out) {
-@@ -899,9 +1339,10 @@ void D3D12Backend::CreateBackBufferViews() {
+@@ -899,9 +1347,10 @@ void D3D12Backend::CreateBackBufferViews() {
  }
  
  void D3D12Backend::CreateHeaps() {
@@ -2433,7 +2456,7 @@ index fe65837..5ae056d 100644
      dsv_inc_ = CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
      CreateHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
      for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
-@@ -911,7 +1352,7 @@ void D3D12Backend::CreateHeaps() {
+@@ -911,7 +1360,7 @@ void D3D12Backend::CreateHeaps() {
  bool D3D12Backend::CreateRootSignature() {
      D3D12_DESCRIPTOR_RANGE ranges[2] = {};
      ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -2442,7 +2465,7 @@ index fe65837..5ae056d 100644
      ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
      ranges[1].NumDescriptors = 4;
      D3D12_ROOT_PARAMETER params[4] = {};
-@@ -946,7 +1387,11 @@ void D3D12Backend::CreateFrames() {
+@@ -946,7 +1395,11 @@ void D3D12Backend::CreateFrames() {
          f.upload->Map(0, nullptr, reinterpret_cast<void**>(&f.map));
      }
      dev_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_));
@@ -2454,7 +2477,7 @@ index fe65837..5ae056d 100644
      dev_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, frames_[0].alloc.Get(), nullptr, IID_PPV_ARGS(&cl_));
  }
  
-@@ -958,8 +1403,12 @@ void D3D12Backend::CreateGammaLut() {
+@@ -958,8 +1411,12 @@ void D3D12Backend::CreateGammaLut() {
                                    IID_PPV_ARGS(&lut_));
  }
  
@@ -2467,7 +2490,7 @@ index fe65837..5ae056d 100644
      texturedumper::Update();
      ext_ = g_extension.get();
      if (ext_) {
-@@ -1001,7 +1450,11 @@ void D3D12Backend::Flush() { Submit(true); }
+@@ -1001,7 +1458,11 @@ void D3D12Backend::Flush() { Submit(true); }
  
  void D3D12Backend::WaitFence(uint64_t value) {
      fence_->SetEventOnCompletion(value, event_);
@@ -2479,7 +2502,7 @@ index fe65837..5ae056d 100644
  }
  
  void D3D12Backend::SetFullViewport(uint32_t w, uint32_t h) {
-@@ -1063,12 +1516,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
+@@ -1063,12 +1524,15 @@ void D3D12Backend::Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES& cur, D3D
      b.Transition.StateBefore = cur;
      b.Transition.StateAfter = want;
      cl_->ResourceBarrier(1, &b);
@@ -2495,7 +2518,7 @@ index fe65837..5ae056d 100644
      (it->second.depth ? free_dsv_ : free_rtv_).push_back(it->second.view);
      CurrentFrame().garbage.push_back(it->second.res);
      if (it->second.fb) CurrentFrame().garbage.push_back(it->second.fb);
-@@ -1079,7 +1535,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
+@@ -1079,7 +1543,7 @@ void D3D12Backend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
  bool D3D12Backend::CreateTargetResource(Target& t, const Surface& s) {
      float sc = scale_;
      if (ext_) ext_->MakeTarget(s, t.depth, t.gw, t.gh, sc, t.fmt);
@@ -2504,7 +2527,7 @@ index fe65837..5ae056d 100644
      t.h = std::max(1u, uint32_t(std::lround(t.gh * sc)));
      D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
      D3D12_RESOURCE_DESC td = Texture2DDesc(DXGI_FORMAT_UNKNOWN, t.w, t.h);
-@@ -1197,25 +1653,168 @@ bool D3D12Backend::BindTargets(const State& s) {
+@@ -1197,25 +1661,168 @@ bool D3D12Backend::BindTargets(const State& s) {
      Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
      if (rt && ds && (rt->w != ds->w || rt->h != ds->h)) ds = nullptr;
      if (!rt && !ds) return false;
@@ -2676,7 +2699,7 @@ index fe65837..5ae056d 100644
  constexpr uint64_t kDepthCopyKey = ~0ull;  // DepthCopy's pipeline in blit_psos_
  
  // DepthCopy's pipeline, kept in blit_psos_: writes depth only, always passing; null when it can't be made
-@@ -1260,8 +1859,11 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
+@@ -1260,8 +1867,11 @@ void D3D12Backend::DrawDepthCopy(Target& src, Target& dst, ID3D12PipelineState*
      sv.Texture2D.MipLevels = 1;
      dev_->CreateShaderResourceView(src.res.Get(), &sv, Cpu(srv_heap_.Get(), slot, srv_inc_));
      Alloc cb = Upload(256, 256);
@@ -2688,7 +2711,7 @@ index fe65837..5ae056d 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -1282,6 +1884,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
+@@ -1282,6 +1892,7 @@ bool D3D12Backend::DepthCopy(const State& s) {
      Target& src = si->second;
      ID3D12PipelineState* pso = EnsureDepthCopyPipeline();
      if (!pso) return false;
@@ -2696,7 +2719,7 @@ index fe65837..5ae056d 100644
      DrawDepthCopy(src, dst, pso);
      return true;
  }
-@@ -1327,6 +1930,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
+@@ -1327,6 +1938,7 @@ ComPtr<ID3D12Resource> D3D12Backend::CreatePixelTexture(const std::vector<uint8_
  
  // CPU pixels of a color surface into its host target, scaled
  void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
@@ -2704,7 +2727,7 @@ index fe65837..5ae056d 100644
      g_perf.rtups++;
      TextureDesc d;
      if (!Describe(s.header, d) || Format(d.format).depth) return;
-@@ -1350,6 +1954,7 @@ void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
+@@ -1350,6 +1962,7 @@ void D3D12Backend::UploadTarget(Target& t, const Surface& s) {
      CurrentFrame().garbage.push_back(tex);
      t.epoch = DirtyEpoch(t.data);
      t.sig = MemSig(t.data, t.bytes);
@@ -2712,7 +2735,7 @@ index fe65837..5ae056d 100644
  }
  
  // samplers_ key of the full screen passes' samplers, apart from the stage samplers' hashed keys
-@@ -1397,23 +2002,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
+@@ -1397,23 +2010,89 @@ void D3D12Backend::DrawFullScreen(ID3D12PipelineState* pso, D3D12_GPU_VIRTUAL_AD
  }
  
  void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect[4], const BlitOptions& o) {
@@ -2806,7 +2829,7 @@ index fe65837..5ae056d 100644
  ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash) {
      // one source can hold several entry points
      uint64_t profile_seed = Hash(profile, std::strlen(profile));
-@@ -1421,12 +2092,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1421,12 +2100,18 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
      hash = Hash(src.data(), src.size(), entry_seed);
      auto it = blobs_.find(hash);
      if (it != blobs_.end()) return it->second.Get();
@@ -2828,7 +2851,7 @@ index fe65837..5ae056d 100644
      if (FAILED(hr)) {
          LOGE("d3d12: %s compile failed: %s", profile, err ? static_cast<const char*>(err->GetBufferPointer()) : "?");
          LOGE("%s", src.c_str());
-@@ -1434,6 +2111,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
+@@ -1434,6 +2119,7 @@ ID3DBlob* D3D12Backend::Compile(const std::string& src, const char* entry, const
          return nullptr;
      }
      blobs_[hash] = code;
@@ -2836,7 +2859,7 @@ index fe65837..5ae056d 100644
      return code.Get();
  }
  
-@@ -1477,6 +2155,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
+@@ -1477,6 +2163,29 @@ ID3D12PipelineState* D3D12Backend::EnsureBlitPipeline(DXGI_FORMAT rtv, bool over
      return pso.Get();
  }
  
@@ -2866,7 +2889,7 @@ index fe65837..5ae056d 100644
  // Pass's pipeline for the shader, kept in blit_psos_; null when it can't be made
  ID3D12PipelineState* D3D12Backend::EnsurePassPipeline(const char* hlsl, const char* entry, DXGI_FORMAT rtv,
                                                        float blend) {
-@@ -1610,8 +2311,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
+@@ -1610,8 +2319,33 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
      d.RasterizerState.DepthClipEnable = TRUE;
      FillDepthStencilDesc(k, d.DepthStencilState);
      d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -2901,7 +2924,7 @@ index fe65837..5ae056d 100644
      d.DSVFormat = k.has_ds ? kDepthFormat : DXGI_FORMAT_UNKNOWN;
      d.SampleDesc.Count = 1;
  }
-@@ -1651,8 +2377,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
+@@ -1651,8 +2385,9 @@ void D3D12Backend::ExpandPoints(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, bool spri
  
  float D3D12Backend::TargetScale() const {
      const Target* t = bound_rt_ ? bound_rt_ : bound_ds_;
@@ -2913,7 +2936,7 @@ index fe65837..5ae056d 100644
  }
  
  // the XDK's screen space offset puts the console's positions half a pixel right and down of the host's, unless a
-@@ -1674,6 +2401,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
+@@ -1674,6 +2409,7 @@ ID3D12PipelineState* D3D12Backend::EnsurePipeline(const PsoKey& k, ID3DBlob* vs,
      if (k.topo == uint32_t(Topology::Points)) ExpandPoints(d, k.sprite);
      ComPtr<ID3D12PipelineState> pso;
      g_perf.psos++;
@@ -2921,7 +2944,7 @@ index fe65837..5ae056d 100644
      if (FAILED(dev_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) LOGE("d3d12: pipeline creation failed");
      psos_[h] = pso;
      return pso.Get();
-@@ -1692,6 +2420,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1692,6 +2428,9 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      TexInfo& info = stages.info[stage];
      D3D12_SHADER_RESOURCE_VIEW_DESC& sv = stages.sv[stage];
      if (&t == draw_ds_) return nullptr;
@@ -2931,7 +2954,7 @@ index fe65837..5ae056d 100644
      bool feedback = &t == draw_rt_;
      stages.rt[stage] = true;
      info.flags |= kTexTarget;
-@@ -1703,7 +2434,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
+@@ -1703,7 +2442,13 @@ ID3D12Resource* D3D12Backend::BindTargetTexture(const State& s, int stage, const
      info.kind = kTex2D;
      // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
      Target* rt = FindTarget(s.rt, false);
@@ -2946,7 +2969,7 @@ index fe65837..5ae056d 100644
      if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
          stages.wide[stage] = k;
          info.flags |= kTexWide;
-@@ -1727,6 +2464,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
+@@ -1727,6 +2472,10 @@ bool SameTexture(const Tex& tx, const TextureDesc& d) {
  bool D3D12Backend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key) {
      g_perf.newtex++;
      if (tx.res) CurrentFrame().garbage.push_back(tx.res);
@@ -2957,7 +2980,7 @@ index fe65837..5ae056d 100644
      tx = Tex{};
      tx.d = d;
      tx.fmt = HostFormat(fi.host);
-@@ -1843,6 +2584,68 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
+@@ -1843,6 +2592,68 @@ void ReadStagePalette(const State& s, int stage, const TextureDesc& d, StagePale
      palette.hash = Hash(palette.colours, sizeof(palette.colours));
  }
  
@@ -3026,7 +3049,7 @@ index fe65837..5ae056d 100644
  // a texture in guest memory: made again when its layout changed, uploaded again when its bytes did
  ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                                 DrawTextures& stages) {
-@@ -1861,7 +2664,8 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1861,7 +2672,8 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
          tx.palette = palette.hash;
          const uint8_t* p = static_cast<const uint8_t*>(kernel::HostPtr(d.data));
          auto perf_t = PerfClock::now();
@@ -3036,7 +3059,7 @@ index fe65837..5ae056d 100644
          g_perf.sig += PerfMs(perf_t);
          if (sig != tx.sig || !same) {
              PerfScope perf_up{g_perf.texup};
-@@ -1870,7 +2674,45 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1870,7 +2682,45 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.sig = sig;
              UploadTexture(tx, d, fi, p, colours, same);
              tx.pack_gen = 0;
@@ -3082,7 +3105,7 @@ index fe65837..5ae056d 100644
      }
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
-@@ -1969,7 +2811,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
+@@ -1969,7 +2819,10 @@ constexpr uint32_t kTexfAnisotropic = 3;
  constexpr uint32_t kTaddressWrap = 1;
  constexpr uint32_t kTaddressClamp = 3;
  
@@ -3094,7 +3117,7 @@ index fe65837..5ae056d 100644
      D3D12_SAMPLER_DESC sd = {};
      const auto& t = s.tss[size_t(i)];
      uint32_t mag = t[kTssMagFilter];
-@@ -1982,8 +2827,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1982,8 +2835,15 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
      bool anisotropic = min == kTexfAnisotropic || mag == kTexfAnisotropic;
      uint32_t an = anisotropic ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
@@ -3112,7 +3135,7 @@ index fe65837..5ae056d 100644
      if (an > 1) {
          sd.Filter = D3D12_FILTER_ANISOTROPIC;
          sd.MaxAnisotropy = std::min<uint32_t>(an, 16);
-@@ -1993,7 +2845,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -1993,7 +2853,9 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
      sd.AddressV = Address(clamp && t[kTssAddressV] == kTaddressWrap ? kTaddressClamp : t[kTssAddressV]);
      sd.AddressW = Address(t[kTssAddressW]);
      sd.MipLODBias = Bits(t[kTssMipLodBias]);
@@ -3123,7 +3146,7 @@ index fe65837..5ae056d 100644
      sd.MaxLOD = mip ? D3D12_FLOAT32_MAX : sd.MinLOD;
      Color(t[kTssBorderColor], sd.BorderColor);
      if (stages.info[i].shadow) {
-@@ -2009,7 +2863,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
+@@ -2009,7 +2871,8 @@ D3D12_SAMPLER_DESC StageSampler(const State& s, int i, const DrawTextures& stage
  uint32_t D3D12Backend::EnsureStageSamplers(const State& s, const DrawTextures& stages, bool clamp) {
      D3D12_SAMPLER_DESC sd[4];
      uint32_t aniso = app::Get().aniso;
@@ -3133,7 +3156,7 @@ index fe65837..5ae056d 100644
      uint64_t key = Hash(sd, sizeof(sd));
      auto it = samplers_.find(key);
      if (it != samplers_.end()) return it->second;
-@@ -2144,9 +2999,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
+@@ -2144,9 +3007,9 @@ bool OffsetsPolygons(const State& s, Topology topology) {
      return topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable);
  }
  
@@ -3146,7 +3169,7 @@ index fe65837..5ae056d 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2165,7 +3020,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
+@@ -2165,7 +3028,7 @@ void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k
          k.spass = SimpleState(s, kMStencilPass);
      }
      // polygon offset: the slope here, toward the camera is up on reversed depth; the units are in ReversedDepthHlsl
@@ -3155,7 +3178,7 @@ index fe65837..5ae056d 100644
  }
  
  void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2218,6 +3073,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
+@@ -2218,6 +3081,22 @@ void FillFogConstants(const State& s, bool vertex_program, DrawConstants& c) {
      c.fog[3] = float(s.rs[kRsFogTableMode]);
  }
  
@@ -3178,7 +3201,7 @@ index fe65837..5ae056d 100644
  void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
      c.surf[0] = float(size.w);
      c.surf[1] = float(size.h);
-@@ -2240,6 +3111,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
+@@ -2240,6 +3119,10 @@ void FillCombinerConstants(const State& s, DrawConstants& c) {
  }
  
  constexpr float kGlowBoxTexels = 3.0f;  // console texels across the box each wide tap averages
@@ -3189,7 +3212,7 @@ index fe65837..5ae056d 100644
  
  void D3D12Backend::FillTexelConstants(int i, const TextureDesc& d, const DrawTextures& stages, DrawConstants& c) {
      c.texsize[i][0] = float(d.width);
-@@ -2433,28 +3308,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
+@@ -2433,28 +3316,69 @@ void D3D12Backend::FillDepthConstants(const State& s, const DrawShaders& sh, con
      c.zparams[2] = sh.prog ? units : units * r.far_w / s.zscale;
  }
  
@@ -3268,7 +3291,7 @@ index fe65837..5ae056d 100644
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -2469,6 +3385,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
+@@ -2469,6 +3393,7 @@ void D3D12Backend::UploadConstants(const State& s, const DrawShaders& sh, const
      if (last_dc_gpu_ != binds_.dc) cl_->SetGraphicsRootConstantBufferView(1, last_dc_gpu_);
      binds_.vsc = last_vsc_gpu_;
      binds_.dc = last_dc_gpu_;
@@ -3276,7 +3299,7 @@ index fe65837..5ae056d 100644
  }
  
  void D3D12Backend::CaptureTextures(const State& s, const DrawTextures& stages) {
-@@ -2577,6 +3494,23 @@ bool UnitTexcoords(const Assembled& a) {
+@@ -2577,6 +3502,23 @@ bool UnitTexcoords(const Assembled& a) {
      return any;
  }
  
@@ -3300,7 +3323,7 @@ index fe65837..5ae056d 100644
  // UnitTexcoords only changes stages that wrap
  bool AnyStageWraps(const State& s) {
      for (const auto& t : s.tss) {
-@@ -2594,8 +3528,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
+@@ -2594,8 +3536,8 @@ uint32_t D3D12Backend::EnsureViewSet(const DrawTextures& stages) {
      uint64_t key = Hash(stages.sv, sizeof(stages.sv), Hash(stages.res, sizeof(stages.res)));
      auto it = view_sets_.find(key);
      if (it != view_sets_.end()) return it->second;
@@ -3311,7 +3334,7 @@ index fe65837..5ae056d 100644
          dev_->CreateShaderResourceView(stages.res[i], &stages.sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
      }
      view_sets_[key] = slot;
-@@ -2609,29 +3543,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
+@@ -2609,29 +3551,45 @@ void D3D12Backend::SetTextureViewsAndSamplers(const State& s, const Assembled& a
          stages.sv[i].ViewDimension = NullViewDimension(stages.info[i].kind);
          stages.sv[i].Format = DXGI_FORMAT_B8G8R8A8_UNORM;
      }
@@ -3368,7 +3391,7 @@ index fe65837..5ae056d 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2808,6 +3758,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2808,6 +3766,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
          return;
      }
      PerfScope perf_draw{g_perf.draw};
@@ -3376,7 +3399,7 @@ index fe65837..5ae056d 100644
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
-@@ -2815,10 +3766,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2815,10 +3774,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (ext_) ext_->BeginDraw(s);
      Assembled& a = asm_;
      if (!AssembleDraw(s, prim, start, count, indices, a)) return;
@@ -3389,7 +3412,7 @@ index fe65837..5ae056d 100644
  
      // vertex shader
      DrawShaders sh = ClassifyShaders(s, a, count);
-@@ -2831,26 +3784,89 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2831,26 +3792,89 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
@@ -3481,7 +3504,7 @@ index fe65837..5ae056d 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,20 +3876,22 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,20 +3884,22 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -3508,7 +3531,7 @@ index fe65837..5ae056d 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -2889,6 +3907,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +3915,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -3524,7 +3547,7 @@ index fe65837..5ae056d 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2912,6 +3939,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2912,6 +3947,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          }
      }
      t.drawn = true;
@@ -3532,7 +3555,7 @@ index fe65837..5ae056d 100644
  }
  
  // ClearChannels' pipeline for the target format and channel mask, kept in blit_psos_; null when it can't be made
-@@ -2961,7 +3989,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +3997,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -3543,7 +3566,7 @@ index fe65837..5ae056d 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +4073,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +4081,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -3563,7 +3586,7 @@ index fe65837..5ae056d 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +4091,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +4099,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -3572,7 +3595,7 @@ index fe65837..5ae056d 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,13 +4100,15 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,13 +4108,15 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -3589,7 +3612,7 @@ index fe65837..5ae056d 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -3084,7 +4119,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +4127,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -3598,7 +3621,7 @@ index fe65837..5ae056d 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +4129,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +4137,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -3617,7 +3640,7 @@ index fe65837..5ae056d 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3111,6 +4146,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3111,6 +4154,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          cl_->CopyTextureRegion(&dl, dx, dy, 0, &sl, &b);
      }
      dst_t.drawn = true;
@@ -3625,7 +3648,7 @@ index fe65837..5ae056d 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -3136,6 +4172,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +4180,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -3641,7 +3664,7 @@ index fe65837..5ae056d 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3150,21 +4195,127 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3150,21 +4203,127 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
  }
  
  void D3D12Backend::ResizeSwap() {
@@ -3771,7 +3794,7 @@ index fe65837..5ae056d 100644
  }
  
  void D3D12Backend::FinishCapture(const Surface& front) {
-@@ -3179,16 +4330,23 @@ void D3D12Backend::FinishCapture(const Surface& front) {
+@@ -3179,16 +4338,23 @@ void D3D12Backend::FinishCapture(const Surface& front) {
      fclose(cap_);
      cap_ = nullptr;
      cap_tex_.clear();
@@ -3798,7 +3821,7 @@ index fe65837..5ae056d 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,28 +4381,1211 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,28 +4389,1212 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -3917,13 +3940,13 @@ index fe65837..5ae056d 100644
 +    if (aa_depth_ && aa_motion_ && aa_out_ && aa_w_ == w && aa_h_ == h && aa_fmt_ == fmt && aa_vk_ == vk) return true;
 +#ifndef _WIN32
 +    if (aa_vk_) {
-+        // FSR's own images: released once the GPU is done with them, then their Vulkan images freed
++        // the anti-aliasing's own images: released once the GPU is done with them, then their Vulkan images freed
 +        Flush();
 +        for (ComPtr<ID3D12Resource>* r : {std::addressof(aa_depth_), std::addressof(aa_motion_), std::addressof(aa_out_),
 +                                          std::addressof(aa_vk_color_), std::addressof(aa_vk_rx_)}) {
 +            ID3D12Resource* raw = r->Get();
 +            *r = nullptr;
-+            if (raw) linux_fsr::DropImage(raw);
++            if (raw) linux_vk::DropImage(raw);
 +        }
 +        aa_vk_ = false;
 +    }
@@ -3935,9 +3958,10 @@ index fe65837..5ae056d 100644
 +    if (aa_vk_rx_) Release(std::move(aa_vk_rx_));
 +#ifndef _WIN32
 +    if (vk) {
-+        // Linux's AMD FSR on Vulkan: every input and the output an image of its own, in COMMON (Vulkan's GENERAL)
++        // Linux's AMD FSR and NVIDIA DLSS on Vulkan: every input and the output an image of its own, in COMMON (Vulkan's
++        // GENERAL)
 +        auto own = [&](ComPtr<ID3D12Resource>& r, D3D12_RESOURCE_STATES& st, DXGI_FORMAT f, bool rt) {
-+            r.Attach(linux_fsr::MakeImage(dev_.Get(), w, h, f, rt));
++            r.Attach(linux_vk::MakeImage(dev_.Get(), w, h, f, rt));
 +            st = D3D12_RESOURCE_STATE_COMMON;
 +            return r != nullptr;
 +        };
@@ -3956,7 +3980,7 @@ index fe65837..5ae056d 100644
 +            aa_vk_ = true;
 +            return true;
 +        }
-+        LOGR("antialias: AMD FSR's images were not made at %ux%u", w, h);
++        LOGR("antialias: %s's images were not made at %ux%u", AaName(), w, h);
 +        aa_depth_ = aa_motion_ = aa_out_ = aa_vk_color_ = aa_vk_rx_ = nullptr;
 +        return false;
 +    }
@@ -5015,7 +5039,7 @@ index fe65837..5ae056d 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +5594,209 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +5603,209 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -5226,7 +5250,7 @@ index fe65837..5ae056d 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +5806,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +5815,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -5237,7 +5261,7 @@ index fe65837..5ae056d 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +5826,12 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +5835,12 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -5250,7 +5274,7 @@ index fe65837..5ae056d 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +5842,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +5851,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -5283,7 +5307,7 @@ index fe65837..5ae056d 100644
      }
  }
  
-@@ -3317,12 +5880,14 @@ void LogPerf() {
+@@ -3317,12 +5889,14 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -5302,7 +5326,7 @@ index fe65837..5ae056d 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +5896,98 @@ void LogPerf() {
+@@ -3331,25 +5905,98 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -5406,7 +5430,7 @@ index fe65837..5ae056d 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +5998,33 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +6007,33 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -5440,7 +5464,7 @@ index fe65837..5ae056d 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3386,13 +6043,50 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +6052,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -5452,7 +5476,11 @@ index fe65837..5ae056d 100644
 +    if (kind == framegen::kAaDlss) {
 +        if (!aa_dlss_ && !aa_dlss_tried_) {
 +            aa_dlss_tried_ = true;
++#ifdef _WIN32
 +            aa_dlss_ = framegen::MakeAntiAlias(dev_.Get(), framegen::kAaDlss);
++#else
++            aa_dlss_ = linux_dlss::MakeDlss(dev_.Get(), queue_.Get());
++#endif
 +        }
 +        pick = aa_dlss_.get();
 +    }
@@ -5471,7 +5499,7 @@ index fe65837..5ae056d 100644
 +    }
 +    if (pick != aa_) {
 +        if (pick)
-+            LOGR("antialias: %s%s", pick->VulkanImages() ? "AMD FSR (Vulkan)" : pick->Own() ? "TAA" : framegen::AntiAliasName(pick->Kind()),
++            LOGR("antialias: %s%s", AaName(pick),
 +                 kind == framegen::kAaDlss && pick->Kind() != framegen::kAaDlss ? ", NVIDIA DLSS not running" : "");
 +        aa_ = pick;
 +        aa_had_view_ = aa_said_ = scene_next_ = false;
@@ -5493,7 +5521,7 @@ index fe65837..5ae056d 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +6094,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +6107,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -5614,10 +5642,10 @@ index ce6acda..005a5fb 100644
  inline std::unique_ptr<Extension> g_extension;
 diff --git a/runtime/gpu/framegen.cpp b/runtime/gpu/framegen.cpp
 new file mode 100644
-index 0000000..b6aa1f8
+index 0000000..2ee849c
 --- /dev/null
 +++ b/runtime/gpu/framegen.cpp
-@@ -0,0 +1,1100 @@
+@@ -0,0 +1,1097 @@
 +// Frame generation by AMD FSR 3 or NVIDIA DLSS, and anti-aliasing and upscaling by AMD FSR or NVIDIA DLSS (framegen.h). Each vendor's library is loaded at run time from beside
 +// the executable, never linked: without the files the game runs as it did.
 +#include "gpu/framegen.h"
@@ -6653,8 +6681,8 @@ index 0000000..b6aa1f8
 +
 +}  // namespace gpu::framegen
 +#else
-+// Linux: the vendors' libraries are Windows DLLs, so none is loaded. Frame generation, anti-aliasing and upscaling are
-+// off there; the menus say so
++// Linux: the vendors' Windows libraries are not loaded there. Frame generation is off; anti-aliasing and upscaling are
++// the renderer's: AMD FSR 3 and NVIDIA DLSS on Vulkan (linux/fsr_vk.h, linux/dlss_vk.h), else its own TAA
 +#include "core/log.h"
 +
 +namespace gpu::framegen {
@@ -6672,11 +6700,8 @@ index 0000000..b6aa1f8
 +    return nullptr;
 +}
 +
-+// AMD FSR's kind is the renderer's own TAA there (MakeOwnTaa), made by the renderer itself
-+std::unique_ptr<AntiAlias> MakeAntiAlias(ID3D12Device*, uint32_t kind) {
-+    if (kind == kAaDlss) LOGR("antialias: NVIDIA DLSS is not on Linux");
-+    return nullptr;
-+}
++// made by the renderer itself there (D3D12Backend::ApplySettings)
++std::unique_ptr<AntiAlias> MakeAntiAlias(ID3D12Device*, uint32_t) { return nullptr; }
 +
 +}  // namespace gpu::framegen
 +#endif
@@ -6720,7 +6745,7 @@ index 0000000..b6aa1f8
 +}  // namespace gpu::framegen
 diff --git a/runtime/gpu/framegen.h b/runtime/gpu/framegen.h
 new file mode 100644
-index 0000000..9a1e46a
+index 0000000..ba69354
 --- /dev/null
 +++ b/runtime/gpu/framegen.h
 @@ -0,0 +1,151 @@
@@ -6860,9 +6885,9 @@ index 0000000..9a1e46a
 +    virtual void FrameDone() {}
 +    // the renderer's own pass rather than a vendor's: Run records nothing, the renderer draws it (MakeOwnTaa)
 +    virtual bool Own() const { return false; }
-+    // Linux's AMD FSR on Vulkan (linux/fsr_vk.h): its inputs and output are images of its own, made by
-+    // linux_fsr::MakeImage, and it runs on the queue (RunQueue) once the renderer has submitted the frame so far and the
-+    // GPU is done with it, each in COMMON, rather than in the command list (Run)
++    // Linux's AMD FSR and NVIDIA DLSS on Vulkan (linux/fsr_vk.h, linux/dlss_vk.h): their inputs and output are the
++    // renderer's own Vulkan images (linux_vk::MakeImage), and they run on the queue (RunQueue) once the renderer has
++    // submitted the frame so far and the GPU is done with it, each in COMMON, rather than in the command list (Run)
 +    virtual bool VulkanImages() const { return false; }
 +    virtual bool RunQueue(const Frame&) { return false; }
 +};
@@ -7928,6 +7953,567 @@ index 0000000..7cb4018
 +#ifndef D3DCOMPILE_OPTIMIZATION_LEVEL3
 +#define D3DCOMPILE_OPTIMIZATION_LEVEL3 (1 << 15)
 +#endif
+diff --git a/runtime/linux/dlss_vk.cpp b/runtime/linux/dlss_vk.cpp
+new file mode 100644
+index 0000000..059de51
+--- /dev/null
++++ b/runtime/linux/dlss_vk.cpp
+@@ -0,0 +1,510 @@
++// Linux: NVIDIA DLSS on Vulkan through NVIDIA's NGX (linux/dlss_vk.h)
++#ifndef _WIN32
++#include "linux/dlss_vk.h"
++
++#include <dlfcn.h>
++#include <fcntl.h>
++#include <spawn.h>
++#include <sys/wait.h>
++#include <unistd.h>
++#include <vkd3d.h>
++
++#include <algorithm>
++#include <cerrno>
++#include <cstdlib>
++#include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <iterator>
++#include <string>
++#include <system_error>
++
++#include "app/app.h"
++#include "core/log.h"
++#include "linux/ngx/cv_ngx.h"
++#include "linux/vk_images.h"
++
++extern char** environ;
++
++namespace gpu::linux_dlss {
++
++namespace {
++
++namespace fs = std::filesystem;
++
++// NVIDIA's DLSS SDK headers the bridge includes (ngx/cv_ngx.cpp), in dlss/include
++const char* const kHeaders[] = {"nvsdk_ngx.h",           "nvsdk_ngx_defs.h",       "nvsdk_ngx_defs_vk.h",
++                                "nvsdk_ngx_helpers.h",   "nvsdk_ngx_helpers_cuda.h", "nvsdk_ngx_helpers_d3d.h",
++                                "nvsdk_ngx_helpers_vk.h", "nvsdk_ngx_params.h",     "nvsdk_ngx_vk.h"};
++// the bridge's own files in the compiler folder's ngx
++const char* const kOwn[] = {"cv_ngx.cpp", "cv_ngx.h", "stub/stdbool.h", "stub/stddef.h", "stub/stdint.h", "stub/wchar.h",
++                            "stub/vulkan/vulkan.h"};
++
++const cv_ngx* g_api = nullptr;
++void* g_lib = nullptr;
++bool g_tried = false;
++std::vector<std::string> g_instance_names, g_device_names;
++VkPhysicalDevice g_card = VK_NULL_HANDLE;  // the card DeviceExtensions found DLSS's extensions on
++
++fs::path Dir() { return app::ExeDir() / "dlss"; }
++fs::path Bridge() { return Dir() / "libcv_ngx.so"; }
++fs::path Own() { return app::ExeDir() / "compiler" / "ngx"; }
++fs::path BuildLog() { return app::ExeDir() / "logs" / "dlss-build.log"; }
++
++bool Verbose() {
++    const char* v = std::getenv("XBE_DLSS_LOG");
++    return v && *v == '1';
++}
++
++void NgxLog(const char* line) {
++    std::string s(line ? line : "");
++    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
++    if (Verbose())
++        LOGR("ngx: %s", s.c_str());
++    else
++        LOGD("ngx: %s", s.c_str());
++}
++
++// the DLSS library NVIDIA releases with the SDK, any version of it
++bool HaveDlssLibrary() {
++    std::error_code ec;
++    for (auto& e : fs::directory_iterator(Dir(), ec))
++        if (e.path().filename().string().rfind("libnvidia-ngx-dlss.so.", 0) == 0) return true;
++    return false;
++}
++
++// what the bridge is built from; empty, and the first missing named, when one is not there
++std::vector<fs::path> Inputs(std::string& missing) {
++    std::vector<fs::path> in;
++    for (const char* h : kHeaders) in.push_back(Dir() / "include" / h);
++    in.push_back(Dir() / "libnvsdk_ngx.a");
++    for (const char* o : kOwn) in.push_back(Own() / o);
++    std::error_code ec;
++    for (const fs::path& p : in)
++        if (!fs::is_regular_file(p, ec)) {
++            missing = p.lexically_relative(app::ExeDir()).string();
++            return {};
++        }
++    return in;
++}
++
++// what the bridge was built from, each file's name, size and time: a new download or game release changes it, even with
++// an older time than the bridge's
++std::string Stamp(const std::vector<fs::path>& in) {
++    std::string s = "abi " + std::to_string(CV_NGX_ABI) + "\n";
++    std::error_code ec;
++    for (const fs::path& p : in) {
++        auto t = fs::last_write_time(p, ec).time_since_epoch().count();
++        s += p.lexically_relative(app::ExeDir()).string() + " " + std::to_string(fs::file_size(p, ec)) + " " +
++             std::to_string(t) + "\n";
++    }
++    return s;
++}
++
++fs::path StampFile() { return Dir() / "libcv_ngx.stamp"; }
++
++bool UpToDate(const std::vector<fs::path>& in) {
++    std::error_code ec;
++    if (!fs::is_regular_file(Bridge(), ec)) return false;
++    std::ifstream f(StampFile());
++    std::string had((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
++    return had == Stamp(in);
++}
++
++// a tool of the compiler folder's, else the PATH's by its name or a versioned one (clang-21); empty when none
++std::string Tool(const std::string& name) {
++    std::error_code ec;
++    fs::path own = app::ExeDir() / "compiler" / name;
++    if (fs::exists(own, ec)) return own.string();
++    const char* path = std::getenv("PATH");
++    std::string dirs = path && *path ? path : "/usr/local/bin:/usr/bin:/bin";
++    std::vector<std::string> names{name};
++    for (int v = 30; v >= 14; v--) names.push_back(name + "-" + std::to_string(v));
++    for (const std::string& n : names) {
++        size_t at = 0;
++        while (at <= dirs.size()) {
++            size_t end = dirs.find(':', at);
++            if (end == std::string::npos) end = dirs.size();
++            fs::path p = fs::path(dirs.substr(at, end - at)) / n;
++            if (end > at && access(p.c_str(), X_OK) == 0) return p.string();
++            at = end + 1;
++        }
++    }
++    return {};
++}
++
++// a tool run to its end, its output added to the build's log; true when it succeeded
++bool Run(const std::vector<std::string>& args) {
++    {
++        std::ofstream log(BuildLog(), std::ios::app);
++        for (const std::string& a : args) log << a << ' ';
++        log << '\n';
++    }
++    posix_spawn_file_actions_t fa;
++    posix_spawn_file_actions_init(&fa);
++    posix_spawn_file_actions_addopen(&fa, 1, BuildLog().c_str(), O_WRONLY | O_APPEND | O_CREAT, 0644);
++    posix_spawn_file_actions_adddup2(&fa, 1, 2);
++    std::vector<char*> argv;
++    for (const std::string& a : args) argv.push_back(const_cast<char*>(a.c_str()));
++    argv.push_back(nullptr);
++    pid_t pid = 0;
++    int e = posix_spawn(&pid, argv[0], &fa, nullptr, argv.data(), environ);
++    posix_spawn_file_actions_destroy(&fa);
++    if (e) return false;
++    int status = 0;
++    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
++    }
++    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
++}
++
++// the bridge compiled and linked as ngx/cv_ngx.cpp says, into place whole
++bool Build(const std::vector<fs::path>& in) {
++    std::string clang = Tool("clang"), lld = Tool("ld.lld");
++    if (clang.empty() || lld.empty()) {
++        LOGR("antialias: NVIDIA DLSS's bridge needs clang and ld.lld, which the compiler folder has (not here)");
++        return false;
++    }
++    std::error_code ec;
++    fs::create_directories(BuildLog().parent_path(), ec);
++    std::ofstream(BuildLog(), std::ios::trunc) << "NVIDIA DLSS's bridge (the SDK's runtime/linux/ngx/cv_ngx.cpp)\n";
++    fs::path obj = Dir() / "cv_ngx.o.tmp", lib = Dir() / "libcv_ngx.so.tmp";
++    bool ok = Run({clang, "-target", "x86_64-linux-gnu", "-std=c++20", "-O2", "-fPIC", "-nostdinc", "-nostdinc++",
++                   "-fno-exceptions", "-fno-rtti", "-w", "-isystem", (Own() / "stub").string(), "-I",
++                   (Dir() / "include").string(), "-c", (Own() / "cv_ngx.cpp").string(), "-o", obj.string()}) &&
++              Run({lld, "-shared", "-z", "noexecstack", "-o", lib.string(), obj.string(),
++                   (Dir() / "libnvsdk_ngx.a").string()});
++    fs::remove(obj, ec);
++    if (ok) fs::rename(lib, Bridge(), ec);
++    if (ok && !ec) std::ofstream(StampFile(), std::ios::trunc) << Stamp(in);
++    if (!ok || ec) {
++        fs::remove(lib, ec);
++        LOGR("antialias: NVIDIA DLSS's bridge was not built, see logs/dlss-build.log");
++        return false;
++    }
++    LOGR("antialias: NVIDIA DLSS's bridge built from NVIDIA's DLSS SDK files (dlss/libcv_ngx.so)");
++    return true;
++}
++
++// Halton's low-discrepancy sequence, as on Windows (framegen.cpp's HaltonJitter)
++float Halton(int32_t i, int32_t b) {
++    float f = 1, r = 0;
++    while (i > 0) {
++        f /= float(b);
++        r += f * float(i % b);
++        i /= b;
++    }
++    return r;
++}
++
++const char* ModeName(uint32_t mode) {
++    static const char* const kNames[] = {"DLAA", "Quality", "Balanced", "Performance"};
++    return kNames[std::min<uint32_t>(mode, 3)];
++}
++
++cv_ngx_image Of(const linux_vk::Image& im) {
++    return {reinterpret_cast<uint64_t>(im.image), reinterpret_cast<uint64_t>(im.view), uint32_t(im.info.format),
++            im.info.extent.width, im.info.extent.height};
++}
++
++class Dlss final : public framegen::AntiAlias {
++public:
++    ~Dlss() override {
++        if (vkd_) vkDeviceWaitIdle(vkd_);
++        if (inited_) g_api->shutdown();
++        if (fence_) vkDestroyFence(vkd_, fence_, nullptr);
++        if (pool_) vkDestroyCommandPool(vkd_, pool_, nullptr);
++    }
++
++    bool Init(ID3D12Device* dev, ID3D12CommandQueue* queue) {
++        queue_ = queue;
++        vkd_ = vkd3d_get_vk_device(dev);
++        pd_ = vkd3d_get_vk_physical_device(dev);
++        family_ = vkd3d_get_vk_queue_family_index(queue);
++        VkInstance vki = vkd3d_instance_get_vk_instance(vkd3d_instance_from_device(dev));
++        int32_t r = g_api->init(vki, pd_, vkd_, reinterpret_cast<void*>(vkGetInstanceProcAddr),
++                                reinterpret_cast<void*>(vkGetDeviceProcAddr));
++        inited_ = true;  // shut down even when it failed part way
++        if (r != 1) {
++            LOGR("antialias: NVIDIA's NGX did not start (%s), see logs/ngx", g_api->result(r));
++            return false;
++        }
++        char why[256] = "";
++        if (!g_api->available(why, sizeof(why))) {
++            LOGR("antialias: NVIDIA DLSS is not running: %s", why);
++            return false;
++        }
++        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
++        pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++        pci.queueFamilyIndex = family_;
++        if (vkCreateCommandPool(vkd_, &pci, nullptr, &pool_) != VK_SUCCESS) return false;
++        VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++        ai.commandPool = pool_;
++        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++        ai.commandBufferCount = 1;
++        if (vkAllocateCommandBuffers(vkd_, &ai, &cmd_) != VK_SUCCESS) return false;
++        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++        if (vkCreateFence(vkd_, &fci, nullptr, &fence_) != VK_SUCCESS) return false;
++        LOGR("antialias: NVIDIA DLSS on NVIDIA's driver, through NGX");
++        return true;
++    }
++
++    uint32_t Kind() const override { return framegen::kAaDlss; }
++
++    // DLSS's own size for the mode, else AMD's ratios
++    void RenderSize(uint32_t w, uint32_t h, uint32_t quality, uint32_t& rw, uint32_t& rh) override {
++        rw = w;
++        rh = h;
++        if (quality == framegen::kUpNative) return;
++        if (w == size_w_ && h == size_h_ && quality == size_q_) {
++            rw = size_rw_;
++            rh = size_rh_;
++            return;
++        }
++        uint32_t ow = 0, oh = 0;
++        if (g_api->optimal(w, h, quality, &ow, &oh) == 1 && ow && oh && ow <= w && oh <= h) {
++            rw = ow;
++            rh = oh;
++        } else {
++            float ratio = quality == framegen::kUpQuality ? 1.5f : quality == framegen::kUpBalanced ? 1.7f : 2.0f;
++            rw = std::max(1u, uint32_t(float(w) / ratio));
++            rh = std::max(1u, uint32_t(float(h) / ratio));
++        }
++        size_w_ = w;
++        size_h_ = h;
++        size_q_ = quality;
++        size_rw_ = rw;
++        size_rh_ = rh;
++    }
++
++    void Jitter(uint64_t frame, float ratio, float& x, float& y) const override {
++        int32_t phases = std::max(8, int32_t(8.0f * ratio * ratio));
++        int32_t i = int32_t(frame % uint64_t(phases)) + 1;
++        x = Halton(i, 2) - 0.5f;
++        y = Halton(i, 3) - 0.5f;
++    }
++
++    bool VulkanImages() const override { return true; }
++    bool Run(ID3D12GraphicsCommandList*, const Frame&) override { return false; }  // RunQueue's
++
++    bool RunQueue(const Frame& f) override {
++        if (broken_) return false;
++        linux_vk::Image color, depth, motion, bias, output;
++        if (!linux_vk::Find(f.color, color) || !linux_vk::Find(f.depth, depth) || !linux_vk::Find(f.motion, motion) ||
++            !linux_vk::Find(f.output, output) || !f.w || !f.h || !f.rw || !f.rh) {
++            LOG_FIRST(2, "antialias: NVIDIA DLSS's inputs are not its own images");
++            return false;
++        }
++        bool have_bias = linux_vk::Find(f.reactive, bias);
++        bool inverted = f.view.near_w > f.view.far_w;
++        uint32_t mode = std::min<uint32_t>(f.quality, framegen::kUpPerformance);
++        bool fresh = false;
++        if (!made_ || f.w != w_ || f.h != h_ || f.rw != rw_ || f.rh != rh_ || mode != mode_ || inverted != inverted_) {
++            made_ = false;
++            int32_t r = 0;
++            if (!Record([&] { r = g_api->create(cmd_, f.w, f.h, f.rw, f.rh, mode, inverted); }) || r != 1) {
++                LOGR("antialias: NVIDIA DLSS was not made (%s) for %ux%u from %ux%u", r ? g_api->result(r) : "submit",
++                     f.w, f.h, f.rw, f.rh);
++                broken_ = ++failures_ >= 3;
++                return false;
++            }
++            made_ = fresh = true;
++            w_ = f.w;
++            h_ = f.h;
++            rw_ = f.rw;
++            rh_ = f.rh;
++            mode_ = mode;
++            inverted_ = inverted;
++            LOGR("antialias: NVIDIA DLSS %s on Vulkan, at %ux%u from %ux%u", ModeName(mode), f.w, f.h, f.rw, f.rh);
++        }
++        cv_ngx_frame fr{};
++        fr.color = Of(color);
++        fr.depth = Of(depth);
++        fr.motion = Of(motion);
++        fr.output = Of(output);
++        if (have_bias) fr.bias = Of(bias);
++        fr.rw = f.rw;
++        fr.rh = f.rh;
++        fr.jitter[0] = f.jitter[0];
++        fr.jitter[1] = f.jitter[1];
++        fr.mv_scale[0] = float(f.rw);  // UV units to pixels of the size drawn
++        fr.mv_scale[1] = float(f.rh);
++        fr.frame_ms = f.frame_ms;
++        fr.reset = f.reset || fresh;
++        int32_t r = 0;
++        if (!Record([&] { r = g_api->evaluate(cmd_, &fr); }) || r != 1) {
++            LOG_FIRST(4, "antialias: NVIDIA DLSS %s at %ux%u from %ux%u", r ? g_api->result(r) : "not submitted", f.w,
++                      f.h, f.rw, f.rh);
++            broken_ = ++failures_ >= 8;
++            return false;
++        }
++        return true;
++    }
++
++private:
++    // the command buffer recorded by what (between barriers: the frame's writes seen by NGX's commands, NGX's by what
++    // follows), submitted on the queue and waited for; false when it was not submitted
++    template <class F>
++    bool Record(F&& what) {
++        vkResetCommandBuffer(cmd_, 0);
++        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++        vkBeginCommandBuffer(cmd_, &bi);
++        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++        mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
++        mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0,
++                             nullptr, 0, nullptr);
++        what();
++        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0,
++                             nullptr, 0, nullptr);
++        if (vkEndCommandBuffer(cmd_) != VK_SUCCESS) return false;
++        // the fence reset only for a submit, so one never submitted is never waited for
++        vkResetFences(vkd_, 1, &fence_);
++        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
++        si.commandBufferCount = 1;
++        si.pCommandBuffers = &cmd_;
++        VkQueue q = vkd3d_acquire_vk_queue(queue_);
++        VkResult r = vkQueueSubmit(q, 1, &si, fence_);
++        vkd3d_release_vk_queue(queue_);
++        if (r != VK_SUCCESS) {
++            // the fence stays unsignalled: a new one
++            vkDestroyFence(vkd_, fence_, nullptr);
++            fence_ = VK_NULL_HANDLE;
++            VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++            vkCreateFence(vkd_, &fci, nullptr, &fence_);
++            return false;
++        }
++        // done before the frame goes on, as the renderer's own commands after it read the output
++        vkWaitForFences(vkd_, 1, &fence_, VK_TRUE, UINT64_MAX);
++        return true;
++    }
++
++    ID3D12CommandQueue* queue_ = nullptr;
++    VkDevice vkd_ = VK_NULL_HANDLE;
++    VkPhysicalDevice pd_ = VK_NULL_HANDLE;
++    uint32_t family_ = 0;
++    bool inited_ = false, made_ = false, inverted_ = false, broken_ = false;
++    uint32_t failures_ = 0;
++    uint32_t w_ = 0, h_ = 0, rw_ = 0, rh_ = 0, mode_ = 0;
++    uint32_t size_w_ = 0, size_h_ = 0, size_q_ = 0, size_rw_ = 0, size_rh_ = 0;  // RenderSize's last
++    VkCommandPool pool_ = VK_NULL_HANDLE;
++    VkCommandBuffer cmd_ = VK_NULL_HANDLE;
++    VkFence fence_ = VK_NULL_HANDLE;
++};
++
++}  // namespace
++
++bool Load() {
++    if (g_tried) return g_api != nullptr;
++    g_tried = true;
++    std::error_code ec;
++    if (!fs::is_directory(Dir(), ec)) return false;  // not downloaded
++    if (!HaveDlssLibrary()) {
++        LOGR("antialias: NVIDIA DLSS's library (libnvidia-ngx-dlss.so) is not in dlss/");
++        return false;
++    }
++    std::string missing;
++    std::vector<fs::path> in = Inputs(missing);
++    if (in.empty()) {
++        LOGR("antialias: NVIDIA DLSS's files are not all there (%s is missing)", missing.c_str());
++        return false;
++    }
++    // built when it is missing or older than what it is built from; and once more when it would not load or was another
++    // version's
++    for (int attempt = 0; attempt < 2 && !g_api; attempt++) {
++        if ((attempt || !UpToDate(in)) && !Build(in)) return false;
++        g_lib = dlopen(Bridge().c_str(), RTLD_NOW | RTLD_LOCAL);
++        if (!g_lib) {
++            LOGR("antialias: NVIDIA DLSS's bridge would not load (%s)", dlerror());
++            continue;
++        }
++        auto get = reinterpret_cast<cv_ngx_get_fn>(dlsym(g_lib, "cv_ngx_get"));
++        g_api = get ? get(CV_NGX_ABI) : nullptr;
++        if (!g_api) {
++            dlclose(g_lib);
++            g_lib = nullptr;
++        }
++    }
++    if (!g_api) return false;
++    fs::path data = app::ExeDir() / "logs" / "ngx";
++    fs::create_directories(data, ec);
++    g_api->setup(data.c_str(), Dir().c_str(), NgxLog, Verbose());
++    LOGR("antialias: NVIDIA DLSS's files are there, its bridge loaded");
++    return true;
++}
++
++bool Loaded() { return g_api != nullptr; }
++
++void InstanceExtensions(std::vector<const char*>& out) {
++    if (!g_api) return;
++    uint32_t n = 0;
++    const char* const* names = nullptr;
++    int32_t r = g_api->instance_extensions(&n, &names);
++    if (r != 1) {
++        LOGR("antialias: NGX named no Vulkan instance extensions for NVIDIA DLSS (%s)", g_api->result(r));
++        return;
++    }
++    g_instance_names.assign(names, names + n);
++    for (const std::string& s : g_instance_names) out.push_back(s.c_str());
++}
++
++void DeviceExtensions(VkInstance instance, VkPhysicalDevice card, std::vector<const char*>& out) {
++    g_card = VK_NULL_HANDLE;
++    if (!g_api || !card) return;
++    // only on NVIDIA's own driver is NGX started: on Mesa's (NVK, dozen) it would take a device it cannot run on
++    VkPhysicalDeviceDriverProperties dp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
++    VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &dp};
++    auto props2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
++        vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2"));
++    if (!props2)
++        props2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
++            vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2KHR"));
++    if (props2) props2(card, &p2);
++    if (!props2 || p2.properties.vendorID != 0x10DE || dp.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
++        LOGR("antialias: NVIDIA DLSS needs an NVIDIA RTX card on NVIDIA's own driver; %s is on %s", p2.properties.deviceName,
++             dp.driverName[0] ? dp.driverName : "another driver");
++        return;
++    }
++    uint32_t n = 0;
++    const char* const* names = nullptr;
++    int32_t r = g_api->device_extensions(instance, card, &n, &names);
++    if (r != 1) {
++        LOGR("antialias: NGX named no Vulkan device extensions for NVIDIA DLSS (%s)", g_api->result(r));
++        return;
++    }
++    uint32_t have_n = 0;
++    vkEnumerateDeviceExtensionProperties(card, nullptr, &have_n, nullptr);
++    std::vector<VkExtensionProperties> have(have_n);
++    vkEnumerateDeviceExtensionProperties(card, nullptr, &have_n, have.data());
++    std::vector<std::string> want(names, names + n);
++    for (const std::string& w : want) {
++        bool found = std::any_of(have.begin(), have.end(), [&](const VkExtensionProperties& e) { return w == e.extensionName; });
++        if (!found) {
++            LOGR("antialias: NVIDIA DLSS needs Vulkan's %s, which %s's driver has not", w.c_str(), p2.properties.deviceName);
++            return;
++        }
++    }
++    g_device_names = want;
++    for (const std::string& s : g_device_names) out.push_back(s.c_str());
++    g_card = card;
++    std::string list;
++    for (const std::string& s : g_device_names) list += (list.empty() ? "" : ", ") + s;
++    LOGR("antialias: NVIDIA DLSS's Vulkan extensions on %s: %s", p2.properties.deviceName, list.c_str());
++}
++
++std::unique_ptr<framegen::AntiAlias> MakeDlss(ID3D12Device* dev, ID3D12CommandQueue* queue) {
++    if (!g_api) {
++        LOGR("antialias: NVIDIA DLSS's files are not there: the launcher downloads them from NVIDIA (Graphics)");
++        return nullptr;
++    }
++    if (!g_card || vkd3d_get_vk_physical_device(dev) != g_card) {
++        LOGR("antialias: NVIDIA DLSS is not on this card (above)");
++        return nullptr;
++    }
++    auto d = std::make_unique<Dlss>();
++    if (!d->Init(dev, queue)) return nullptr;
++    return d;
++}
++
++}  // namespace gpu::linux_dlss
++#endif
+diff --git a/runtime/linux/dlss_vk.h b/runtime/linux/dlss_vk.h
+new file mode 100644
+index 0000000..1519781
+--- /dev/null
++++ b/runtime/linux/dlss_vk.h
+@@ -0,0 +1,39 @@
++#pragma once
++// Linux: NVIDIA DLSS on Vulkan, in NVIDIA DLSS's place among the frame's anti-aliasing (framegen::AntiAlias), through
++// NVIDIA's NGX, which NVIDIA's own Linux driver brings (libnvidia-ngx.so.1). It runs on vkd3d's own Vulkan device and
++// queue, its inputs and output the renderer's own Vulkan images (linux/vk_images.h), as AMD FSR's do (linux/fsr_vk.h).
++//
++// The game's download carries none of NVIDIA's code. NVIDIA's DLSS SDK files are the player's, downloaded from NVIDIA
++// into dlss/ beside the executables (the launcher does it): the SDK's headers (dlss/include), its NGX loader
++// (libnvsdk_ngx.a) and the DLSS library (libnvidia-ngx-dlss.so.<version>). The bridge between the game and NGX
++// (ngx/cv_ngx.cpp, this SDK's, in the compiler folder) is compiled and linked with them on the player's PC, by the
++// compiler folder's clang and ld.lld, into dlss/libcv_ngx.so, which the game loads.
++//
++// DLSS runs only on NVIDIA's own driver, the card an RTX: on any other (Mesa's, in WSL Mesa's dozen) NGX is never
++// started and AMD FSR takes DLSS's place. XBE_DLSS_LOG=1 keeps NGX's own lines in the game's log; NGX writes its logs to
++// logs/ngx too.
++#include <vulkan/vulkan.h>
++
++#include <memory>
++#include <vector>
++
++#include "d3d12.h"
++#include "gpu/framegen.h"
++
++namespace gpu::linux_dlss {
++
++// NVIDIA's files are in dlss/: the bridge built from them when it is missing or older than they are, then loaded; false
++// when they are not there (quietly) or it cannot be built or loaded (logged). Before the Vulkan instance is made
++bool Load();
++bool Loaded();
++
++// the Vulkan extensions DLSS asks for, once loaded: the instance's; a card's, none unless its driver is NVIDIA's own
++// and has them all. The names stay valid until the next call
++void InstanceExtensions(std::vector<const char*>& out);
++void DeviceExtensions(VkInstance instance, VkPhysicalDevice card, std::vector<const char*>& out);
++
++// NVIDIA DLSS on the device's Vulkan device and the queue's; null when it cannot be (logged). Its frames run through
++// AntiAlias::RunQueue, after the renderer has submitted the frame so far and the GPU is done with it
++std::unique_ptr<framegen::AntiAlias> MakeDlss(ID3D12Device* dev, ID3D12CommandQueue* queue);
++
++}  // namespace gpu::linux_dlss
 diff --git a/runtime/linux/dxgi1_4.h b/runtime/linux/dxgi1_4.h
 new file mode 100644
 index 0000000..dcfa32b
@@ -7963,13 +8549,15 @@ index 0000000..dcfa32b
 +#include <vkd3d_dxgiformat.h>
 diff --git a/runtime/linux/fsr_vk.cpp b/runtime/linux/fsr_vk.cpp
 new file mode 100644
-index 0000000..9a07b74
+index 0000000..0fea790
 --- /dev/null
 +++ b/runtime/linux/fsr_vk.cpp
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,261 @@
 +// Linux: AMD FSR 3's upscaler on Vulkan (linux/fsr_vk.h)
 +#ifndef _WIN32
 +#include "linux/fsr_vk.h"
++
++#include "linux/vk_images.h"
 +
 +#ifdef XBE_FSR_VK
 +#include <FidelityFX/host/backends/vk/ffx_vk.h>
@@ -7978,8 +8566,6 @@ index 0000000..9a07b74
 +
 +#include <algorithm>
 +#include <cmath>
-+#include <mutex>
-+#include <unordered_map>
 +#include <vector>
 +
 +#include "core/log.h"
@@ -7988,33 +8574,8 @@ index 0000000..9a07b74
 +
 +namespace {
 +
-+// this module's images, by the D3D12 resource over each
-+struct Image {
-+    VkDevice device = VK_NULL_HANDLE;
-+    VkImage image = VK_NULL_HANDLE;
-+    VkDeviceMemory memory = VK_NULL_HANDLE;
-+    VkImageCreateInfo info{};
-+    bool storage = false;
-+};
-+std::mutex g_images_m;
-+std::unordered_map<ID3D12Resource*, Image> g_images;
-+
-+uint32_t MemoryType(VkPhysicalDevice pd, uint32_t bits, VkMemoryPropertyFlags want) {
-+    VkPhysicalDeviceMemoryProperties mp;
-+    vkGetPhysicalDeviceMemoryProperties(pd, &mp);
-+    for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
-+        if ((bits >> i & 1) && (mp.memoryTypes[i].propertyFlags & want) == want) return i;
-+    return UINT32_MAX;
-+}
-+
-+bool Find(ID3D12Resource* r, Image& out) {
-+    if (!r) return false;
-+    std::lock_guard lock(g_images_m);
-+    auto it = g_images.find(r);
-+    if (it == g_images.end()) return false;
-+    out = it->second;
-+    return true;
-+}
++using linux_vk::Find;
++using linux_vk::Image;
 +
 +void Message(FfxMsgType type, const wchar_t* text) {
 +    char b[512];
@@ -8133,9 +8694,7 @@ index 0000000..9a07b74
 +            inverted_ = inverted;
 +            LOGR("antialias: AMD FSR 3 on Vulkan, at %ux%u", f.w, f.h);
 +        }
-+        vkWaitForFences(vkd_, 1, &fence_, VK_TRUE, UINT64_MAX);
-+        vkResetFences(vkd_, 1, &fence_);
-+        vkResetCommandBuffer(cmd_, 0);
++        vkResetCommandBuffer(cmd_, 0);  // done with: each submit is waited for
 +        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 +        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 +        vkBeginCommandBuffer(cmd_, &bi);
@@ -8180,8 +8739,10 @@ index 0000000..9a07b74
 +        vkEndCommandBuffer(cmd_);
 +        if (e != FFX_OK) {
 +            LOG_FIRST(4, "antialias: AMD FSR dispatch %d at %ux%u from %ux%u", int(e), f.w, f.h, f.rw, f.rh);
-+            return false;  // the fence stays unsignalled: signal it by an empty submit
++            return false;  // not submitted, so the fence is not waited for
 +        }
++        // the fence reset only for a submit, so one never submitted is never waited for
++        vkResetFences(vkd_, 1, &fence_);
 +        VkQueue q = vkd3d_acquire_vk_queue(queue_);
 +        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
 +        si.commandBufferCount = 1;
@@ -8190,6 +8751,10 @@ index 0000000..9a07b74
 +        vkd3d_release_vk_queue(queue_);
 +        if (r != VK_SUCCESS) {
 +            LOG_FIRST(4, "antialias: AMD FSR's commands were not submitted (%d)", int(r));
++            // the fence stays unsignalled: a new one
++            vkDestroyFence(vkd_, fence_, nullptr);
++            VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++            if (vkCreateFence(vkd_, &fci, nullptr, &fence_) != VK_SUCCESS) fence_ = VK_NULL_HANDLE;
 +            return false;
 +        }
 +        // done before the frame goes on, as the renderer's own commands after it read its output
@@ -8232,79 +8797,6 @@ index 0000000..9a07b74
 +
 +bool Built() { return true; }
 +
-+ID3D12Resource* MakeImage(ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT format, bool render_target) {
-+    VkDevice vkd = vkd3d_get_vk_device(dev);
-+    VkPhysicalDevice pd = vkd3d_get_vk_physical_device(dev);
-+    VkFormat vf = vkd3d_get_vk_format(format);
-+    VkFormatProperties fp;
-+    vkGetPhysicalDeviceFormatProperties(pd, vf, &fp);
-+    bool storage = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
-+    Image im;
-+    im.device = vkd;
-+    im.storage = storage;
-+    im.info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-+    im.info.imageType = VK_IMAGE_TYPE_2D;
-+    im.info.format = vf;
-+    im.info.extent = {w, h, 1};
-+    im.info.mipLevels = 1;
-+    im.info.arrayLayers = 1;
-+    im.info.samples = VK_SAMPLE_COUNT_1_BIT;
-+    im.info.tiling = VK_IMAGE_TILING_OPTIMAL;
-+    im.info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-+                    (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0) | (render_target ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0);
-+    im.info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-+    if (vkCreateImage(vkd, &im.info, nullptr, &im.image) != VK_SUCCESS) {
-+        LOGR("antialias: no %ux%u Vulkan image of format %d for AMD FSR", w, h, int(vf));
-+        return nullptr;
-+    }
-+    VkMemoryRequirements req;
-+    vkGetImageMemoryRequirements(vkd, im.image, &req);
-+    VkMemoryAllocateInfo mi{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-+    mi.allocationSize = req.size;
-+    mi.memoryTypeIndex = MemoryType(pd, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-+    if (mi.memoryTypeIndex == UINT32_MAX) mi.memoryTypeIndex = MemoryType(pd, req.memoryTypeBits, 0);
-+    if (vkAllocateMemory(vkd, &mi, nullptr, &im.memory) != VK_SUCCESS) {
-+        vkDestroyImage(vkd, im.image, nullptr);
-+        return nullptr;
-+    }
-+    vkBindImageMemory(vkd, im.image, im.memory, 0);
-+    vkd3d_image_resource_create_info ri{};
-+    ri.type = VKD3D_STRUCTURE_TYPE_IMAGE_RESOURCE_CREATE_INFO;
-+    ri.vk_image = im.image;
-+    ri.desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-+    ri.desc.Width = w;
-+    ri.desc.Height = h;
-+    ri.desc.DepthOrArraySize = 1;
-+    ri.desc.MipLevels = 1;
-+    ri.desc.Format = format;
-+    ri.desc.SampleDesc.Count = 1;
-+    ri.desc.Flags = (render_target ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE) |
-+                    (storage ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
-+    ri.flags = VKD3D_RESOURCE_INITIAL_STATE_TRANSITION;
-+    ID3D12Resource* r = nullptr;
-+    if (FAILED(vkd3d_create_image_resource(dev, &ri, &r))) {
-+        vkFreeMemory(vkd, im.memory, nullptr);
-+        vkDestroyImage(vkd, im.image, nullptr);
-+        return nullptr;
-+    }
-+    std::lock_guard lock(g_images_m);
-+    g_images[r] = im;
-+    return r;
-+}
-+
-+void DropImage(ID3D12Resource* resource) {
-+    Image im;
-+    {
-+        std::lock_guard lock(g_images_m);
-+        auto it = g_images.find(resource);
-+        if (it == g_images.end()) return;
-+        im = it->second;
-+        g_images.erase(it);
-+    }
-+    vkDestroyImage(im.device, im.image, nullptr);
-+    vkFreeMemory(im.device, im.memory, nullptr);
-+}
-+
 +std::unique_ptr<framegen::AntiAlias> MakeFsr(ID3D12Device* dev, ID3D12CommandQueue* queue) {
 +    auto fsr = std::make_unique<Fsr>();
 +    if (!fsr->Init(dev, queue)) return nullptr;
@@ -8317,8 +8809,6 @@ index 0000000..9a07b74
 +
 +namespace gpu::linux_fsr {
 +bool Built() { return false; }
-+ID3D12Resource* MakeImage(ID3D12Device*, uint32_t, uint32_t, DXGI_FORMAT, bool) { return nullptr; }
-+void DropImage(ID3D12Resource*) {}
 +std::unique_ptr<framegen::AntiAlias> MakeFsr(ID3D12Device*, ID3D12CommandQueue*) { return nullptr; }
 +}  // namespace gpu::linux_fsr
 +
@@ -8326,17 +8816,15 @@ index 0000000..9a07b74
 +#endif
 diff --git a/runtime/linux/fsr_vk.h b/runtime/linux/fsr_vk.h
 new file mode 100644
-index 0000000..194d3d1
+index 0000000..8fda43d
 --- /dev/null
 +++ b/runtime/linux/fsr_vk.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,21 @@
 +#pragma once
 +// Linux: AMD FSR 3's upscaler on Vulkan, in AMD FSR's place among the frame's anti-aliasing (framegen::AntiAlias). The
 +// FidelityFX SDK 1.1.4's Vulkan backend, built for Linux (an unofficial fork's, upscaler only), runs on vkd3d's own
-+// Vulkan device and queue. FSR takes Vulkan images, and vkd3d gives no image of a resource it made, so the inputs and the
-+// output are images of this module's, wrapped as D3D12 resources for the renderer (MakeImage): it draws its depth and
-+// motion into them and copies the frame's colour in. Built with XBE_FSR_VK (XBE_FSR_VK_DIR, the SDK's built tree); without
-+// it AMD FSR's place is the renderer's own TAA.
++// Vulkan device and queue, its inputs and output the renderer's own Vulkan images (linux/vk_images.h). Built with
++// XBE_FSR_VK (XBE_FSR_VK_DIR, the SDK's built tree); without it AMD FSR's place is the renderer's own TAA.
 +#include <cstdint>
 +#include <memory>
 +
@@ -8347,14 +8835,6 @@ index 0000000..194d3d1
 +
 +// AMD FSR 3 on Vulkan is in this build (XBE_FSR_VK)
 +bool Built();
-+
-+// a w x h image of this module's as a D3D12 resource in COMMON (Vulkan's GENERAL layout), sampled, stored to (where the
-+// format allows: render_target formats and RGBA always) and copied to or from; a render target too when asked. Null
-+// when it cannot be made (logged)
-+ID3D12Resource* MakeImage(ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT format, bool render_target);
-+
-+// an image MakeImage made, its resource released and the GPU done with it: its Vulkan image and memory freed
-+void DropImage(ID3D12Resource* resource);
 +
 +// AMD FSR 3's upscaler on the device's Vulkan device and the queue's; null when it cannot be (logged). Its frames run
 +// through AntiAlias::RunQueue, after the renderer has submitted the frame so far and the GPU is done with it
@@ -9872,12 +10352,431 @@ index 0000000..b455d5e
 +    kernel::Shutdown(0);
 +}
 +#endif
+diff --git a/runtime/linux/ngx/cv_ngx.cpp b/runtime/linux/ngx/cv_ngx.cpp
+new file mode 100644
+index 0000000..08df314
+--- /dev/null
++++ b/runtime/linux/ngx/cv_ngx.cpp
+@@ -0,0 +1,249 @@
++// The bridge to NVIDIA's NGX for NVIDIA DLSS on Linux (cv_ngx.h). Compiled and linked on the player's PC, never
++// released built: the game (linux/dlss_vk.cpp) runs
++//   clang -std=c++20 -O2 -fPIC -nostdinc -nostdinc++ -isystem <compiler>/ngx/stub -I dlss/include -c cv_ngx.cpp
++//   ld.lld -shared -o dlss/libcv_ngx.so cv_ngx.o dlss/libnvsdk_ngx.a
++// with the compiler folder's tools, the headers and libnvsdk_ngx.a being NVIDIA's DLSS SDK's, which the player downloaded
++// from NVIDIA. Freestanding as the game's code is built: no C or C++ library headers (stub/ has the few names NVIDIA's
++// headers include); the C and C++ runtimes the loader calls are the game's own, already loaded when the game loads this.
++#include <vulkan/vulkan.h>
++
++#include "cv_ngx.h"
++#include "nvsdk_ngx_helpers.h"
++#include "nvsdk_ngx_helpers_vk.h"
++#include "nvsdk_ngx_vk.h"
++
++extern "C" {
++// what crtbeginS.o gives a library a compiler driver links: the loader archive's static objects register their ends
++void* __dso_handle = &__dso_handle;
++int snprintf(char* s, size_t n, const char* format, ...);
++}
++
++namespace {
++
++// the game's name to NVIDIA (as on Windows, through Streamline)
++constexpr const char* kProject = "6b3c5f0e-4d2a-4b8e-9a51-c0d1e5f7a923";
++constexpr const char* kEngine = "xboxxbe-recomp";
++
++wchar_t g_data[1024];
++wchar_t g_features[1024];
++const wchar_t* g_paths[1] = {g_features};
++cv_ngx_log g_log = nullptr;
++int32_t g_verbose = 0;
++const char* g_names[64];
++char g_result[160];
++
++NVSDK_NGX_FeatureCommonInfo g_common{};
++NVSDK_NGX_Parameter* g_caps = nullptr;    // NGX's capabilities, from init
++NVSDK_NGX_Parameter* g_params = nullptr;  // DLSS's parameters, from create
++NVSDK_NGX_Handle* g_dlss = nullptr;
++VkDevice g_device = nullptr;
++bool g_inited = false;
++
++// UTF-8 to the wide characters NGX takes its paths as (UTF-32 here)
++void Wide(const char* s, wchar_t* out, size_t size) {
++    size_t n = 0;
++    const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
++    while (*p && n + 1 < size) {
++        uint32_t c = *p++;
++        int more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
++        c &= more == 3 ? 0x07 : more == 2 ? 0x0F : more == 1 ? 0x1F : 0x7F;
++        for (; more > 0 && (*p & 0xC0) == 0x80; more--) c = c << 6 | (*p++ & 0x3F);
++        out[n++] = wchar_t(c);
++    }
++    out[n] = 0;
++}
++
++void NVSDK_CONV OnLog(const char* message, NVSDK_NGX_Logging_Level, NVSDK_NGX_Feature) {
++    if (g_log && message) g_log(message);
++}
++
++NVSDK_NGX_FeatureDiscoveryInfo Discovery() {
++    NVSDK_NGX_FeatureDiscoveryInfo d{};
++    d.SDKVersion = NVSDK_NGX_Version_API;
++    d.FeatureID = NVSDK_NGX_Feature_SuperSampling;
++    d.Identifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id;
++    d.Identifier.v.ProjectDesc.ProjectId = kProject;
++    d.Identifier.v.ProjectDesc.EngineType = NVSDK_NGX_ENGINE_TYPE_CUSTOM;
++    d.Identifier.v.ProjectDesc.EngineVersion = kEngine;
++    d.ApplicationDataPath = g_data;
++    d.FeatureInfo = &g_common;
++    return d;
++}
++
++int32_t Names(NVSDK_NGX_Result r, uint32_t count, VkExtensionProperties* props, uint32_t* n, const char* const** names) {
++    uint32_t k = 0;
++    if (NVSDK_NGX_SUCCEED(r) && props)
++        for (uint32_t i = 0; i < count && k < 64; i++) g_names[k++] = props[i].extensionName;
++    *n = k;
++    *names = g_names;
++    return int32_t(r);
++}
++
++NVSDK_NGX_PerfQuality_Value Mode(uint32_t mode) {
++    return mode == 1   ? NVSDK_NGX_PerfQuality_Value_MaxQuality
++           : mode == 2 ? NVSDK_NGX_PerfQuality_Value_Balanced
++           : mode == 3 ? NVSDK_NGX_PerfQuality_Value_MaxPerf
++                       : NVSDK_NGX_PerfQuality_Value_DLAA;
++}
++
++NVSDK_NGX_Resource_VK Resource(const cv_ngx_image& im, bool write) {
++    VkImageSubresourceRange range{};
++    range.aspectMask = 1;  // VK_IMAGE_ASPECT_COLOR_BIT
++    range.levelCount = 1;
++    range.layerCount = 1;
++    return NVSDK_NGX_Create_ImageView_Resource_VK(reinterpret_cast<VkImageView>(im.view),
++                                                  reinterpret_cast<VkImage>(im.image), range, VkFormat(im.format), im.w,
++                                                  im.h, write);
++}
++
++const char* Result(int32_t r) {
++    const wchar_t* w = GetNGXResultAsString(NVSDK_NGX_Result(r));
++    size_t n = 0;
++    for (; w && w[n] && n + 1 < sizeof(g_result); n++) g_result[n] = w[n] < 128 ? char(w[n]) : '?';
++    g_result[n] = 0;
++    return g_result;
++}
++
++void Setup(const char* data, const char* features, cv_ngx_log log, int32_t verbose) {
++    Wide(data, g_data, 1024);
++    Wide(features, g_features, 1024);
++    g_log = log;
++    g_verbose = verbose;
++    g_common = {};
++    g_common.PathListInfo.Path = g_paths;
++    g_common.PathListInfo.Length = 1;
++    // NGX's lines to the game's log (which keeps them when verbose) as well as to its own files in data
++    g_common.LoggingInfo.LoggingCallback = OnLog;
++    g_common.LoggingInfo.MinimumLoggingLevel = verbose ? NVSDK_NGX_LOGGING_LEVEL_VERBOSE : NVSDK_NGX_LOGGING_LEVEL_ON;
++    g_common.LoggingInfo.DisableOtherLoggingSinks = false;
++}
++
++int32_t InstanceExtensions(uint32_t* n, const char* const** names) {
++    NVSDK_NGX_FeatureDiscoveryInfo d = Discovery();
++    uint32_t count = 0;
++    VkExtensionProperties* props = nullptr;
++    NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(&d, &count, &props);
++    return Names(r, count, props, n, names);
++}
++
++int32_t DeviceExtensions(void* instance, void* pd, uint32_t* n, const char* const** names) {
++    NVSDK_NGX_FeatureDiscoveryInfo d = Discovery();
++    uint32_t count = 0;
++    VkExtensionProperties* props = nullptr;
++    NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
++        static_cast<VkInstance>(instance), static_cast<VkPhysicalDevice>(pd), &d, &count, &props);
++    return Names(r, count, props, n, names);
++}
++
++int32_t Init(void* instance, void* pd, void* device, void* gipa, void* gdpa) {
++    NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_Init_with_ProjectID(
++        kProject, NVSDK_NGX_ENGINE_TYPE_CUSTOM, kEngine, g_data, static_cast<VkInstance>(instance),
++        static_cast<VkPhysicalDevice>(pd), static_cast<VkDevice>(device), reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa),
++        reinterpret_cast<PFN_vkGetDeviceProcAddr>(gdpa), &g_common, NVSDK_NGX_Version_API);
++    if (NVSDK_NGX_FAILED(r)) return int32_t(r);
++    g_inited = true;
++    g_device = static_cast<VkDevice>(device);
++    return int32_t(NVSDK_NGX_VULKAN_GetCapabilityParameters(&g_caps));
++}
++
++int32_t Available(char* why, uint32_t size) {
++    if (!g_caps) {
++        snprintf(why, size, "NGX did not start");
++        return 0;
++    }
++    int ok = 0, update = 0;
++    unsigned int major = 0, minor = 0;
++    int result = 0;
++    g_caps->Get(NVSDK_NGX_Parameter_SuperSampling_Available, &ok);
++    g_caps->Get(NVSDK_NGX_Parameter_SuperSampling_NeedsUpdatedDriver, &update);
++    g_caps->Get(NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMajor, &major);
++    g_caps->Get(NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMinor, &minor);
++    g_caps->Get(NVSDK_NGX_Parameter_SuperSampling_FeatureInitResult, &result);
++    if (ok) return 1;
++    if (update)
++        snprintf(why, size, "it needs NVIDIA's driver %u.%u or later", major, minor);
++    else
++        snprintf(why, size, "not on this card or driver (%s)", Result(result));
++    return 0;
++}
++
++int32_t Optimal(uint32_t w, uint32_t h, uint32_t mode, uint32_t* rw, uint32_t* rh) {
++    if (!g_caps) return int32_t(NVSDK_NGX_Result_FAIL_NotInitialized);
++    unsigned int ow = 0, oh = 0, maxw = 0, maxh = 0, minw = 0, minh = 0;
++    float sharpness = 0;
++    NVSDK_NGX_Result r =
++        NGX_DLSS_GET_OPTIMAL_SETTINGS(g_caps, w, h, Mode(mode), &ow, &oh, &maxw, &maxh, &minw, &minh, &sharpness);
++    *rw = ow;
++    *rh = oh;
++    return int32_t(r);
++}
++
++void Release() {
++    if (g_dlss) NVSDK_NGX_VULKAN_ReleaseFeature(g_dlss);
++    g_dlss = nullptr;
++    if (g_params) NVSDK_NGX_VULKAN_DestroyParameters(g_params);
++    g_params = nullptr;
++}
++
++int32_t Create(void* cmd, uint32_t w, uint32_t h, uint32_t rw, uint32_t rh, uint32_t mode, int32_t inverted) {
++    Release();
++    NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_AllocateParameters(&g_params);
++    if (NVSDK_NGX_FAILED(r)) return int32_t(r);
++    NVSDK_NGX_DLSS_Create_Params c{};
++    c.Feature.InWidth = rw;
++    c.Feature.InHeight = rh;
++    c.Feature.InTargetWidth = w;
++    c.Feature.InTargetHeight = h;
++    c.Feature.InPerfQualityValue = Mode(mode);
++    // the game's 8 bit gamma-encoded colour with its own exposure, its motion at the size drawn and taken before the
++    // frame's offset (as on Windows: framegen.cpp's FillConstants)
++    c.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | (inverted ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);
++    c.InEnableOutputSubrects = false;
++    r = NGX_VULKAN_CREATE_DLSS_EXT(static_cast<VkCommandBuffer>(cmd), 1, 1, &g_dlss, g_params, &c);
++    if (NVSDK_NGX_FAILED(r)) {
++        g_dlss = nullptr;
++        Release();
++    }
++    return int32_t(r);
++}
++
++int32_t Evaluate(void* cmd, const cv_ngx_frame* f) {
++    if (!g_dlss || !g_params) return int32_t(NVSDK_NGX_Result_FAIL_FeatureNotFound);
++    NVSDK_NGX_Resource_VK color = Resource(f->color, false), depth = Resource(f->depth, false),
++                          motion = Resource(f->motion, false), output = Resource(f->output, true),
++                          bias = Resource(f->bias, false);
++    NVSDK_NGX_VK_DLSS_Eval_Params e{};
++    e.Feature.pInColor = &color;
++    e.Feature.pInOutput = &output;
++    e.pInDepth = &depth;
++    e.pInMotionVectors = &motion;
++    if (f->bias.image) e.pInBiasCurrentColorMask = &bias;
++    e.InJitterOffsetX = f->jitter[0];
++    e.InJitterOffsetY = f->jitter[1];
++    e.InRenderSubrectDimensions.Width = f->rw;
++    e.InRenderSubrectDimensions.Height = f->rh;
++    e.InReset = f->reset;
++    e.InMVScaleX = f->mv_scale[0];
++    e.InMVScaleY = f->mv_scale[1];
++    e.InPreExposure = 1;
++    e.InExposureScale = 1;
++    e.InFrameTimeDeltaInMsec = f->frame_ms;
++    return int32_t(NGX_VULKAN_EVALUATE_DLSS_EXT(static_cast<VkCommandBuffer>(cmd), g_dlss, g_params, &e));
++}
++
++void Shutdown() {
++    Release();
++    if (g_caps) NVSDK_NGX_VULKAN_DestroyParameters(g_caps);
++    g_caps = nullptr;
++    if (g_inited) NVSDK_NGX_VULKAN_Shutdown1(g_device);
++    g_inited = false;
++}
++
++const cv_ngx kApi = {CV_NGX_ABI, Result,   Setup,    InstanceExtensions, DeviceExtensions, Init, Available,
++                     Optimal,    Create,   Evaluate, Release,            Shutdown};
++
++}  // namespace
++
++extern "C" __attribute__((visibility("default"))) const cv_ngx* cv_ngx_get(uint32_t abi) {
++    return abi == CV_NGX_ABI ? &kApi : nullptr;
++}
+diff --git a/runtime/linux/ngx/cv_ngx.h b/runtime/linux/ngx/cv_ngx.h
+new file mode 100644
+index 0000000..9539406
+--- /dev/null
++++ b/runtime/linux/ngx/cv_ngx.h
+@@ -0,0 +1,69 @@
++// The bridge between the game and NVIDIA's NGX, for NVIDIA DLSS on Linux (linux/dlss_vk.h). The game's download carries
++// none of NVIDIA's code: the bridge (cv_ngx.cpp) is compiled and linked on the player's PC, by the compiler folder's clang
++// and ld.lld, with the parts of NVIDIA's DLSS SDK the player downloaded (its headers and its NGX loader,
++// libnvsdk_ngx.a), into dlss/libcv_ngx.so beside the executables, which the game loads. NGX itself is the NVIDIA
++// driver's (libnvidia-ngx.so.1); it loads DLSS from the library NVIDIA releases with the SDK
++// (libnvidia-ngx-dlss.so.<version>, in dlss/ too).
++//
++// Plain C between the two: Vulkan's handles as pointers and 64 bit integers, so neither side needs the other's headers.
++#pragma once
++
++#include <stdint.h>
++
++#define CV_NGX_ABI 1
++
++extern "C" {
++
++// an image of the game's: its VkImage, a VkImageView of all of it (colour), its VkFormat and size
++struct cv_ngx_image {
++    uint64_t image;
++    uint64_t view;
++    uint32_t format;
++    uint32_t w, h;
++};
++
++// a frame's DLSS: the inputs drawn into their top left rw x rh, the output whole, every image in VK_IMAGE_LAYOUT_GENERAL
++struct cv_ngx_frame {
++    cv_ngx_image color, depth, motion, output;
++    cv_ngx_image bias;  // R8, the share of each pixel taken from this frame rather than gathered; image 0: none
++    uint32_t rw, rh;
++    float jitter[2];    // the frame's offset, in pixels of the part drawn
++    float mv_scale[2];  // the motion's units to pixels of the part drawn
++    float frame_ms;
++    int32_t reset;      // nothing to gather from: a cut, the first frame
++};
++
++typedef void (*cv_ngx_log)(const char* line);
++
++// NGX's results are its NVSDK_NGX_Result: 1 success, 0xBADxxxxx failures (result() names them)
++struct cv_ngx {
++    uint32_t abi;  // CV_NGX_ABI
++    const char* (*result)(int32_t r);
++    // the folders NGX writes its logs to (data) and finds DLSS's library in (features), as UTF-8; NGX's own log lines
++    // to log, every one when verbose; first, before the rest
++    void (*setup)(const char* data, const char* features, cv_ngx_log log, int32_t verbose);
++    // the Vulkan instance and device extensions DLSS asks for (before the instance, and the device, are made); the
++    // names valid until the next call
++    int32_t (*instance_extensions)(uint32_t* n, const char* const** names);
++    int32_t (*device_extensions)(void* instance, void* physical_device, uint32_t* n, const char* const** names);
++    // NGX on the game's Vulkan device (VkInstance, VkPhysicalDevice, VkDevice, vkGetInstanceProcAddr,
++    // vkGetDeviceProcAddr)
++    int32_t (*init)(void* instance, void* physical_device, void* device, void* gipa, void* gdpa);
++    // DLSS on this card and driver: 1, else 0 and why
++    int32_t (*available)(char* why, uint32_t why_size);
++    // the size DLSS draws from for an output of w x h at a mode: 0 DLAA (the output's own), 1 Quality, 2 Balanced,
++    // 3 Performance
++    int32_t (*optimal)(uint32_t w, uint32_t h, uint32_t mode, uint32_t* rw, uint32_t* rh);
++    // DLSS for an output of w x h drawn from up to rw x rh at a mode, its depth near at 1 when depth_inverted; recorded
++    // into cmd (a VkCommandBuffer being recorded); the one before released
++    int32_t (*create)(void* cmd, uint32_t w, uint32_t h, uint32_t rw, uint32_t rh, uint32_t mode, int32_t depth_inverted);
++    // a frame's, recorded into cmd
++    int32_t (*evaluate)(void* cmd, const cv_ngx_frame* f);
++    void (*release)();
++    void (*shutdown)();
++};
++
++// the bridge's table, null when it was built for another ABI
++typedef const cv_ngx* (*cv_ngx_get_fn)(uint32_t abi);
++const cv_ngx* cv_ngx_get(uint32_t abi);
++}
+diff --git a/runtime/linux/ngx/stub/stdbool.h b/runtime/linux/ngx/stub/stdbool.h
+new file mode 100644
+index 0000000..96c949f
+--- /dev/null
++++ b/runtime/linux/ngx/stub/stdbool.h
+@@ -0,0 +1,2 @@
++#pragma once
++// the bridge is built freestanding (cv_ngx.cpp): bool is C++'s own
+diff --git a/runtime/linux/ngx/stub/stddef.h b/runtime/linux/ngx/stub/stddef.h
+new file mode 100644
+index 0000000..552e29c
+--- /dev/null
++++ b/runtime/linux/ngx/stub/stddef.h
+@@ -0,0 +1,6 @@
++#pragma once
++// the bridge is built freestanding (cv_ngx.cpp): the C names NVIDIA's headers use, from the compiler's own types
++typedef decltype(sizeof(0)) size_t;
++typedef decltype(static_cast<int*>(nullptr) - static_cast<int*>(nullptr)) ptrdiff_t;
++#define NULL nullptr
++#define offsetof(t, m) __builtin_offsetof(t, m)
+diff --git a/runtime/linux/ngx/stub/stdint.h b/runtime/linux/ngx/stub/stdint.h
+new file mode 100644
+index 0000000..b6a6829
+--- /dev/null
++++ b/runtime/linux/ngx/stub/stdint.h
+@@ -0,0 +1,12 @@
++#pragma once
++// the bridge is built freestanding (cv_ngx.cpp): the fixed-width integers, from the compiler's own types
++typedef __INT8_TYPE__ int8_t;
++typedef __INT16_TYPE__ int16_t;
++typedef __INT32_TYPE__ int32_t;
++typedef __INT64_TYPE__ int64_t;
++typedef __UINT8_TYPE__ uint8_t;
++typedef __UINT16_TYPE__ uint16_t;
++typedef __UINT32_TYPE__ uint32_t;
++typedef __UINT64_TYPE__ uint64_t;
++typedef __UINTPTR_TYPE__ uintptr_t;
++typedef __INTPTR_TYPE__ intptr_t;
+diff --git a/runtime/linux/ngx/stub/vulkan/vulkan.h b/runtime/linux/ngx/stub/vulkan/vulkan.h
+new file mode 100644
+index 0000000..703f148
+--- /dev/null
++++ b/runtime/linux/ngx/stub/vulkan/vulkan.h
+@@ -0,0 +1,36 @@
++#pragma once
++// the bridge is built freestanding (cv_ngx.cpp): the few Vulkan types NVIDIA's NGX headers and the bridge name, as the
++// Vulkan specification (Khronos) defines them
++#include <stddef.h>  // as vk_platform.h includes them
++#include <stdint.h>
++#define VKAPI_CALL
++#define VKAPI_PTR
++#define VK_DEFINE_HANDLE(o) typedef struct o##_T* o;
++#define VK_DEFINE_NON_DISPATCHABLE_HANDLE(o) typedef struct o##_T* o;
++VK_DEFINE_HANDLE(VkInstance)
++VK_DEFINE_HANDLE(VkPhysicalDevice)
++VK_DEFINE_HANDLE(VkDevice)
++VK_DEFINE_HANDLE(VkCommandBuffer)
++VK_DEFINE_NON_DISPATCHABLE_HANDLE(VkImage)
++VK_DEFINE_NON_DISPATCHABLE_HANDLE(VkImageView)
++VK_DEFINE_NON_DISPATCHABLE_HANDLE(VkBuffer)
++typedef uint32_t VkFlags;
++typedef VkFlags VkImageUsageFlags;
++typedef VkFlags VkBufferUsageFlags;
++typedef VkFlags VkImageAspectFlags;
++typedef enum VkFormat { VK_FORMAT_UNDEFINED = 0, VK_FORMAT_MAX_ENUM = 0x7FFFFFFF } VkFormat;
++typedef struct VkImageSubresourceRange {
++    VkImageAspectFlags aspectMask;
++    uint32_t baseMipLevel;
++    uint32_t levelCount;
++    uint32_t baseArrayLayer;
++    uint32_t layerCount;
++} VkImageSubresourceRange;
++#define VK_MAX_EXTENSION_NAME_SIZE 256U
++typedef struct VkExtensionProperties {
++    char extensionName[VK_MAX_EXTENSION_NAME_SIZE];
++    uint32_t specVersion;
++} VkExtensionProperties;
++typedef void(VKAPI_PTR* PFN_vkVoidFunction)(void);
++typedef PFN_vkVoidFunction(VKAPI_PTR* PFN_vkGetInstanceProcAddr)(VkInstance instance, const char* pName);
++typedef PFN_vkVoidFunction(VKAPI_PTR* PFN_vkGetDeviceProcAddr)(VkDevice device, const char* pName);
+diff --git a/runtime/linux/ngx/stub/wchar.h b/runtime/linux/ngx/stub/wchar.h
+new file mode 100644
+index 0000000..9218a44
+--- /dev/null
++++ b/runtime/linux/ngx/stub/wchar.h
+@@ -0,0 +1,3 @@
++#pragma once
++// the bridge is built freestanding (cv_ngx.cpp): wchar_t is C++'s own
++#include <stddef.h>
 diff --git a/runtime/linux/present.cpp b/runtime/linux/present.cpp
 new file mode 100644
-index 0000000..b971aa8
+index 0000000..6a96761
 --- /dev/null
 +++ b/runtime/linux/present.cpp
-@@ -0,0 +1,508 @@
+@@ -0,0 +1,512 @@
 +// Linux: the D3D12 device on Vulkan through vkd3d, and the swap chain (linux/present.h)
 +#ifndef _WIN32
 +#include "linux/present.h"
@@ -9893,6 +10792,7 @@ index 0000000..b971aa8
 +
 +#include "app/app.h"
 +#include "core/log.h"
++#include "linux/dlss_vk.h"
 +#include "linux/sdl_app.h"
 +
 +namespace gpu::linux_present {
@@ -9949,12 +10849,14 @@ index 0000000..b971aa8
 +    ici.wchar_size = sizeof(WCHAR);
 +    ici.instance_extensions = exts;
 +    ici.instance_extension_count = n_ext;
-+    // HDR colour spaces for the window's swap chain, where the driver has them
-+    static const char* const kOptionalInstance[] = {VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME};
++    // HDR colour spaces for the window's swap chain, and what NVIDIA DLSS asks for when its files are there
++    // (linux/dlss_vk.h), where the driver has them
++    std::vector<const char*> optional_instance{VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME};
++    linux_dlss::InstanceExtensions(optional_instance);
 +    vkd3d_optional_instance_extensions_info oi{};
 +    oi.type = VKD3D_STRUCTURE_TYPE_OPTIONAL_INSTANCE_EXTENSIONS_INFO;
-+    oi.extensions = kOptionalInstance;
-+    oi.extension_count = 1;
++    oi.extensions = optional_instance.data();
++    oi.extension_count = uint32_t(optional_instance.size());
 +    ici.next = &oi;
 +    vkd3d_instance* instance = nullptr;
 +    if (FAILED(vkd3d_create_instance(&ici, &instance))) {
@@ -9992,12 +10894,13 @@ index 0000000..b971aa8
 +    dci.vk_physical_device = pick;
 +    dci.device_extensions = dev_exts;
 +    dci.device_extension_count = 1;
-+    // and the HDR metadata sent with an HDR10 swap chain
-+    static const char* const kOptionalDevice[] = {VK_EXT_HDR_METADATA_EXTENSION_NAME};
++    // and the HDR metadata sent with an HDR10 swap chain, and NVIDIA DLSS's, on NVIDIA's own driver
++    std::vector<const char*> optional_device{VK_EXT_HDR_METADATA_EXTENSION_NAME};
++    linux_dlss::DeviceExtensions(vki, pick, optional_device);
 +    vkd3d_optional_device_extensions_info od{};
 +    od.type = VKD3D_STRUCTURE_TYPE_OPTIONAL_DEVICE_EXTENSIONS_INFO;
-+    od.extensions = kOptionalDevice;
-+    od.extension_count = 1;
++    od.extensions = optional_device.data();
++    od.extension_count = uint32_t(optional_device.size());
 +    dci.next = &od;
 +    HRESULT hr = vkd3d_create_device(&dci, __uuidof(ID3D12Device), reinterpret_cast<void**>(device));
 +    vkd3d_instance_decref(instance);  // the device holds it
@@ -10565,6 +11468,178 @@ index 0000000..e192049
 +}
 +
 +}  // namespace linuxapp
+diff --git a/runtime/linux/vk_images.cpp b/runtime/linux/vk_images.cpp
+new file mode 100644
+index 0000000..7ded624
+--- /dev/null
++++ b/runtime/linux/vk_images.cpp
+@@ -0,0 +1,125 @@
++// Linux: Vulkan images of the renderer's own as D3D12 resources (linux/vk_images.h)
++#ifndef _WIN32
++#include "linux/vk_images.h"
++
++#include <vkd3d.h>
++
++#include <mutex>
++#include <unordered_map>
++
++#include "core/log.h"
++
++namespace gpu::linux_vk {
++
++namespace {
++
++std::mutex g_images_m;
++std::unordered_map<ID3D12Resource*, Image> g_images;
++
++uint32_t MemoryType(VkPhysicalDevice pd, uint32_t bits, VkMemoryPropertyFlags want) {
++    VkPhysicalDeviceMemoryProperties mp;
++    vkGetPhysicalDeviceMemoryProperties(pd, &mp);
++    for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
++        if ((bits >> i & 1) && (mp.memoryTypes[i].propertyFlags & want) == want) return i;
++    return UINT32_MAX;
++}
++
++void Free(const Image& im) {
++    if (im.view) vkDestroyImageView(im.device, im.view, nullptr);
++    if (im.image) vkDestroyImage(im.device, im.image, nullptr);
++    if (im.memory) vkFreeMemory(im.device, im.memory, nullptr);
++}
++
++}  // namespace
++
++ID3D12Resource* MakeImage(ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT format, bool render_target) {
++    VkDevice vkd = vkd3d_get_vk_device(dev);
++    VkPhysicalDevice pd = vkd3d_get_vk_physical_device(dev);
++    VkFormat vf = vkd3d_get_vk_format(format);
++    VkFormatProperties fp;
++    vkGetPhysicalDeviceFormatProperties(pd, vf, &fp);
++    bool storage = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
++    Image im;
++    im.device = vkd;
++    im.storage = storage;
++    im.info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
++    im.info.imageType = VK_IMAGE_TYPE_2D;
++    im.info.format = vf;
++    im.info.extent = {w, h, 1};
++    im.info.mipLevels = 1;
++    im.info.arrayLayers = 1;
++    im.info.samples = VK_SAMPLE_COUNT_1_BIT;
++    im.info.tiling = VK_IMAGE_TILING_OPTIMAL;
++    im.info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
++                    (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0) | (render_target ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0);
++    im.info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    if (vkCreateImage(vkd, &im.info, nullptr, &im.image) != VK_SUCCESS) {
++        LOGR("antialias: no %ux%u Vulkan image of format %d", w, h, int(vf));
++        return nullptr;
++    }
++    VkMemoryRequirements req;
++    vkGetImageMemoryRequirements(vkd, im.image, &req);
++    VkMemoryAllocateInfo mi{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++    mi.allocationSize = req.size;
++    mi.memoryTypeIndex = MemoryType(pd, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++    if (mi.memoryTypeIndex == UINT32_MAX) mi.memoryTypeIndex = MemoryType(pd, req.memoryTypeBits, 0);
++    if (vkAllocateMemory(vkd, &mi, nullptr, &im.memory) != VK_SUCCESS) {
++        Free(im);
++        return nullptr;
++    }
++    vkBindImageMemory(vkd, im.image, im.memory, 0);
++    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
++    vi.image = im.image;
++    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
++    vi.format = vf;
++    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++    if (vkCreateImageView(vkd, &vi, nullptr, &im.view) != VK_SUCCESS) {
++        Free(im);
++        return nullptr;
++    }
++    vkd3d_image_resource_create_info ri{};
++    ri.type = VKD3D_STRUCTURE_TYPE_IMAGE_RESOURCE_CREATE_INFO;
++    ri.vk_image = im.image;
++    ri.desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    ri.desc.Width = w;
++    ri.desc.Height = h;
++    ri.desc.DepthOrArraySize = 1;
++    ri.desc.MipLevels = 1;
++    ri.desc.Format = format;
++    ri.desc.SampleDesc.Count = 1;
++    ri.desc.Flags = (render_target ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE) |
++                    (storage ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
++    ri.flags = VKD3D_RESOURCE_INITIAL_STATE_TRANSITION;
++    ID3D12Resource* r = nullptr;
++    if (FAILED(vkd3d_create_image_resource(dev, &ri, &r))) {
++        Free(im);
++        return nullptr;
++    }
++    std::lock_guard lock(g_images_m);
++    g_images[r] = im;
++    return r;
++}
++
++void DropImage(ID3D12Resource* resource) {
++    Image im;
++    {
++        std::lock_guard lock(g_images_m);
++        auto it = g_images.find(resource);
++        if (it == g_images.end()) return;
++        im = it->second;
++        g_images.erase(it);
++    }
++    Free(im);
++}
++
++bool Find(ID3D12Resource* resource, Image& out) {
++    if (!resource) return false;
++    std::lock_guard lock(g_images_m);
++    auto it = g_images.find(resource);
++    if (it == g_images.end()) return false;
++    out = it->second;
++    return true;
++}
++
++}  // namespace gpu::linux_vk
++#endif
+diff --git a/runtime/linux/vk_images.h b/runtime/linux/vk_images.h
+new file mode 100644
+index 0000000..ecdacf9
+--- /dev/null
++++ b/runtime/linux/vk_images.h
+@@ -0,0 +1,35 @@
++#pragma once
++// Linux: Vulkan images of the renderer's own as D3D12 resources, for the anti-aliasing that runs on Vulkan itself rather
++// than through vkd3d (AMD FSR 3, linux/fsr_vk.h; NVIDIA DLSS, linux/dlss_vk.h). Those take Vulkan images, and vkd3d gives
++// no image of a resource it made, so the inputs and the output are images made here, wrapped as D3D12 resources for the
++// renderer: it draws its depth and motion into them and copies the frame's colour in.
++#include <vulkan/vulkan.h>
++
++#include <cstdint>
++
++#include "d3d12.h"
++
++namespace gpu::linux_vk {
++
++// a w x h image as a D3D12 resource in COMMON (Vulkan's GENERAL layout), sampled, stored to (where the format allows:
++// render_target formats and RGBA always) and copied to or from; a render target too when asked. Null when it cannot be
++// made (logged)
++ID3D12Resource* MakeImage(ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT format, bool render_target);
++
++// an image MakeImage made, its resource released and the GPU done with it: its Vulkan image, view and memory freed
++void DropImage(ID3D12Resource* resource);
++
++// a MakeImage image's Vulkan side
++struct Image {
++    VkDevice device = VK_NULL_HANDLE;
++    VkImage image = VK_NULL_HANDLE;
++    VkImageView view = VK_NULL_HANDLE;  // all of it, its colour
++    VkDeviceMemory memory = VK_NULL_HANDLE;
++    VkImageCreateInfo info{};
++    bool storage = false;
++};
++
++// the image under a resource MakeImage made; false for any other
++bool Find(ID3D12Resource* resource, Image& out);
++
++}  // namespace gpu::linux_vk
 diff --git a/runtime/linux/win32.cpp b/runtime/linux/win32.cpp
 new file mode 100644
 index 0000000..4af696d

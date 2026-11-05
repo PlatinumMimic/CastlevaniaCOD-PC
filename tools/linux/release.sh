@@ -116,10 +116,14 @@ echo "Optional: an HD texture pack made for PCSX2. Put its replacement pictures 
 find $PKG -type f -exec chmod 644 {} + && find $PKG -type d -exec chmod 755 {} +
 chmod 755 $PKG/Castlevania $PKG/CastlevaniaEU $PKG/CastlevaniaLauncher $PKG/compiler/xbe_recomp $PKG/compiler/clang \
     $PKG/compiler/ld.lld
-# nothing of the game goes out: no game code or its sources, no xbe or disc image
+# nothing of the game goes out: no game code or its sources, no xbe or disc image (the one source is the SDK's bridge to
+# NVIDIA's NGX, compiled on the player's PC: runtime/linux/dlss_vk.h)
 bad=$(find $PKG \( -name '*.xbe' -o -name '*.iso' -o -name '*.cpp' -o -name '*.o' -o -name 'x86_recomp*' -o \
-    -name image_symbols.h -o -name Castlevania.so -o -name CastlevaniaEU.so \) -print)
+    -name image_symbols.h -o -name Castlevania.so -o -name CastlevaniaEU.so \) ! -path "$PKG/compiler/ngx/cv_ngx.cpp" -print)
 [ -z "$bad" ] || { echo "      game files in the package: $bad"; exit 1; }
+# and nothing of NVIDIA's: its DLSS SDK's files are the player's own download
+nv=$(find $PKG \( -name 'nvsdk_ngx*' -o -name 'libnvsdk_ngx*' -o -name 'libnvidia-ngx*' -o -name 'libcv_ngx*' -o -name dlss \) -print)
+[ -z "$nv" ] || { echo "      NVIDIA's files in the package: $nv"; exit 1; }
 [ ! -e $PKG/compiler/work ] || { echo "      the compiler's work folder is in the package"; exit 1; }
 
 echo "[5/5] Archive"

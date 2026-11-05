@@ -601,6 +601,11 @@ class Game:
                 shutil.copy2(f, folder / f.name)
             if (vendor / "streamline").is_dir():
                 shutil.copytree(vendor / "streamline", folder / "streamline")
+            # Linux: NVIDIA's DLSS SDK files in dlss, which the game builds its bridge to NVIDIA's NGX from, with the
+            # compiler folder's ngx (the SDK's runtime/linux/dlss_vk.h)
+            if LINUX and (vendor / "dlss").is_dir() and (build / "compiler" / "ngx").is_dir():
+                shutil.copytree(vendor / "dlss", folder / "dlss")
+                shutil.copytree(build / "compiler" / "ngx", folder / "compiler" / "ngx")
         self.live = folder / "live"
         self.live.mkdir()
         if scenario.get("dump"):  # "<va>:<bytes>,...": guest memory saved after each command, mem-<n>-<va>.bin
@@ -1229,11 +1234,13 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
     shots.mkdir(parents=True)
     results = list(checks)
     failed = not all(c["ok"] for c in results)
+    started = []  # the log's lines before the steps, theirs too (runlog)
     if install:  # the first start: the game code built, Start pressed, the game window up
         r = {"step": "start", "label": "first start", "ok": bool(game.hwnd), "errors": [], "warnings": []}
         if game.first_start is not None:
             r["warnings"].append(f"the game code was built in {game.first_start:.0f} s")
-        found = [l.split("] ", 1)[-1] for l in game.new_log_lines() if "] Game: " in l]
+        started = [l.split("] ", 1)[-1] for l in game.new_log_lines()]
+        found = [l for l in started if l.startswith("Game: ")]
         r["warnings"] += found[:1]  # the copy the game found, and how it matched
         if not game.hwnd:
             r["errors"].append(f"message box: {game.dialog}" if game.dialog else "no game window")
@@ -1245,7 +1252,7 @@ def run(scenario_path, build, keep, judge_model=None, review=None, overrides=Non
             if install:
                 return False  # the report, from finally, says why
             raise RuntimeError("no game window" + (f": {game.dialog}" if game.dialog else ""))
-        failed |= not play_steps(game, scenario, settings, shots, {"prev": None, "runlog": []}, results)
+        failed |= not play_steps(game, scenario, settings, shots, {"prev": None, "runlog": started}, results)
     finally:
         failed |= end_game(game, results)
         report(out, name, results, failed)

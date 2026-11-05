@@ -212,6 +212,7 @@ def tests():
         scenario("surface", needs=["materials"], env=folder_env("materials", "CV_TEXTURES")),
         scenario("aa", needs=["vendor"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
         scenario("aa-dlss", needs=["vendor", "rtx"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
+        scenario("dlss-linux", needs=["vendor"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["linux"]),
         scenario("fg", needs=["vendor"], env=folder_env("vendor", "CV_VENDOR_DIR"), platforms=["windows"]),
         # 1.8.5: Linux's HDR output, made whatever the desktop (XBE_HDR_FORCE), its frame measured
         scenario("hdr-linux", platforms=["linux"]),
@@ -236,6 +237,11 @@ def tests():
         {"name": "install-usa", "cmd": [str(HERE / "install.py"), pkgs, str(d.get("usa", ""))], "quick": True,
          "needs": ["package", "usa"]},
         {"name": "install-eu", "cmd": [str(HERE / "install.py"), pkgs, str(d.get("eu", ""))], "needs": ["package", "eu"]},
+        # Linux: NVIDIA DLSS's files downloaded by the installed launcher, the bridge to NGX built by the package's own
+        # clang and ld.lld, then played (DLSS where NVIDIA's driver is, else AMD FSR in its place)
+        {"name": "install-dlss", "cmd": [str(HERE / "install.py"), pkgs, str(d.get("usa", "")),
+                                         str(HERE / "scenarios" / "dlss-linux.json")],
+         "needs": ["package", "usa"], "platforms": ["linux"]},
         {"name": "launcher", "cmd": [str(HERE / "launcher_test.py"), pkgs, str(d.get("usa", "")), str(d.get("eu", ""))]
          + (["--other", str(d["other"])] if "other" in d else []),
          "quick": True, "needs": ["package", "usa", "eu"]},

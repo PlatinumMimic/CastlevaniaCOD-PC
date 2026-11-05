@@ -1,0 +1,27 @@
+{
+  "name": "dlss-linux",
+  "after": "newgame.json",
+  "vendor": true,
+  "note": "Linux's NVIDIA DLSS (the SDK's linux/dlss_vk.cpp): with NVIDIA's DLSS SDK files in dlss/ (the vendor folder's dlss, as the launcher downloads them) the game builds its bridge to NVIDIA's NGX (the compiler folder's ngx/cv_ngx.cpp) and loads it before the device is made. In WSL the card is Mesa's dozen, not NVIDIA's own driver, so NGX is never started and AMD FSR takes DLSS's place, as on an AMD or Intel card. On a PC with NVIDIA's driver the log says 'NVIDIA DLSS ... on Vulkan' instead.",
+  "settings": {
+    "width": 1280,
+    "height": 720,
+    "antialiasing": 2,
+    "upscaling": 0,
+    "ambient_occlusion": 0
+  },
+  "steps": [
+    {
+      "press": "0f:wait:90f",
+      "shot": "dlss",
+      "expect": [
+        "found(runlog, r'NVIDIA DLSS.s bridge built from NVIDIA.s DLSS SDK files')",
+        "found(runlog, r'NVIDIA DLSS.s files are there, its bridge loaded')",
+        "found(runlog, r'NVIDIA DLSS needs an NVIDIA RTX card on NVIDIA.s own driver')",
+        "found(runlog, r'antialias: AMD FSR .Vulkan., NVIDIA DLSS not running')",
+        "found(runlog, r'antialias: AMD FSR .Vulkan. on the frame.s 3D at 1280x720')",
+        "aa.kind == 1"
+      ]
+    }
+  ]
+}

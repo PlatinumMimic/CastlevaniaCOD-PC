@@ -57,6 +57,7 @@ his wall). After a test fails the next plays a fresh game. `--alone` plays every
 | The renderer's own TAA (Linux's anti-aliasing) | `taa` | the TAA on the 3D (on Windows by `XBE_TAA=1`), still from frame to frame, off and on, Performance upscaling, the camera turned |
 | AMD FSR on Linux | `fsr-linux` (*Linux*) | AMD FSR 3 on Vulkan on the 3D at full size, still from frame to frame, off and on, Performance upscaling, the camera turned (as `taa` checks the own TAA, which `XBE_TAA=1` keeps there) |
 | HDR on Linux | `hdr-linux` (*Linux*) | the HDR output made whatever the desktop (`XBE_HDR_FORCE=1`): HDR10 back buffers, the frame's highlights lifted past scene white at 200 nits (`XBE_HDR_STATS`), off and on again with the setting; the HDR10 swap chain on a desktop in HDR is checked by hand |
+| NVIDIA DLSS on Linux | `dlss-linux` (*Linux*) | NVIDIA's DLSS SDK files in `dlss/` (the suite's vendor folder's `dlss`): the game builds its bridge to NVIDIA's NGX and loads it before the device; on a card not on NVIDIA's own driver (WSL's dozen) NGX is never started and AMD FSR takes DLSS's place. DLSS itself on NVIDIA's driver is checked by hand |
 | Ambient occlusion | `ao` | with no anti-aliasing: the stone darker where it meets at High, still from frame to frame, lighter with it off, Low between |
 | 16:10 widescreen | `wide-1610` | at the Steam Deck's 1280x800: no black bars, the HUD at the edges, 16:9 putting the bars back while playing, the pause menu to both sides |
 | Render scale, anisotropic filtering | `filters-pack`, `filters-nopack` | 50% and 200% soften and sharpen, filtering sharpens, with the pack and without |
@@ -88,6 +89,7 @@ his wall). After a test fails the next plays a fresh game. `--alone` plays every
 | The European release by Castlevania | `discs`, `install-eu` | its disc handed to CastlevaniaEU, which plays it |
 | Another release refused | `discs` | another release's xbe (a fan translation's): the message box says so; no copy: it asks for the game |
 | The release as a player installs it | `install-usa`, `install-eu` | the package alone (no game files in it, every program and library loading from it or the system, glibc 2.35 at most on Linux), the first start building the game code, a new game played |
+| NVIDIA DLSS in the Linux release | `install-dlss` (*Linux*) | the installed launcher downloading NVIDIA's DLSS SDK files from NVIDIA (each checked against its SHA-256), the game linking its bridge to them with the package's own clang and ld.lld, then `dlss-linux`'s checks |
 
 ## Checked by hand
 

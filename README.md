@@ -82,9 +82,9 @@ On top of Pazzi7054's port:
   metal take the light by their normal maps and show depth by their height maps (parallax). By Calm-Consideration41.
 - **Anti-aliasing and upscaling** - AMD FSR on any graphics card, or NVIDIA DLSS on a GeForce RTX, smooth the 3D's
   edges over the frames, and can draw it below the screen's resolution and rebuild it, for a higher frame rate on a
-  laptop or a handheld; the launcher downloads their files from AMD and NVIDIA. On Linux AMD FSR 3 does both too, on
-  Vulkan, built into the game (since 1.8.6; before, this port's own TAA, which stays for a card FSR can't run on). By
-  Calm-Consideration41 (on Linux, this fork's).
+  laptop or a handheld; the launcher downloads their files from AMD and NVIDIA. On Linux both do too, on Vulkan: AMD
+  FSR 3 built into the game (since 1.8.6; before, this port's own TAA, which stays for a card FSR can't run on) and
+  NVIDIA DLSS with NVIDIA's own driver (since 1.8.7). By Calm-Consideration41 (on Linux, this fork's).
 - **Frame generation** (Windows) - a frame made between each two the game draws, by AMD FSR 3 or NVIDIA DLSS, for twice
   the frame rate on a fast screen. By Calm-Consideration41.
 - **Ambient occlusion** - soft shadow where surfaces meet, with anti-aliasing or without. By Calm-Consideration41.
@@ -346,8 +346,11 @@ background first); the size pictures load at applies from the next start.
   page from AMD and NVIDIA (the game loads them only signed by AMD or NVIDIA, the launcher checks their SHA-256). On
   Linux AMD FSR 3 on Vulkan, built into the game from AMD's FidelityFX SDK (an unofficial Linux build of its 1.1.4,
   patched by this port), on any graphics card; where it can't run, this port's own TAA in its place
-  (`XBE_TAA=1` chooses that). NVIDIA DLSS is Windows only. The HUD and menus stay sharp. By Calm-Consideration41 (on
-  Linux, this fork's).
+  (`XBE_TAA=1` chooses that). And NVIDIA DLSS on Vulkan through NGX, which NVIDIA's own Linux driver brings, on a
+  GeForce RTX: the launcher's Graphics page downloads NVIDIA's DLSS SDK files from NVIDIA (about 60 MB, each checked
+  against its SHA-256), and the game links itself to them on your PC with its compiler folder's clang, as it builds its
+  code, so this port's download carries nothing of NVIDIA's. On another driver (Mesa's NVK, or an AMD or Intel card)
+  AMD FSR takes DLSS's place. The HUD and menus stay sharp. By Calm-Consideration41 (on Linux, this fork's).
 - **Upscaling** - The 3D drawn below the screen's resolution and rebuilt to it by the anti-aliasing: Quality (two
   thirds across), Balanced or Performance (half), for a higher frame rate on a slower graphics card or a handheld.
 - **Sharpening** - FSR's and the TAA's, 0 to 100% (30% by default).
@@ -766,9 +769,14 @@ Changes this game needed beyond the generated config:
   Mesa's dozen (Vulkan on Windows' Direct3D 12), on X11 and Wayland: both releases install, build their game code and
   play the new game, widescreen and room tests at 60 frames per second on the RTX 3060, with the same pictures as on
   Windows. It has not been tried on a Linux PC's own graphics drivers yet.
-- Linux has no frame generation yet: the Linux build of AMD's FidelityFX SDK has none, and NVIDIA's is Windows only.
-  Its anti-aliasing and upscaling by AMD FSR 3 are new (1.8.6): tested in WSL on an NVIDIA card through Mesa's dozen,
-  not yet on a Linux PC's own graphics drivers. Each frame waits for the GPU once more with it than with the TAA.
+- Linux has no frame generation yet: the Linux build of AMD's FidelityFX SDK has none, and the port's Linux DLSS is
+  its anti-aliasing and upscaling only. Its anti-aliasing and upscaling by AMD FSR 3 are new (1.8.6): tested in WSL on
+  an NVIDIA card through Mesa's dozen, not yet on a Linux PC's own graphics drivers. Each frame waits for the GPU once
+  more with it than with the TAA.
+- NVIDIA DLSS on Linux is new (1.8.7) and not yet tested on NVIDIA's own Linux driver: in WSL, where the card is
+  Mesa's dozen, its download, the game's link to it and the switch to AMD FSR were tested, and DLSS itself ran there
+  through NVIDIA's NGX, but not in the game. If it does not run, `logs/castlevania.log` says why (and NVIDIA's own
+  logs are in `logs/ngx`); `XBE_DLSS_LOG=1` adds NVIDIA's lines to the game's log.
 - HDR on Linux is new (1.8.5): its picture was tested in WSL, where the desktop has no HDR, but not yet shown on a
   Linux desktop in HDR.
 - Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
@@ -794,7 +802,9 @@ sponsored by them, and it is not an official product. Nothing here is sold.
 - AMD's FidelityFX and NVIDIA's DLSS and Streamline libraries are not in the Windows release either: the launcher
   downloads them from AMD's and NVIDIA's own releases, under their licences, which it saves beside them. The Linux
   release has AMD's FSR 3 upscaler built into the game from the FidelityFX SDK's source (MIT), its licence in
-  `THIRD_PARTY.txt`.
+  `THIRD_PARTY.txt`; NVIDIA's DLSS SDK files are downloaded by the launcher from NVIDIA's own GitHub, under NVIDIA's
+  licence, which it saves in `licences`, and the game links its bridge to them on your PC
+  (`compiler/ngx/cv_ngx.cpp`, this port's, is the one source file in the release).
 - The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an
   executable from `build.bat`, are for your personal use only. Do not distribute them, generated code or game files.
 - The cover at the top is fan art made for this project with an AI image model, after a screenshot of the port's
