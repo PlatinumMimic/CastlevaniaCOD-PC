@@ -2230,7 +2230,7 @@ const char* PresetName(int p) {
 #ifdef _WIN32
 const char* AntiAliasName(uint32_t aa) { return aa == 2 ? "NVIDIA DLSS" : aa == 1 ? "AMD FSR" : T("Off"); }
 #else
-// Linux: the game's own TAA, whatever was chosen on Windows
+// Linux: the port's own TAA, whatever was chosen on Windows
 const char* AntiAliasName(uint32_t aa) { return aa ? "TAA" : T("Off"); }
 #endif
 
@@ -2663,7 +2663,7 @@ private:
     }
 
     // the vendor anti-aliasing takes its files from: DLSS chosen on a card without it runs AMD FSR (on Linux, where
-    // the game's own TAA takes FSR's place, always)
+    // the port's own TAA takes FSR's place, always)
     uint32_t AntiAliasVendor() const {
         uint32_t aa = settings_.antialiasing;
         return aa == 2 && (!kVendorFiles || !RtxCard(UsedGpu().name)) ? 1 : aa;
@@ -2785,7 +2785,7 @@ private:
         if (aa) VendorFiles(AntiAliasVendor());
 #else
         BeginSetting(T("Anti-aliasing"), T("Smooths the jagged, shimmering edges of the 3D world, gathered over the frames by "
-                                           "the game's own TAA (AMD FSR and NVIDIA DLSS are Windows only). The HUD and "
+                                           "the port's own TAA (AMD FSR and NVIDIA DLSS are Windows only). The HUD and "
                                            "menus stay sharp."),
                      true);
         if (aa > 1) aa = 1;  // DLSS chosen on Windows: the TAA here

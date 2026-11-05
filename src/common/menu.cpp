@@ -292,7 +292,7 @@ void GraphicsTab(bool& save) {
     }
 #else
     // Linux: AMD's and NVIDIA's libraries are Windows ones; the renderer's own TAA takes AMD FSR's place (setting 1)
-    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by the game's own TAA (AMD FSR "
+    Row("Anti-aliasing", "Smooth, steady edges on the 3D world, gathered over the frames by the port's own TAA (AMD FSR "
                          "and NVIDIA DLSS are Windows only).");
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
