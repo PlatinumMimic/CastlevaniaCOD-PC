@@ -1,0 +1,285 @@
+{
+  "name": "rtmtn",
+  "save": "julian3",
+  "vendor": true,
+  "note": "Julian's 5 Nov reports in the Baljhet Mountains (map 13) with his save of that day (the golem Innocent Devil along): a canyon with tripod lamps (13.1), an open canyon (13.4), the gate (13.14), each settled, tilted up to the sky and back, turned twice, walked ahead, after a run of Hector's blows and a second later. XBE_RT_VIEW=0/8/17/19/20/21/22 as rtview.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.1,10f:wait:20f"
+    },
+    {
+      "until": "map == 13 and room == 1 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "13-1-a",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "13-1-a1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "13-1-up",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "13-1-up2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:25f,30f:wait:1f",
+      "shot": "13-1-level",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "13-1-t1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "13-1-t1-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "13-1-t2",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:45f,50f:wait:1f",
+      "shot": "13-1-walk",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "13-1-walk2",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,36f:x,48f:x,54f:wait:1f",
+      "shot": "13-1-hit",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,30f:wait:1f",
+      "shot": "13-1-hit2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "13-1-after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.4,10f:wait:20f"
+    },
+    {
+      "until": "map == 13 and room == 4 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "13-4-a",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "13-4-a1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "13-4-up",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "13-4-up2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:25f,30f:wait:1f",
+      "shot": "13-4-level",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "13-4-t1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "13-4-t1-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "13-4-t2",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:45f,50f:wait:1f",
+      "shot": "13-4-walk",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "13-4-walk2",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,36f:x,48f:x,54f:wait:1f",
+      "shot": "13-4-hit",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,30f:wait:1f",
+      "shot": "13-4-hit2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "13-4-after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.14,10f:wait:20f"
+    },
+    {
+      "until": "map == 13 and room == 14 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "13-14-a",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "13-14-a1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:25f,30f:wait:1f",
+      "shot": "13-14-up",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "13-14-up2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:25f,30f:wait:1f",
+      "shot": "13-14-level",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "13-14-t1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "13-14-t1-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "13-14-t2",
+      "judge": false
+    },
+    {
+      "press": "0f:lsu:45f,50f:wait:1f",
+      "shot": "13-14-walk",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "13-14-walk2",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,36f:x,48f:x,54f:wait:1f",
+      "shot": "13-14-hit",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,30f:wait:1f",
+      "shot": "13-14-hit2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "13-14-after",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "upscaling": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  }
+}

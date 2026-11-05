@@ -1,0 +1,200 @@
+{
+  "name": "rtview",
+  "save": "julian",
+  "vendor": true,
+  "note": "Julian's 5 Nov reports (the light changing as he walks and as the camera turns, a cliff lit from nothing, the light changing as Hector attacks): three rooms of map 5 with lamps, the sky and cliffs (5.8's torch bridge, 5.0's wooden bridge by the mountains, 5.9's brazier arena), each shot settled, turned, after a run of Hector's blows and a second later; with XBE_RT_VIEW=0/8/17/19/20 for the frame, the light arriving, the lights' alone, the sky held and the room's average.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.8,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 8 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-8-a",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "5-8-a1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "5-8-t1",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "5-8-t1-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "5-8-t2",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,36f:x,48f:x,54f:wait:1f",
+      "shot": "5-8-hit",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,30f:wait:1f",
+      "shot": "5-8-hit2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "5-8-after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 0 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-0-a",
+      "judge": false
+    },
+    {
+      "press": "0f:rsd:50f,55f:wait:1f",
+      "shot": "5-0-low",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "5-0-low2",
+      "judge": false
+    },
+    {
+      "press": "0f:rsu:50f,55f:wait:1f",
+      "shot": "5-0-level",
+      "judge": false
+    },
+    {
+      "press": "0f:rsr:60f,65f:wait:1f",
+      "shot": "5-0-turned",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,36f:x,48f:x,54f:wait:1f",
+      "shot": "5-0-hit",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "5-0-after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.9,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 9 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-9-a",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "5-9-a1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "5-9-t1",
+      "judge": false
+    },
+    {
+      "press": "0f:rsl:30f,60f:wait:1f",
+      "shot": "5-9-t2",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,36f:x,48f:x,54f:wait:1f",
+      "shot": "5-9-hit",
+      "judge": false
+    },
+    {
+      "press": "0f:x,12f:x,24f:x,30f:wait:1f",
+      "shot": "5-9-hit2",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "5-9-after",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "upscaling": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  }
+}

@@ -357,23 +357,32 @@ background first); the size pictures load at applies from the next start.
     the floor before it, Hector picks up the light around him. A filter across its neighbours on the same surface
     smooths it, and the anti-aliasing gathers it over the frames. It comes with the ray traced ambient occlusion.
     It takes the place of the flat fill the game's artists lit each room with rather than adding to it: a surface
-    gets the light it gets above the room's average (the room's, eased over about a second so a turn of the camera
-    does not pump it), and gives up a share of the game's own as it gets less, so a room keeps the brightness the game
-    gave it while its light comes from where the rays say: the glow by the water, the shade in a corner. **Lighting
+    gets the light it gets above the room's average (the room's over the frames since it came in, so a turn of the
+    camera does not pump it), raised in the light's own hue against the room's (a surface that gets more of the room's own
+    light is raised in white: the room's colour is in its fill already), and gives up a share of the game's own as it
+    gets less, so a room keeps the brightness the game gave it while its light comes from where the rays say: the
+    glow by the water, the shade in a corner. **Lighting
     strength** (`ray_tracing_lighting`, 0% to 200%, 100% by default) sets how strongly it shows. Reflections take the
     place of the share of a surface's own colour they stand for (its Fresnel share: little head on, most at a glancing
     angle) rather than adding to it, too.
     - *Lights*: what the game adds onto the frame as light, a torch's flame, a glow, a spell in Hector's hand, lights
       the room too. Each pixel samples one of them a frame (picked among a few by how strongly each lights it) with a
-      ray toward it for its shadow, so a character between a torch and the wall throws one. The same lights every
-      frame (up to 128), so the light they throw holds still. Flames and glows the game draws as flat sprites are put
-      back into the room at the depth they show at, a little before their wall, a third as bright as the room's own
-      (an effect more than a lamp: a cloud of motes tints the wall behind it); a haze over the whole view is no light.
-      Their light is light above the room's own, so the room's average leaves it out: a torch brightens its wall
-      without the rest of the room dimming to make up for it.
+      ray toward it for its shadow, so a character between a torch and the wall throws one. Each light is known from
+      frame to frame by where it is (up to 128 of them), whatever picture it is drawn with and in whatever order: its
+      light grows in over about half a second once it has been there a third of one, so a sword's swing, a hit's
+      sparks and a spell's burst throw none while a torch, a lamp and a lava golem's glow throw all of theirs; the
+      point a pixel settled on follows its light as others come and go; and a light that leaves the screen goes on
+      lighting what is in view for twenty seconds, so a torch just out of view still lights the wall beside it.
+      Flames and glows the game draws as flat sprites are put back into the room at their own depth (the game depth
+      tests them against the room, so that is where they are: a flame at its bracket, a brazier's fire on its stand),
+      four fifths as bright as the room's own (an effect more than a lamp: a cloud of motes tints the wall behind it);
+      a haze over the whole view is no light, and the glow a character is drawn with (the embroidery on Hector's coat)
+      is its look, not a lamp. Their light is light above the room's own, so the room's average leaves it out: a torch
+      brightens its wall without the rest of the room dimming to make up for it.
     - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
-      arch or a ledge shades what lies under it.
+      arch or a ledge shades what lies under it. It is light above the room's own too, left out of the room's average
+      as the lights' is.
     - *Light shafts*: the air catches the lights' light on its way to the eye: a torch's glow in the air, cut by the
       bars before it. Only lights drawn in 3D light the air (a fountain's spray, motes and a glow's sprite drawn flat
       filled whole rooms with a grainy, sparkling haze). Marched at a quarter of the frame's size, smoothed, gathered

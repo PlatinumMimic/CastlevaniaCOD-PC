@@ -1,0 +1,49 @@
+{
+  "name": "mt5",
+  "save": "julian",
+  "vendor": true,
+  "note": "Every room of the Mountains (map 5) from Julian's save, with ray tracing: a shot as each room comes up and one a second and a half later, for finding a room by its look and for a survey of the traced lighting across the map.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "sweep": {
+        "maps": [
+          5
+        ],
+        "hold": 90,
+        "timeout": 40,
+        "skip_inactive": true
+      }
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "upscaling": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  }
+}

@@ -357,6 +357,7 @@ public:
             std::swap(seen_prev_, seen_now_);
             seen_now_.clear();
             cam_now_ = {};
+            cams_now_.clear();
             card_before_ = card_now_;
             card_before_seen_ = card_now_seen_;
             card_now_seen_ = false;
@@ -635,6 +636,25 @@ public:
         if (Backdrop(vsc) || SkyCard()) ext[0] = ext[1] = ext[3] = ext[4] = 0;  // not drawn: every vertex at the centre
         else if (hide_water && Water()) ext[0] = ext[1] = 0;
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
+        // XBE_FG_TRACE=2: each 3D program once (what it reads, its first draw), and every 3D draw of the three
+        // frames after one whose world draws had several cameras
+        static const int trace_lvl = std::getenv("XBE_FG_TRACE") ? std::atoi(std::getenv("XBE_FG_TRACE")) : 0;
+        if (trace_lvl >= 2 && back_buffer_ && d_.world && vsc) {
+            bool fresh = programs_told_.insert(d_.program).second;
+            if (fresh || frame_ <= trace_draws_until_)
+                LOGR("wide: %s %llu: program %016llx%s%s%s n %u tex %016llx, c68 [%g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g %g] "
+                     "c85 row 3 [%g %g %g %g] c94 %g %g %g c95 %g %g %g",
+                     fresh ? "3D program, frame" : "3D draw, frame", (unsigned long long)frame_,
+                     (unsigned long long)d_.program, d_.matrix == kCameraWorld ? " world" : d_.program ? " camera" : " fixed",
+                     d_.skinned ? " skinned" : "", d_.mesh ? " mesh" : "", d_.count, (unsigned long long)d_.name,
+                     vsc[kCamera][0], vsc[kCamera][1], vsc[kCamera][2], vsc[kCamera][3], vsc[kCamera + 1][0],
+                     vsc[kCamera + 1][1], vsc[kCamera + 1][2], vsc[kCamera + 1][3], vsc[kCamera + 2][0],
+                     vsc[kCamera + 2][1], vsc[kCamera + 2][2], vsc[kCamera + 2][3], vsc[kCamera + 3][0],
+                     vsc[kCamera + 3][1], vsc[kCamera + 3][2], vsc[kCamera + 3][3], vsc[kCameraWorld + 3][0],
+                     vsc[kCameraWorld + 3][1], vsc[kCameraWorld + 3][2], vsc[kCameraWorld + 3][3], vsc[kScreenScale][0],
+                     vsc[kScreenScale][1], vsc[kScreenScale][2], vsc[kScreenOffset][0], vsc[kScreenOffset][1],
+                     vsc[kScreenOffset][2]);
+        }
         if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty() && !boss_bar) {
             std::lock_guard lock(g_seen_m);
             (d_.at_point ? g_marker : g_hud) = {frame_, d_.x.lo, d_.x.hi, ext[3]};
@@ -710,8 +730,12 @@ public:
             if (trace) LOGR("wide: frame %llu no view: %s %zu %zu", (unsigned long long)frame_, why, a, b);
             return false;
         };
-        if (!cam_now_.have || seen_now_.empty() || seen_prev_.empty())
+        if (!Camera().have || seen_now_.empty() || seen_prev_.empty())
             return no("no world draws now or before", seen_now_.size(), seen_prev_.size());
+        if (trace && cams_now_.size() > 1 && trace_draw_frames_ < 3 && frame_ > trace_draws_until_) {
+            trace_draw_frames_++;
+            trace_draws_until_ = frame_ + 1;  // the next frame's draws listed (XBE_FG_TRACE=2)
+        }
         struct Cand {
             uint32_t count;
             float r[16];
@@ -749,7 +773,7 @@ public:
         }
         // one mesh alone is believed only as the only one there is
         if (support < 2 && cands.size() > 1) return no("the meshes disagree", support, cands.size());
-        const Cam& c = cam_now_;
+        const Cam& c = Camera();
         float gw = float(guest_w_), gh = float(guest_h_), z = std::max(zscale_, 1.0f);
         if (std::fabs(c.s[0]) < 1e-12f || std::fabs(c.s[1]) < 1e-12f || std::fabs(c.s[2]) < 1e-12f) return false;
         // t to the renderer's clip space (shaders.cpp's epilogue, ReversedClip, the squeeze of Position)
@@ -773,7 +797,7 @@ public:
                 v.far_w = f;
             }
         }
-        // the camera, as the largest mesh's matrix has it (a level's, with no world matrix of its own)
+        // the camera, as the matrix most of the world vertices share has it (a level's, with no world matrix of its own)
         float fwd[3] = {m[12], m[13], m[14]};
         if (Normalize(fwd)) {
             std::copy(fwd, fwd + 3, v.forward);
@@ -824,16 +848,28 @@ private:
         uint32_t count;
         bool dup;
     };
-    // the frame's camera constants, as its last world draw had them
+    // the frame's camera constants, as most of its world draws' vertices had them (SeeWorld, Camera)
     struct Cam {
         bool have = false;
         float s[3] = {}, o[3] = {};  // c94, c95
-        float m[16] = {};            // the largest mesh's c85..c88
-        uint32_t count = 0;
+        float m[16] = {};            // the c85..c88 most of the group's vertices share (a level's: the camera itself)
+        uint32_t count = 0;          // the vertices drawn with m
         float p[16] = {};            // c68..c71
         bool p_ok = false;
         float sq = 1;                // the squeeze in x the world draws had
     };
+    // the world draws of a frame that share the camera constants (c68..c71, c94, c95): how many vertices they drew,
+    // and by matrix (c85..c88) how many
+    struct CamGroup {
+        Cam cam;
+        uint32_t verts = 0;
+        std::unordered_map<uint64_t, uint32_t> matrices;
+    };
+    static uint64_t Mix(uint64_t h, const void* v, size_t n) {
+        const uint8_t* b = static_cast<const uint8_t*>(v);
+        for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull;
+        return h;
+    }
     void SeeWorld(float (*vsc)[4], float squeeze) {
         Mesh n{};
         for (int r = 0; r < 4; r++)
@@ -841,20 +877,54 @@ private:
         n.count = d_.count;
         auto [it, fresh] = seen_now_.try_emplace(d_.mesh ^ d_.name * 0x100000001B3ull, n);
         if (!fresh) it->second.dup = true;
-        Cam& c = cam_now_;
-        for (int i = 0; i < 3; i++) {
-            c.s[i] = vsc[kScreenScale][i];
-            c.o[i] = vsc[kScreenOffset][i];
+        // the camera's constants: the ones most of the frame's world vertices are drawn with (Camera), not the last
+        // world draw's nor the largest draw's. A draw with a projection or screen scale of its own (an effect's, a
+        // name tag's, the Mountains' sky dome: its depth row collapsed to the far plane, in pieces of 83 vertices
+        // where the terrain comes in pieces of up to 83) last in the frame, or largest, gave the view that
+        // projection, and every pass that works from the view (ray tracing's scene against the frame's depth, its
+        // guides, frame generation's motion) missed the frame by it: whole frames of the Mountains lost their ray
+        // tracing as such draws came and went
+        uint64_t key = Mix(Mix(Mix(14695981039346656037ull, vsc[kCamera], 64), vsc[kScreenScale], 12), vsc[kScreenOffset], 12);
+        key = Mix(key, &squeeze, sizeof(squeeze));
+        CamGroup& g = cams_now_[key];
+        Cam& c = g.cam;
+        if (!c.have) {
+            for (int i = 0; i < 3; i++) {
+                c.s[i] = vsc[kScreenScale][i];
+                c.o[i] = vsc[kScreenOffset][i];
+            }
+            c.sq = squeeze;
+            for (int r = 0; r < 4; r++)
+                for (int k = 0; k < 4; k++) c.p[r * 4 + k] = vsc[kCamera + r][k];
+            c.p_ok = c.p[12] == 0 && c.p[13] == 0 && c.p[14] != 0 && c.p[15] == 0;
+            c.have = true;
         }
-        c.sq = squeeze;
-        if (!c.have || n.count > c.count) {
+        g.verts += n.count;
+        // its matrix: the one most of the group's vertices share (a level's pieces all share the camera's; a mesh
+        // with a world matrix of its own, a gate's or a crystal's, has it alone)
+        uint32_t with = g.matrices[Mix(14695981039346656037ull, n.m, sizeof(n.m))] += n.count;
+        if (with > c.count) {
             std::copy(n.m, n.m + 16, c.m);
-            c.count = n.count;
+            c.count = with;
         }
-        for (int r = 0; r < 4; r++)
-            for (int k = 0; k < 4; k++) c.p[r * 4 + k] = vsc[kCamera + r][k];
-        c.p_ok = c.p[12] == 0 && c.p[13] == 0 && c.p[14] != 0 && c.p[15] == 0;
-        c.have = true;
+    }
+    // the frame's camera: of the groups of world draws that share the camera constants (SeeWorld), the one of most
+    // vertices; cams_now_ is read only here and swept at the next frame's first draw
+    const Cam& Camera() {
+        static const bool trace = std::getenv("XBE_FG_TRACE") != nullptr;
+        if (cam_now_.have) return cam_now_;
+        uint32_t total = 0, best = 0;
+        for (const auto& [key, g] : cams_now_) {
+            total += g.verts;
+            if (g.verts > best) {
+                best = g.verts;
+                cam_now_ = g.cam;
+            }
+        }
+        if (trace && cams_now_.size() > 1 && cam_traces_ < 20 && ++cam_traces_)
+            LOGR("wide: frame %llu: %zu cameras among the world draws; the one of %u of their %u vertices taken",
+                 (unsigned long long)frame_, cams_now_.size(), best, total);
+        return cam_now_;
     }
     static void Mul(const float* a, const float* b, float* out) {
         float r[16];
@@ -1383,7 +1453,12 @@ private:
     bool card_now_seen_ = false, card_before_seen_ = false;
     // frame generation's view: this frame's and the frame before's world draws, by mesh and texture; their camera
     std::unordered_map<uint64_t, Mesh> seen_now_, seen_prev_;
-    Cam cam_now_;
+    std::unordered_map<uint64_t, CamGroup> cams_now_;  // this frame's world draws by their camera constants
+    Cam cam_now_;                                     // the frame's camera once chosen (Camera)
+    int cam_traces_ = 0;                              // XBE_FG_TRACE: frames with several cameras logged
+    std::set<uint64_t> programs_told_;  // XBE_FG_TRACE=2: the 3D programs logged
+    uint64_t trace_draws_until_ = 0;    // and the frame up to which every 3D draw is
+    int trace_draw_frames_ = 0;
     float zscale_ = 16777215.0f;
     float gw_ = 640;
     uint32_t sky_fogged_ = 0, sky_held_ = 0;  // this frame's sky draws, Backdrop's
