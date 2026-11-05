@@ -192,15 +192,26 @@ bool Section(const char* title, const char* id) {
 void HdrRows(bool& save) {
     app::Settings& s = app::Get();
     app::HdrState h = app::Hdr();
+#ifdef _WIN32
     Row("HDR", "On a display with HDR on in Windows: fire, magic, light and the other brightest parts of the picture "
                "shine brighter than the rest, up to the peak brightness. The game's HUD is part of its picture, so its "
                "white text rises with them. Off sends the usual picture.");
+#else
+    Row("HDR", "On a display with HDR on in the desktop (KDE Plasma 6, GNOME 48 or later, or a Steam Deck's gamescope, "
+               "on Wayland): fire, magic, light and the other brightest parts of the picture shine brighter than the "
+               "rest, up to the peak brightness. The game's HUD is part of its picture, so its white text rises with "
+               "them. Off sends the usual picture.");
+#endif
     save |= Check("##hdr", &s.hdr);
     ImGui::SameLine();
     if (h.on)
         ImGui::TextDisabled("HDR output");
     else if (!h.display)
+#ifdef _WIN32
         ImGui::TextDisabled("HDR is off in Windows for this display");
+#else
+        ImGui::TextDisabled("HDR is off in the desktop for this display");
+#endif
     else
         ImGui::TextDisabled("This display is in HDR");
     ImGui::BeginDisabled(!h.on);
@@ -264,12 +275,10 @@ void DisplayTab(bool& save) {
     Row("V-Sync", "Off can tear, and lowers input latency a little.");
     save |= Check("##vsync", &s.vsync);
     ImGui::EndTable();
-#ifdef _WIN32  // Linux sends no HDR picture
     if (Section("HDR", "hdr")) {
         HdrRows(save);
         ImGui::EndTable();
     }
-#endif
 }
 
 void GraphicsTab(bool& save) {

@@ -453,6 +453,25 @@ std::vector<Gpu> Gpus() {
     return list;
 }
 
+// the primary display, where the game opens: HDR on in its desktop or not (SDL's display property, from Wayland's colour
+// management), asked again every two seconds. Its peak is not told: the game's default, 1000 nits, stands for it
+struct DisplayHdr {
+    bool hdr = false;
+    uint32_t peak = 0;
+};
+DisplayHdr PrimaryHdr() {
+    static DisplayHdr last;
+    static Uint64 asked = 0;
+    Uint64 now = SDL_GetTicks();
+    if (asked && now - asked < 2000) return last;
+    asked = now;
+    last = {};
+    last.hdr = SDL_GetBooleanProperty(SDL_GetDisplayProperties(SDL_GetPrimaryDisplay()),
+                                      SDL_PROP_DISPLAY_HDR_ENABLED_BOOLEAN, false);
+    last.peak = last.hdr ? 1000 : 0;
+    return last;
+}
+
 // what the game takes with no card named: the fastest, the processor's renderer last
 Gpu Automatic() {
     VulkanCards v;
@@ -2711,19 +2730,33 @@ private:
         ToggleRight("vsync", settings_.vsync);
         EndSetting();
         EndCard();
-#ifdef _WIN32
         BeginCard("hdr");
+#ifdef _WIN32
         BeginSetting("HDR", T("On a display with HDR on in Windows: fire, magic, light and the other brightest parts of "
                               "the picture shine brighter than the rest. Off sends the usual picture."), true);
+#else
+        BeginSetting("HDR", T("On a display with HDR on in the desktop: fire, magic, light and the other brightest parts "
+                              "of the picture shine brighter than the rest. Off sends the usual picture."), true);
+#endif
         ToggleRight("hdr", settings_.hdr);
         EndSetting();
         DisplayHdr shown = PrimaryHdr();
+#ifdef _WIN32
         if (shown.hdr) {
             Status(kIconCheck, kGreen, F("This display: HDR on in Windows, peak {} nits", {std::to_string(shown.peak)}));
         } else {
             Status(kIconWarn, kAmber, T("This display: HDR off in Windows"));
             Wrapped(g_small, kMuted, T("For HDR in the game, turn on Use HDR in Windows' display settings."));
         }
+#else
+        if (shown.hdr) {
+            Status(kIconCheck, kGreen, F("This display: HDR on in the desktop, peak {} nits", {std::to_string(shown.peak)}));
+        } else {
+            Status(kIconWarn, kAmber, T("This display: HDR off in the desktop"));
+            Wrapped(g_small, kMuted, T("For HDR in the game, turn on HDR in the desktop's display settings: KDE Plasma 6, "
+                                       "GNOME 48 or later, or a Steam Deck's game mode, on Wayland."));
+        }
+#endif
         if (settings_.hdr) {
             BeginSetting(T("Peak brightness"), T("The brightest highlights. The display's own peak suits most; lower it if "
                                                  "highlights glare."));
@@ -2741,7 +2774,6 @@ private:
             EndSetting();
         }
         EndCard();
-#endif
     }
 
     void GraphicsPage() {

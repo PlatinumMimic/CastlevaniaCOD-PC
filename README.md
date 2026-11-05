@@ -87,7 +87,8 @@ On top of Pazzi7054's port:
 - **Frame generation** (Windows) - a frame made between each two the game draws, by AMD FSR 3 or NVIDIA DLSS, for twice
   the frame rate on a fast screen. By Calm-Consideration41.
 - **Ambient occlusion** - soft shadow where surfaces meet, with anti-aliasing or without. By Calm-Consideration41.
-- **HDR** (Windows) - fire, magic and light brighter than the rest on an HDR display. By Calm-Consideration41.
+- **HDR** - fire, magic and light brighter than the rest on an HDR display, on Windows and on a Linux desktop in HDR.
+  By Calm-Consideration41 (on Linux, this fork's).
 - **16:10 widescreen** - for the Steam Deck and 16:10 monitors, beside 16:9. By Calm-Consideration41.
 - **The settings menu by controller** - LB and RB turn its pages, B and Start close it. By Calm-Consideration41.
 - **Sprint** - a click of L3 (the left stick pressed in) or of Left Shift while Hector walks, and he sprints until the
@@ -164,9 +165,9 @@ On a freshly installed Windows there is nothing to download besides the release 
 which draws the game's Direct3D 12 with Vulkan, and FFmpeg, which plays the HD movies; `fonts` the launcher's fonts
 (URW's P052 for its Palatino, and Material Icons). Saves go to `hdd/E/UDATA/4b4e002d`, logs to `logs`. Nothing needs
 installing besides a Vulkan driver (see [To Play on Linux](#to-play-on-linux)), and no root: an HD movie pack plays
-with the FFmpeg in `lib`, and anti-aliasing and upscaling are the port's own TAA, which needs nothing either. HDR and
-frame generation are Windows only for now: AMD's and NVIDIA's libraries are Windows ones, and the Linux build sends
-no HDR picture yet.
+with the FFmpeg in `lib`, and anti-aliasing and upscaling are the port's own TAA, which needs nothing either. HDR needs a
+desktop with HDR on, on Wayland: KDE Plasma 6, GNOME 48 or later, or a Steam Deck's game mode (gamescope). Frame
+generation is Windows only for now: AMD's and NVIDIA's libraries are Windows ones.
 
 ### Windows or Antivirus Warnings
 
@@ -298,9 +299,11 @@ and the buttons held as it closes do not reach the game. By Calm-Consideration41
   stay as they are.
 - **No Overscan Streaks** - The rows a TV's overscan used to hide at the top and bottom of the picture no longer
   smear; the frame fills the screen.
-- **HDR** (Windows) - On a display with HDR on in Windows, fire, magic, light and the other brightest parts of the
-  picture shine brighter than the rest, up to the peak brightness set; the scene brightness sets the rest. By
-  Calm-Consideration41.
+- **HDR** - On a display with HDR on in Windows, or in a Linux desktop (Wayland: KDE Plasma 6, GNOME 48 or later, a
+  Steam Deck's gamescope), fire, magic, light and the other brightest parts of the picture shine brighter than the
+  rest, up to the peak brightness set; the scene brightness sets the rest. On Linux the game sends HDR10 and tells the
+  desktop its peak and scene brightness; the desktop does not tell the display's own peak, so 1000 nits stands for it
+  until one is set. By Calm-Consideration41 (on Linux, this fork's).
 
 ### HD Texture Packs
 Optional: without a pack the game draws its own textures, as on the Xbox. Texture packs made for PCSX2 work as they are:
@@ -758,9 +761,11 @@ Changes this game needed beyond the generated config:
   Mesa's dozen (Vulkan on Windows' Direct3D 12), on X11 and Wayland: both releases install, build their game code and
   play the new game, widescreen and room tests at 60 frames per second on the RTX 3060, with the same pictures as on
   Windows. It has not been tried on a Linux PC's own graphics drivers yet.
-- Linux has no HDR and no frame generation yet, and its anti-aliasing and upscaling are this port's own TAA, not AMD
-  FSR or NVIDIA DLSS: the AMD and NVIDIA libraries the port loads are Windows ones. The TAA is new and has been tested
-  in the first areas only.
+- Linux has no frame generation yet, and its anti-aliasing and upscaling are this port's own TAA, not AMD FSR or
+  NVIDIA DLSS: the AMD and NVIDIA libraries the port loads are Windows ones. The TAA is new and has been tested in the
+  first areas only.
+- HDR on Linux is new (1.8.5): its picture was tested in WSL, where the desktop has no HDR, but not yet shown on a
+  Linux desktop in HDR.
 - Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
   Smart App Control, where it is on, may block such programs; that is untested.
 

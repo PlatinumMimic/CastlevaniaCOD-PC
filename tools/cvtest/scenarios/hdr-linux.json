@@ -1,0 +1,71 @@
+{
+  "name": "hdr-linux",
+  "after": "newgame.json",
+  "note": "Linux's HDR output, made whatever the desktop (XBE_HDR_FORCE=1: the desktop's HDR taken as on), its frame's brightness measured (XBE_HDR_STATS, read back as HDR10's PQ code values): the HDR10 back buffers on, the pause menu's white at the scene brightness set (200 nits, then 300), and off and on again with the setting. Windows on an HDR display measures the same frames alike (max 200 nits at 200). Without an HDR desktop (WSL's X11) the window shows the HDR10 picture as SDR: the screen path itself (an HDR10 swap chain on a desktop in HDR) is checked on a real one by hand.",
+  "env": {
+    "XBE_HDR_FORCE": "1",
+    "XBE_HDR_STATS": "1"
+  },
+  "settings": {
+    "width": 1600,
+    "height": 900,
+    "hdr": true,
+    "hdr_peak_nits": 0,
+    "hdr_scene_nits": 200
+  },
+  "steps": [
+    {
+      "press": "0f:wait:120f",
+      "judge": false,
+      "expect": [
+        "found(runlog, r'hdr: the display is HDR')",
+        "found(runlog, r'hdr: output HDR \\(HDR10')"
+      ]
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f",
+      "note": "the drawbridge"
+    },
+    {
+      "until": "room == 0 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:120f,0:start,1500:wait,0f:wait:200f",
+      "judge": false,
+      "shot": "menu-200",
+      "note": "the pause menu's white at 200 nits",
+      "expect": [
+        "menu",
+        "found(log, r'hdr: frame \\d+x\\d+, scene 200 nits')",
+        "any(185 <= float(l.split('max ')[1].split(' nits')[0]) <= 215 for l in found(log, r'hdr: frame'))"
+      ]
+    },
+    {
+      "press": "0:set=hdr_scene_nits=300,0f:wait:240f",
+      "judge": false,
+      "shot": "menu-300",
+      "note": "and at 300",
+      "expect": [
+        "menu",
+        "found(log, r'hdr: frame \\d+x\\d+, scene 300 nits')",
+        "any(280 <= float(l.split('max ')[1].split(' nits')[0]) <= 320 for l in found(log, r'hdr: frame'))"
+      ]
+    },
+    {
+      "press": "0:b,1500:wait,0:set=hdr_scene_nits=200,0:set=hdr=false,0f:wait:90f",
+      "judge": false,
+      "expect": [
+        "not menu",
+        "found(log, r'hdr: output SDR')"
+      ]
+    },
+    {
+      "press": "0:set=hdr=true,0f:wait:90f",
+      "judge": false,
+      "expect": [
+        "found(log, r'hdr: output HDR \\(HDR10')"
+      ]
+    }
+  ]
+}

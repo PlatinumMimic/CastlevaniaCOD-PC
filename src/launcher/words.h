@@ -585,6 +585,48 @@ inline constexpr Row kRows[] = {
       "Этот экран: HDR выключен в Windows",
       "Cet écran : HDR désactivé dans Windows",
       "Dieser Bildschirm: HDR in Windows aus"}},
+    {{"On a display with HDR on in the desktop: fire, magic, light and the other brightest parts of the picture shine "
+      "brighter than the rest. Off sends the usual picture.",
+      "Em uma tela com HDR ativado no desktop: fogo, magia, luz e as outras partes mais claras da imagem brilham mais "
+      "que o resto. Desligado envia a imagem de sempre.",
+      "En una pantalla con HDR activado en el escritorio: el fuego, la magia, la luz y las demás partes más claras de "
+      "la imagen brillan más que el resto. Desactivado envía la imagen de siempre.",
+      "Su uno schermo con l'HDR attivo nel desktop: fuoco, magia, luce e le altre parti più chiare dell'immagine "
+      "brillano più del resto. Disattivato invia l'immagine di sempre.",
+      "На экране с включённым в окружении рабочего стола HDR огонь, магия, свет и другие самые яркие части изображения "
+      "светятся ярче остального. Выключено — обычное изображение.",
+      "Sur un écran avec le HDR activé dans le bureau : le feu, la magie, la lumière et les autres parties les plus "
+      "claires de l'image brillent plus que le reste. Désactivé envoie l'image habituelle.",
+      "Auf einem Bildschirm mit im Desktop eingeschaltetem HDR leuchten Feuer, Magie, Licht und die anderen hellsten "
+      "Teile des Bildes heller als der Rest. Aus sendet das gewohnte Bild."}},
+    {{"This display: HDR on in the desktop, peak {} nits",
+      "Esta tela: HDR ativado no desktop, pico de {} nits",
+      "Esta pantalla: HDR activado en el escritorio, pico de {} nits",
+      "Questo schermo: HDR attivo nel desktop, picco di {} nit",
+      "Этот экран: HDR включён в окружении рабочего стола, пик {} нит",
+      "Cet écran : HDR activé dans le bureau, pic de {} nits",
+      "Dieser Bildschirm: HDR im Desktop an, Spitze {} Nits"}},
+    {{"This display: HDR off in the desktop",
+      "Esta tela: HDR desativado no desktop",
+      "Esta pantalla: HDR desactivado en el escritorio",
+      "Questo schermo: HDR disattivato nel desktop",
+      "Этот экран: HDR выключен в окружении рабочего стола",
+      "Cet écran : HDR désactivé dans le bureau",
+      "Dieser Bildschirm: HDR im Desktop aus"}},
+    {{"For HDR in the game, turn on HDR in the desktop's display settings: KDE Plasma 6, GNOME 48 or later, or a "
+      "Steam Deck's game mode, on Wayland.",
+      "Para HDR no jogo, ative o HDR nas configurações de tela do desktop: KDE Plasma 6, GNOME 48 ou mais novo, ou o "
+      "modo de jogo de um Steam Deck, no Wayland.",
+      "Para HDR en el juego, activa el HDR en la configuración de pantalla del escritorio: KDE Plasma 6, GNOME 48 o "
+      "posterior, o el modo juego de un Steam Deck, en Wayland.",
+      "Per l'HDR nel gioco, attiva l'HDR nelle impostazioni dello schermo del desktop: KDE Plasma 6, GNOME 48 o "
+      "successivo, o la modalità gioco di uno Steam Deck, su Wayland.",
+      "Для HDR в игре включите HDR в параметрах дисплея окружения рабочего стола: KDE Plasma 6, GNOME 48 или новее "
+      "либо игровой режим Steam Deck, в Wayland.",
+      "Pour le HDR dans le jeu, activez le HDR dans les paramètres d'affichage du bureau : KDE Plasma 6, GNOME 48 ou "
+      "plus récent, ou le mode jeu d'un Steam Deck, sous Wayland.",
+      "Für HDR im Spiel schalte HDR in den Anzeigeeinstellungen des Desktops ein: KDE Plasma 6, GNOME 48 oder neuer "
+      "oder der Spielmodus eines Steam Deck, unter Wayland."}},
     {{"For HDR in the game, turn on Use HDR in Windows' display settings.",
       "Para HDR no jogo, ative Usar HDR nas configurações de tela do Windows.",
       "Para HDR en el juego, activa Usar HDR en la configuración de pantalla de Windows.",
