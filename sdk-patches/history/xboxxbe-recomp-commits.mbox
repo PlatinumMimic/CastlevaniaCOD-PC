@@ -1,7 +1,7 @@
 From 6ea6ea9ef4200d78c1f9a22c001a91d2865939fb Mon Sep 17 00:00:00 2001
 From: x <x@x>
 Date: Mon, 2 Nov 2026 19:13:27 -0500
-Subject: [PATCH 01/44] base: 91146ff + port patch
+Subject: [PATCH 01/45] base: 91146ff + port patch
 
 ---
  THIRD_PARTY.txt                               |   41 +
@@ -6863,7 +6863,7 @@ index 0000000..0e4abd8
 From 09e03ab59480f459691be93453305435a4d48a5b Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 21:54:02 -0500
-Subject: [PATCH 02/44] Frame generation motion, 2D texel box, menu strip mode,
+Subject: [PATCH 02/45] Frame generation motion, 2D texel box, menu strip mode,
  parallax, minimise fix
 
 - Frame generation: each 3D draw writes its own motion (second render target, previous
@@ -7810,7 +7810,7 @@ index a5ce65e..530d7c7 100644
 From d02db318efa43b0aaa92a902ff26760d43365574 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 22:16:03 -0500
-Subject: [PATCH 03/44] Full-width widescreen targets, FSR anti-aliasing before
+Subject: [PATCH 03/45] Full-width widescreen targets, FSR anti-aliasing before
  the UI
 
 - Targets are wider by the screen's shape over 4:3 in widescreen (aspect_), so 100%
@@ -8836,7 +8836,7 @@ index 0000000..021ac23
 From 86fdbbf9fede3d27472b913c91468c90b7c1991f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 03:42:50 -0500
-Subject: [PATCH 04/44] FSR and DLSS upscaling of the frame's 3D, DLSS
+Subject: [PATCH 04/45] FSR and DLSS upscaling of the frame's 3D, DLSS
  anti-aliasing
 
 Upscaling (g_upscale): from the frame's first draw into the back buffer
@@ -10740,7 +10740,7 @@ index 0000000..3aac47b
 From 5816483743c3d121086fe497d40530e6c2162920 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 06:47:00 -0500
-Subject: [PATCH 05/44] Reactive mask, texture bias, ambient occlusion;
+Subject: [PATCH 05/45] Reactive mask, texture bias, ambient occlusion;
  constants edited off the upload heap
 
 - Upscaling's texture bias by preset: Quality as sharp as the output size, Balanced half, Performance
@@ -11752,7 +11752,7 @@ index 6b358ed..2796d19 100644
 From cf0d0e529944e192812f4b2762181fa1dacd4ae4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 07:32:21 -0500
-Subject: [PATCH 06/44] Depth convention from the view: ambient occlusion, FSR
+Subject: [PATCH 06/45] Depth convention from the view: ambient occlusion, FSR
  and DLSS read near at 0
 
 The renderer turns the title's depth round, and this title's own has the near plane at its top, so the
@@ -12041,7 +12041,7 @@ index 4a3d203..24d3f74 100644
 From c666237234004033205a5c52f754579611d473a9 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 3 Nov 2026 09:30:13 -0500
-Subject: [PATCH 07/44] DLSS frame generation: Reflex's limit at twice the
+Subject: [PATCH 07/45] DLSS frame generation: Reflex's limit at twice the
  game's rate; controllers for ImGui through SDL
 
 The NVIDIA app's DLSS override turns DLSS-G into dynamic multi frame generation aimed at the display's refresh (138
@@ -12238,7 +12238,7 @@ index 4551c08..1ddf311 100644
 From 94b2abadaccea201e5c3c7a06f24e6f187fabc83 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 09:58:58 -0500
-Subject: [PATCH 08/44] Surface depth reads a material's height map, carried in
+Subject: [PATCH 08/45] Surface depth reads a material's height map, carried in
  its ORM map's alpha, where it has one
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -12315,7 +12315,7 @@ index 04be33a..33398c9 100644
 From 119800e2b66705458413faae1813e84828246faf Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 14:57:42 -0500
-Subject: [PATCH 09/44] A game's hook on each file the title opens; a
+Subject: [PATCH 09/45] A game's hook on each file the title opens; a
  replacement uploaded into the one before it when it has its size (a movie's
  frames)
 
@@ -12442,7 +12442,7 @@ index 163ea09..ed25550 100644
 From c796ac415c220202297a66b60cae094c41b164fc Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:04:32 -0500
-Subject: [PATCH 10/44] XBE_MUTE and XBE_BACKGROUND for tests: the game silent,
+Subject: [PATCH 10/45] XBE_MUTE and XBE_BACKGROUND for tests: the game silent,
  and opened behind other windows without the focus
 
 XBE_MUTE=1 sets XAudio2's master voice to silence. XBE_BACKGROUND=1 opens the window without activating it, at
@@ -12587,7 +12587,7 @@ index f95ebf5..6fd4f0b 100644
 From 8b92b57605303217a33aaf432757c7d886360bfe Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:04:32 -0500
-Subject: [PATCH 11/44] Ray tracing: the frame's 3D gathered into an
+Subject: [PATCH 11/45] Ray tracing: the frame's 3D gathered into an
  acceleration structure, and ambient occlusion traced through it
 
 DXR 1.1 inline ray queries (raytrace.h), on a card that has them, in a runtime built with the Windows SDK's dxc
@@ -13893,7 +13893,7 @@ index 33398c9..e3cbfcb 100644
 From 88fc4cf572f741a6beb48207cbe0cede3c96f8f7 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 19:51:05 -0500
-Subject: [PATCH 12/44] Ray traced reflections through the frame's scene;
+Subject: [PATCH 12/45] Ray traced reflections through the frame's scene;
  device-lost diagnostics (XBE_D3D12_DRED, XBE_D3D12_DEBUG)
 
 Reflections (gpu::kRtReflections, rt_refl.hlsl): a pixel shader over the frame's 3D before its anti-aliasing. Where
@@ -14781,7 +14781,7 @@ index bb18227..52518f6 100644
 From c32067df5bfe9a7881f941b76efdf7cfcc102e8d Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 20:18:06 -0500
-Subject: [PATCH 13/44] Ray traced bounce lighting, smoothed by full-size
+Subject: [PATCH 13/45] Ray traced bounce lighting, smoothed by full-size
  guides; the passes share one pipeline maker
 
 Bounce lighting (gpu::kRtLighting, rt_gi.hlsl): at half the 3D's size (XBE_RT_GI_SCALE), each pixel finds its
@@ -15567,7 +15567,7 @@ index 0000000..6de6059
 From 451bb2881e4734f62f7117414769be6c8236928d Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 20:50:14 -0500
-Subject: [PATCH 14/44] DLSS Ray Reconstruction: ray tracing's light denoised
+Subject: [PATCH 14/45] DLSS Ray Reconstruction: ray tracing's light denoised
  by DLSS with the guides
 
 With anti-aliasing on NVIDIA DLSS and Streamline's DLSS-RR files there (sl.dlss_d.dll,
@@ -16624,7 +16624,7 @@ index 0000000..e5ec8ec
 From 02f1da857ebfbc5ebc455c46d6bd554880b1ed81 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 21:05:27 -0500
-Subject: [PATCH 15/44] The bounce lighting's own denoiser, for cards whose
+Subject: [PATCH 15/45] The bounce lighting's own denoiser, for cards whose
  anti-aliasing does not denoise
 
 When no vendor's denoiser takes the frame (AMD FSR; DLSS without Ray Reconstruction's
@@ -17116,7 +17116,7 @@ index 0000000..f964668
 From 6c6bbd2392908bddc4414b2eb307140c3134d068 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Tue, 3 Nov 2026 21:20:22 -0500
-Subject: [PATCH 16/44] The port's own denoiser takes the reflections and
+Subject: [PATCH 16/45] The port's own denoiser takes the reflections and
  ambient occlusion too
 
 When no vendor's denoiser takes the frame, ray traced ambient occlusion is gathered over the
@@ -17894,7 +17894,7 @@ index 0000000..aa89638
 From f298962a91bea475831791482cdaf1e0da4e9774 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 06:59:49 -0500
-Subject: [PATCH 17/44] Ray tracing: brightness-neutral lighting, water,
+Subject: [PATCH 17/45] Ray tracing: brightness-neutral lighting, water,
  lights, shadows, sky, shafts, quality
 
 - Bounce lighting takes the place of the game's flat fill: the room's average
@@ -20155,7 +20155,7 @@ index 0000000..94b3b9f
 From 159b084a04d7cd9a3ecb68d3bdfe92385e50fe25 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 07:49:59 -0500
-Subject: [PATCH 18/44] Ray tracing: steady lights, no sky haze in the light
+Subject: [PATCH 18/45] Ray tracing: steady lights, no sky haze in the light
  shafts
 
 - The lights sampled are the same every frame, up to 128 (the scene's own
@@ -20407,7 +20407,7 @@ index 944fbbb..842997c 100644
 From d5079c328aa8a90e146c274b18dffecf593b40ce Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 08:23:03 -0500
-Subject: [PATCH 19/44] Ray tracing: light shafts steady and subtle (the
+Subject: [PATCH 19/45] Ray tracing: light shafts steady and subtle (the
  flicker in rooms past the courtyard)
 
 The shafts were what sparkled: lights drawn flat (a fountain's spray, motes, a
@@ -20575,7 +20575,7 @@ index 842997c..25f0e59 100644
 From f8213ca4da69baa4bb4ffb3d9c53396fb2842870 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 09:30:52 -0500
-Subject: [PATCH 20/44] Ray tracing: only steady glows are lights, none bigger
+Subject: [PATCH 20/45] Ray tracing: only steady glows are lights, none bigger
  than a torch's flame; a gain on the lit side
 
 A sword's swing, a hit's sparks and a spell's burst were lights for the few
@@ -20774,7 +20774,7 @@ index 25f0e59..0b52482 100644
 From 8f9e441ae51a5b9480a19cb0ac0df68997bad0fb Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 09:40:02 -0500
-Subject: [PATCH 21/44] Ray tracing: the stronger contrast by default;
+Subject: [PATCH 21/45] Ray tracing: the stronger contrast by default;
  XBE_RT_VIEW 17, the lights' light alone
 
 Julian picked the stronger of the looks compared room by room: a surface
@@ -20871,7 +20871,7 @@ index 524bb6f..7305652 100644
 From 18f86cf3abfade7d07250990d6d411f82beee565 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 10:09:44 -0500
-Subject: [PATCH 22/44] Ray tracing: a light up to a torch's flame counts whole
+Subject: [PATCH 22/45] Ray tracing: a light up to a torch's flame counts whole
  (XBE_RT_LIGHTS_AREA 30000); XBE_RT_LIGHTS_LOG
 
 At 4000 a torch's flame, two triangles of some 15000, threw a sixth of its
@@ -20942,7 +20942,7 @@ index 9c410c6..9a30b80 100644
 From f7dab6e5d45fe6ca22ed9e27a35a47eb2d6c2951 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 10:45:47 -0500
-Subject: [PATCH 23/44] Ray tracing: realism fixes (untested): see-through
+Subject: [PATCH 23/45] Ray tracing: realism fixes (untested): see-through
  leaves and ivy, characters lit as the room, steady room light
 
 - Blended pictures with clear parts (ivy, fallen leaves) are cut-outs to rays (XBE_RT_CUTOUT_BLEND 16), so the
@@ -21303,7 +21303,7 @@ index af08efe..9035b31 100644
 From ef6ff50614d9553542672f20a45710a4656ad6d9 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:17:37 -0500
-Subject: [PATCH 24/44] Ray tracing: characters gain none of the bounce above
+Subject: [PATCH 24/45] Ray tracing: characters gain none of the bounce above
  the room's average (XBE_RT_GI_CHAR_BOOST 0)
 
 The game lights Hector and the enemies with lights of their own; added to theirs, what the rays found above the
@@ -21379,7 +21379,7 @@ index 5a17af6..b46d6a7 100644
 From b003f73b601f0801cfeaf28bc9f4fbeab71f0197 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:29:58 -0500
-Subject: [PATCH 25/44] Ray tracing: see-through layers to ambient occlusion;
+Subject: [PATCH 25/45] Ray tracing: see-through layers to ambient occlusion;
  the water's glow gathered by bounce rays
 
 - Every picture's alpha is looked at as it is uploaded (AlphaKind), the game's own as well as a pack's: one with
@@ -21834,7 +21834,7 @@ index 9035b31..c3ffcca 100644
 From 915959e6c915ed1089b33bca89f0bda45f168094 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:39:02 -0500
-Subject: [PATCH 26/44] Ray tracing: this title's leaves and ivy are cut-outs
+Subject: [PATCH 26/45] Ray tracing: this title's leaves and ivy are cut-outs
  (its alpha read through a stage with no texture)
 
 The title draws its world with stage 0 MODULATE(TEXTURE, DIFFUSE) and a MODULATE left at stage 1 over no texture,
@@ -21992,7 +21992,7 @@ index ccf8b2d..1f8270d 100644
 From 5f0492a7c84d750d7340efd29f64dee00ec61d1c Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:54:35 -0500
-Subject: [PATCH 27/44] Ray tracing: ambient occlusion spares the glows drawn
+Subject: [PATCH 27/45] Ray tracing: ambient occlusion spares the glows drawn
  over a pixel
 
 The lamps' light beams are glows that write the depth; ambient occlusion, multiplied into the frame after them,
@@ -22146,7 +22146,7 @@ index c3ffcca..bffff2d 100644
 From 88508749b37de46688e44781bf27ca016f453494 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 11:59:06 -0500
-Subject: [PATCH 28/44] Ray tracing: GlowsAlong after Spot (rt_scene.hlsli)
+Subject: [PATCH 28/45] Ray tracing: GlowsAlong after Spot (rt_scene.hlsli)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
@@ -22241,7 +22241,7 @@ index bffff2d..728b01d 100644
 From aff34dd589be099404a97a3b739810ed216c2831 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 12:37:56 -0500
-Subject: [PATCH 29/44] Ray tracing: the save room marker lights no floor; the
+Subject: [PATCH 29/45] Ray tracing: the save room marker lights no floor; the
  top draw found by the depth (untested)
 
 - A glow drawn by a pixel shader program is no light (the marker's swirl, masked to a ring by a second picture,
@@ -22390,7 +22390,7 @@ index 728b01d..e3d02f4 100644
 From dd240b2974ac611498530a03e9e99cc6f37a3066 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 12:48:58 -0500
-Subject: [PATCH 30/44] Ray tracing: the bounce lighting as a gain on the
+Subject: [PATCH 30/45] Ray tracing: the bounce lighting as a gain on the
  game's own light; the frame's draw by its depth
 
 The bounce lighting's lit side was added in the surface's picture's colour: the save room door's panel, a bright
@@ -22610,7 +22610,7 @@ index e3d02f4..4852371 100644
 From 53f6f5924da6e026d87469f52d5a39312b6d767a Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 13:10:30 -0500
-Subject: [PATCH 31/44] Ray tracing: the lights' light bounced a second time;
+Subject: [PATCH 31/45] Ray tracing: the lights' light bounced a second time;
  characters' shadows from the lamps near them
 
 rt_lights.hlsli holds the lights' sampling (PickLight, LightAt) for rt_gi and rt_ao.
@@ -22981,7 +22981,7 @@ index 0000000..13d5855
 From 18c37434ee9619de9f0174bf65999e3fe435df90 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:00:55 -0500
-Subject: [PATCH 32/44] Ray tracing: lights' samples kept frame to frame, glows
+Subject: [PATCH 32/45] Ray tracing: lights' samples kept frame to frame, glows
  remembered off screen, flames drawn flat as lights
 
 The bounce pass keeps each texel's light sample (rt_gi.hlsl's second target) and
@@ -24047,7 +24047,7 @@ index 13d5855..25662de 100644
 From 956b5c80c6a596d251070cebd5b4eafedd99a9ab Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:08:52 -0500
-Subject: [PATCH 33/44] Ray tracing: a flame drawn flat lights as one of at
+Subject: [PATCH 33/45] Ray tracing: a flame drawn flat lights as one of at
  least 8000 units' area (XBE_RT_LIGHTS_FLAME)
 
 Torch and candle sprites are small, and lit their walls by their sprite's area
@@ -24140,7 +24140,7 @@ index 25662de..253dec4 100644
 From 5cd0cbc155a3780700c9fee424368bc3bb9f8057 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:45:47 -0500
-Subject: [PATCH 34/44] Pipelines kept between sessions (D3D12 pipeline
+Subject: [PATCH 34/45] Pipelines kept between sessions (D3D12 pipeline
  library); frames that hitch logged (untested)
 
 A pipeline took 10-25 ms to make even with its shaders read from the disk cache:
@@ -24583,7 +24583,7 @@ index 6f3dac5..efc21b1 100644
 From 32a9d57f4268c3a27407d64c1ab4e8d104ffe581 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 14:56:35 -0500
-Subject: [PATCH 35/44] Pipeline cache's functions outside the file's own
+Subject: [PATCH 35/45] Pipeline cache's functions outside the file's own
  namespace (the link)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -24645,7 +24645,7 @@ index a582900..3c43d01 100644
 From 5ba1a470ae32df46b9cdc7c3dd1c52f327d35161 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:00:32 -0500
-Subject: [PATCH 36/44] Ray tracing: the bounce rays' glow gather leaves out
+Subject: [PATCH 36/45] Ray tracing: the bounce rays' glow gather leaves out
  the lights sampled as lights
 
 A lamp's glow in front of its wall was counted twice: sampled as a light, and
@@ -24729,7 +24729,7 @@ index 4852371..cfed908 100644
 From 30b52505d3d25aea8d2d7a6827ba9b0a79621301 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:14:35 -0500
-Subject: [PATCH 37/44] Ray tracing: a surface's light eased toward a ceiling
+Subject: [PATCH 37/45] Ray tracing: a surface's light eased toward a ceiling
  rather than doubled (XBE_RT_GI_LIFT_MOST 0.7, KNEE 0.3)
 
 Raised linearly up to the knee, then eased toward the most: the stone right by
@@ -24798,7 +24798,7 @@ index 3251f12..c361218 100644
 From 7058b40343af8bfa91a912120fe63c38eff93361 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 15:52:56 -0500
-Subject: [PATCH 38/44] Shaders prepared ahead: every pipeline listed and made
+Subject: [PATCH 38/45] Shaders prepared ahead: every pipeline listed and made
  before it is drawn; --prepare-shaders; a game's file read hook
 
 The pipeline library (cache/shaders/pipelines.bin) now has a list beside it (pipelines.list): every pipeline the
@@ -25484,7 +25484,7 @@ index ed25550..6c33632 100644
 From 8308d688720145651848ba357de7e505b2f4fffe Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 16:17:09 -0500
-Subject: [PATCH 39/44] Ray tracing: glows in an instance of their own, the
+Subject: [PATCH 39/45] Ray tracing: glows in an instance of their own, the
  lights' light with an end, the sky's light held
 
 - The world's glows (emissive draws) go into a bottom level and instance of their own (mask 8), which only the
@@ -25906,7 +25906,7 @@ index cfed908..78833dc 100644
 From b0f8e7a94817e3cd878e4c362b00dafd5da89280 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 16:51:34 -0500
-Subject: [PATCH 40/44] The F10 menu's frame capture also keeps the screen as
+Subject: [PATCH 40/45] The F10 menu's frame capture also keeps the screen as
  shown (screen.bmp)
 
 A capture kept the console's 640x480 frame (final.bmp), before widescreen, ray tracing and upscaling: what the player
@@ -26067,7 +26067,7 @@ index fc254a2..f1f734f 100644
 From c49995697c2b6b5d2611b0cc79bf892db9019fb3 Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 17:03:32 -0500
-Subject: [PATCH 41/44] Ray tracing: the sky's light whole at a twentieth of
+Subject: [PATCH 41/45] Ray tracing: the sky's light whole at a twentieth of
  the frame, risen in a third of a second
 
 On the bridge before the courtyard the light still rose the first time the camera tilted down to the sky (its held
@@ -26124,7 +26124,7 @@ index f1f734f..e9be537 100644
 From d28a8b7e5915904b789dc4a4f1cf26c084e9308a Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 17:33:47 -0500
-Subject: [PATCH 42/44] An extension can have a draw read its textures clamped
+Subject: [PATCH 42/45] An extension can have a draw read its textures clamped
  (Extension::Clamp)
 
 A picture the extension draws wider than its texture coordinates reached, when a program makes them, so
@@ -26173,7 +26173,7 @@ index f6b73a0..74f4ba9 100644
 From 36e63f7f17f275b953753671a962ab49bb917a2c Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Wed, 4 Nov 2026 22:56:53 -0500
-Subject: [PATCH 43/44] Ray traced ambient occlusion: rays pass the sheets that
+Subject: [PATCH 43/45] Ray traced ambient occlusion: rays pass the sheets that
  lie on a surface
 
 This title lays its paths, borders and tracks as sheets a few units over the ground. The ground beside a sheet's edge
@@ -26257,7 +26257,7 @@ index 7bc0077..e7182a5 100644
 From e2138be79776764a406916c5aa2c324b2857f74f Mon Sep 17 00:00:00 2001
 From: PlatinumMimic <julianharmon100@gmail.com>
 Date: Thu, 5 Nov 2026 07:26:29 -0500
-Subject: [PATCH 44/44] Ray traced characters: kept in the scene as the game
+Subject: [PATCH 44/45] Ray traced characters: kept in the scene as the game
  fades them; one shadow by a lamp
 
 A character the game draws writing no depth (blended, as it blinks when hurt or fades out in a fight) left the
@@ -26496,6 +26496,323 @@ index e7182a5..e396787 100644
      }
      if (fr.y == 15) return shadow;
      vis = lerp(1, vis, cover) * shadow;
+-- 
+2.43.0
+
+
+From 40b26ba8727686c7c1156b79c71261a6aa78a9af Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Thu, 5 Nov 2026 08:08:57 -0500
+Subject: [PATCH 45/45] Ray traced lighting that relights the room; DLSS's
+ out-of-memory warning no longer taken as a failure
+
+Lighting looked little different from ambient occlusion alone: the game's flat fill stayed most of each room's
+light (XBE_RT_GI_FILL 0.3), and a surface was raised at most 70%. Now the fill gives up to 70% (0.7) as a surface gets
+less than the room's average, a lit one is raised up to three times its own (XBE_RT_GI_LIFT_MOST 2, knee 0.8, boost
+1.5), and the scene's lights are brighter (XBE_RT_LIGHTS_GAIN 40): torches and lamps light pools on their walls and
+floors, and the light falls off into the dark. The Lighting strength setting at 50% gives about the old look.
+The bounce lighting fades out by 10000 (XBE_RT_GI_FADE, was 20000), and its gain fades with it, set against the
+room's average as unfaded: the sky cards past 5.9's rampart took a green and orange smear of the rampart's light.
+
+Streamline's eWarnOutOfVRAM (39) is a warning with the work done; taken as a failure, it sent Ray Reconstruction to
+DLSS anti-aliasing, that to none, and the 3D to the output's whole size (4K from 2227x1253) for good. Now said once
+and taken as done. The graphics card's memory against its budget is logged (MemoryCheck): its budget at the start,
+when it goes over and back, and every 30 s with XBE_PERF.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2YaGgWez1ZqKbAmtKk
+---
+ runtime/gpu/d3d12.cpp       | 78 ++++++++++++++++++++++++++++++-------
+ runtime/gpu/framegen.cpp    | 32 ++++++++++-----
+ runtime/gpu/rt_giapply.hlsl | 12 +++++-
+ 3 files changed, 98 insertions(+), 24 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index 3ec97bb..cd5ff5c 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -1188,6 +1188,11 @@ private:
+     uint32_t char_faded_ = 0, char_copies_ = 0, char_said_ = 0;                                   // XBE_RT_CHAR_LOG
+     // the characters' meshes the frame's scene took (CharacterMesh), and whether by a draw writing no depth
+     std::unordered_map<uint64_t, bool> char_meshes_;
++    // the graphics card's memory against its budget (MemoryCheck), every few seconds
++    void MemoryCheck();
++    ComPtr<IDXGIAdapter3> mem_adapter_;
++    bool mem_tried_ = false, mem_over_ = false;
++    uint64_t mem_frame_ = 0, mem_most_ = 0;
+     uint32_t scene_said_w_ = 0, scene_said_h_ = 0;  // the size last logged
+     ComPtr<ID3D12Resource> scene_tmp_;  // StretchScene's copy of the part
+     D3D12_RESOURCE_STATES scene_tmp_state_{};
+@@ -4995,6 +5000,42 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+     lap(5);
+ }
+ 
++// The graphics card's memory as the system counts it against the game's budget (DXGI's local segment), every 300
++// frames: said when it goes over (and back), with the most it reached, and every 30 s with XBE_PERF. Over its budget,
++// Windows moves the game's memory out to the system's and frames stutter; DLSS warns of it (Streamline's
++// eWarnOutOfVRAM), which once sent the 3D to the output's whole size. The texture pack at full size and 4K output
++// with ray tracing went past a 16 GB card's 13.7 GB
++void D3D12Backend::MemoryCheck() {
++    if (presents_ < mem_frame_ + 300) return;
++    mem_frame_ = presents_;
++    if (!mem_tried_) {
++        mem_tried_ = true;
++        ComPtr<IDXGIFactory4> f;
++        ComPtr<IDXGIAdapter1> a;
++        if (SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) &&
++            SUCCEEDED(f->EnumAdapterByLuid(dev_->GetAdapterLuid(), IID_PPV_ARGS(&a))))
++            a.As(&mem_adapter_);
++    }
++    if (!mem_adapter_) return;
++    DXGI_QUERY_VIDEO_MEMORY_INFO m{};
++    if (FAILED(mem_adapter_->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &m)) || !m.Budget) return;
++    const double gb = 1.0 / (1024.0 * 1024.0 * 1024.0);
++    if (!mem_most_)
++        LOGR("memory: the graphics card's budget %.2f GB, %.2f used", double(m.Budget) * gb, double(m.CurrentUsage) * gb);
++    mem_most_ = std::max(mem_most_, m.CurrentUsage);
++    bool over = m.CurrentUsage > m.Budget;
++    if (over != mem_over_) {
++        mem_over_ = over;
++        LOGW("memory: the graphics card's %s its budget, %.2f of %.2f GB (the most yet %.2f)%s",
++             over ? "is over" : "is back under", double(m.CurrentUsage) * gb, double(m.Budget) * gb,
++             double(mem_most_) * gb,
++             over ? "; frames may stutter: a smaller texture pack size, or a lower output resolution, leaves room" : "");
++    } else if (diag::Perf() && presents_ % 1800 < 300) {
++        LOGR("memory: the graphics card's %.2f of %.2f GB (the most yet %.2f)", double(m.CurrentUsage) * gb,
++             double(m.Budget) * gb, double(mem_most_) * gb);
++    }
++}
++
+ // a guest rect scaled to the target and clamped to it
+ D3D12_RECT ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
+     float sx = float(t.w) / t.gw, sy = float(t.h) / t.gh;
+@@ -6337,7 +6378,7 @@ float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, u
+ // XBE_RT_LIGHTS_* settings). The lights listed
+ uint32_t D3D12Backend::LightList(float lt[4], float sk[4], uint32_t list[][4]) {
+     auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
+-    static const float kLightGain = env("XBE_RT_LIGHTS_GAIN", 24.0f), kLightTriesSet = env("XBE_RT_LIGHTS_TRIES", 0),
++    static const float kLightGain = env("XBE_RT_LIGHTS_GAIN", 40.0f), kLightTriesSet = env("XBE_RT_LIGHTS_TRIES", 0),
+                        kLightMost = env("XBE_RT_LIGHTS_MAX", 0.75f), kFlat = env("XBE_RT_LIGHTS_FLAT", 0.8f),
+                        kLightArea = env("XBE_RT_LIGHTS_AREA", 30000.0f);
+     const std::vector<uint32_t>& em = rt_.Emissive();
+@@ -6375,7 +6416,10 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
+     const float kRays = kRaysSet > 0 ? kRaysSet : q == 2 ? 2.0f : 1.0f;
+     const float kReach = kReachSet > 0 ? kReachSet : q == 0 ? 1500.0f : q == 1 ? 2000.0f : 2500.0f;
+-    static const float kFade = env("XBE_RT_GI_FADE", 20000.0f), kStrength = env("XBE_RT_GI_STRENGTH", 0),
++    // XBE_RT_GI_FADE: the distance the bounce lighting has faded out by, from half of it (10000: a room's far wall
++    // keeps it whole; at 20000 the sky cards past 5.9's rampart, some 15000 off, took the light the rays brought back
++    // from the rampart and its lamp, a green and orange smear across the sky)
++    static const float kFade = env("XBE_RT_GI_FADE", 10000.0f), kStrength = env("XBE_RT_GI_STRENGTH", 0),
+                        kStep = env("XBE_RT_GI_STEP", 1), kBias = env("XBE_RT_AO_BIAS", 1.0f);
+     uint32_t tw = std::max(1u, uint32_t(std::ceil(float(t.w) * kScale)));
+     uint32_t th = std::max(1u, uint32_t(std::ceil(float(t.h) * kScale)));
+@@ -6428,9 +6472,10 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     float strength = kStrength > 0 ? kStrength : 4.0f * g_rt_lighting_strength.load(std::memory_order_relaxed);
+     // the scene's lights (its glows, flames, spells: Scene::Emissive), up to 128 of them, the same ones frame to frame
+     // (the scene's own first, then those drawn flat: a turn through them flickered); XBE_RT_LIGHTS_GAIN their
+-    // brightness (24: a flame's picture is as bright as a picture gets, the fire it stands for many times that),
+-    // XBE_RT_LIGHTS_TRIES the candidates a sample is picked from (the quality's: 4, 6, 8)
+-    static const float kLightGain = env("XBE_RT_LIGHTS_GAIN", 24.0f), kLightTriesSet = env("XBE_RT_LIGHTS_TRIES", 0),
++    // brightness (40: a flame's picture is as bright as a picture gets, the fire it stands for many times that; at 24
++    // a torch lit little past its own bracket), XBE_RT_LIGHTS_TRIES the candidates a sample is picked from (the
++    // quality's: 4, 6, 8)
++    static const float kLightGain = env("XBE_RT_LIGHTS_GAIN", 40.0f), kLightTriesSet = env("XBE_RT_LIGHTS_TRIES", 0),
+                        kLightMost = env("XBE_RT_LIGHTS_MAX", 0.75f);
+     const float kLightTries = kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * q);
+     const std::vector<uint32_t>& em = rt_.Emissive();
+@@ -6542,15 +6587,18 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // gathered over the frames and smoothed (Denoise), else as the rays found it
+     uint32_t light = drawn && denoise ? Denoise(slot, tw, th, gw, gh, rw, rh) : slot + 1;
+     // in the place of the game's flat fill (its room average, RoomBounce), unless XBE_RT_GI_NEUTRAL=0 (all of it added,
+-    // brightening the room): what falls short of the average takes out up to XBE_RT_GI_FILL of the frame's own (0.3),
+-    // as the strength (the Lighting strength setting) has it
+-    // XBE_RT_GI_BOOST: how much of the light above the room's average is added (1), the lit side of the contrast as
++    // brightening the room): what falls short of the average takes out up to XBE_RT_GI_FILL of the frame's own (0.7),
++    // as the strength (the Lighting strength setting) has it. At 0.3 the game's own flat fill stayed most of each
++    // room's light, and ray traced lighting looked little different from ambient occlusion alone: a torch barely
++    // warmed its wall, a corner far from any light kept the fill's brightness. At 0.7 the light falls off from the
++    // lamps into the dark; the Lighting strength setting at 50% gives about the old look
++    // XBE_RT_GI_BOOST: how much of the light above the room's average is added (1.5), the lit side of the contrast as
+     // the fill is the dark side
+     // XBE_RT_GI_CHAR_FILL: a character's share (0.6), as the strength has it; XBE_RT_GI_CHAR_BOOST: how much of what
+     // it gets above the room's average is added to a character (0: none; the game lights Hector and the enemies with
+     // lights of their own, and what the rays added stood them out brighter than the floor they stood on)
+-    static const float kNeutral = env("XBE_RT_GI_NEUTRAL", 1), kFill = env("XBE_RT_GI_FILL", 0.3f),
+-                       kBoost = env("XBE_RT_GI_BOOST", 1.0f), kCharFill = env("XBE_RT_GI_CHAR_FILL", 0.6f),
++    static const float kNeutral = env("XBE_RT_GI_NEUTRAL", 1), kFill = env("XBE_RT_GI_FILL", 0.7f),
++                       kBoost = env("XBE_RT_GI_BOOST", 1.5f), kCharFill = env("XBE_RT_GI_CHAR_FILL", 0.6f),
+                        kCharBoost = env("XBE_RT_GI_CHAR_BOOST", 0.0f);
+     float mean = drawn && kNeutral != 0 ? RoomBounce(slot + 1, gw, gh, tw, th) : -1.0f;
+     float fill = std::clamp(kFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 0.9f);
+@@ -6563,15 +6611,16 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+         Transition(aa_rx_.Get(), aa_rx_state_, kRead);
+         TextureSrv(aa_rx_.Get(), DXGI_FORMAT_R8_UNORM, slot + 9 + kDn);
+     }
+-    // XBE_RT_GI_LIFT_MOST: the most a surface's light is raised (0.7: its own and 70% more), eased toward from
+-    // XBE_RT_GI_LIFT_KNEE (0.3) on; cut at 1 before, the walls by the purple lamps doubled to a flat purple
+-    static const float kLiftMost = env("XBE_RT_GI_LIFT_MOST", 0.7f), kLiftKnee = env("XBE_RT_GI_LIFT_KNEE", 0.3f);
++    // XBE_RT_GI_LIFT_MOST: the most a surface's light is raised (2: its own and twice more, a torch's wall in a dark
++    // room), eased toward from XBE_RT_GI_LIFT_KNEE (0.8) on; cut at 1 before, the walls by the purple lamps doubled to
++    // a flat purple (the easing keeps their carving)
++    static const float kLiftMost = env("XBE_RT_GI_LIFT_MOST", 2.0f), kLiftKnee = env("XBE_RT_GI_LIFT_KNEE", 0.8f);
+     float ap[24] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
+                     float(rw), float(rh), float(gw), float(gh),
+                     float(slot), float(light), std::max(1.0f, kStep), float(kView),
+                     float(slot + 2), float(slot + 3), mean, fill,
+                     kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f,
+-                    kLiftMost, kLiftKnee, 0, 0};
++                    kLiftMost, kLiftKnee, kFade, 0};
+     Alloc acb = Upload(256, 256);
+     std::memcpy(acb.cpu, ap, sizeof(ap));
+     Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+@@ -8273,6 +8322,7 @@ void D3D12Backend::Present(const Surface& front) {
+         char_prev_ = char_in_;
+         char_in_ = char_late_ = char_nodepth_ = char_other_ = char_faded_ = char_copies_ = 0;
+         char_meshes_.clear();
++        MemoryCheck();
+     }
+     scene_draws_ = scene_late_ = 0;
+     rx_draws_ = 0;
+diff --git a/runtime/gpu/framegen.cpp b/runtime/gpu/framegen.cpp
+index a762721..b18f23e 100644
+--- a/runtime/gpu/framegen.cpp
++++ b/runtime/gpu/framegen.cpp
+@@ -542,6 +542,20 @@ private:
+ // LoadStreamline's, for the run; never freed (Streamline's own libraries stay loaded until the process ends)
+ Streamline* g_sl = nullptr;
+ 
++// a Streamline call's result that went through: eOk, or eWarnOutOfVRAM (39), a warning that the graphics card is over
++// its memory budget, with the work done all the same. Taken as a failure, it sent DLSS Ray Reconstruction to DLSS's
++// anti-aliasing, that to none, and the next frames' 3D to the output's whole size (4K, from 2227x1253), where it warned
++// again: the frame rate fell by half and more, and stayed there. Said once, as the memory it warns of is the cause
++bool SlDone(sl::Result r, const char* what) {
++    if (r == sl::Result::eOk) return true;
++    if (r != sl::Result::eWarnOutOfVRAM) return false;
++    static std::atomic<bool> said{false};
++    if (!said.exchange(true))
++        LOGW("%s: the graphics card's memory is over its budget (Streamline's warning, the work done all the same); "
++             "a smaller texture pack size or output resolution leaves more room", what);
++    return true;
++}
++
+ // NVIDIA DLSS frame generation through Streamline (g_sl): the factory and device made by its interposer, which then
+ // makes and runs the swap chain; Reflex markers around each frame, its depth, motion and HUD-less colour tagged
+ class Dlss final : public FrameGen {
+@@ -672,7 +686,7 @@ private:
+         uint32_t cap = app::Get().fps_cap;
+         if (cap > app::kFpsCapRefresh) o.dynamicTargetFrameRate = float(cap * 2);
+         sl::Result r = dlssg_options_(viewport_, o);
+-        if (r != sl::Result::eOk) FG_FIRST(4, "framegen: DLSS-G options %d", int(r));
++        if (!SlDone(r, "streamline")) FG_FIRST(4, "framegen: DLSS-G options %d", int(r));
+         LOGR("framegen: DLSS frame generation %s", on ? "generating" : "paused (no 3D view, or the menu is up)");
+         mode_on_ = on;
+     }
+@@ -917,7 +931,7 @@ public:
+         sl::DLSSOptions o = Options(f.w, f.h, f.quality);
+         if (o.mode != mode_ || f.w != w_ || f.h != h_) {
+             sl::Result r = options_(viewport_, o);
+-            if (r != sl::Result::eOk) {
++            if (!SlDone(r, "streamline")) {
+                 FG_FIRST(4, "antialias: DLSS options %d (%ux%u)", int(r), f.w, f.h);
+                 return false;
+             }
+@@ -932,7 +946,7 @@ public:
+         // its history is of the frames before Ray Reconstruction took over, when it did
+         FillConstants(c, f.view, f.jitter, float(f.rw) / float(f.rh), f.reset || after_rr);
+         sl::Result r = g_sl->constants_(c, *token, viewport_);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             FG_FIRST(4, "antialias: DLSS constants %d", int(r));
+             return false;
+         }
+@@ -954,13 +968,13 @@ public:
+                             &drawn),
+         };
+         r = g_sl->tag_(*token, viewport_, tags, f.reactive ? 5 : 4, cl);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             FG_FIRST(4, "antialias: DLSS tags %d", int(r));
+             return false;
+         }
+         const sl::BaseStructure* inputs[] = {&viewport_};
+         r = g_sl->evaluate_(sl::kFeatureDLSS, *token, inputs, 1, cl);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             FG_FIRST(4, "antialias: DLSS evaluate %d at %ux%u from %ux%u", int(r), f.w, f.h, f.rw, f.rh);
+             return false;
+         }
+@@ -995,7 +1009,7 @@ private:
+         o.worldToCameraView.setRow(3, sl::float4(-dot(0), -dot(1), -dot(2), 1));
+         // set each frame: the matrices change as the camera does
+         sl::Result r = rr_options_(rr_viewport_, o);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             LOGR("antialias: DLSS Ray Reconstruction options %d (%ux%u): DLSS anti-aliasing instead", int(r), f.w, f.h);
+             return false;
+         }
+@@ -1011,7 +1025,7 @@ private:
+         sl::Constants c{};
+         FillConstants(c, f.view, f.jitter, float(f.rw) / float(f.rh), f.reset || !rr_last_);
+         r = g_sl->constants_(c, token, rr_viewport_);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             LOGR("antialias: DLSS Ray Reconstruction constants %d: DLSS anti-aliasing instead", int(r));
+             return false;
+         }
+@@ -1040,13 +1054,13 @@ private:
+             sl::ResourceTag(&reactive, sl::kBufferTypeBiasCurrentColorHint, kUntil, &drawn),
+         };
+         r = g_sl->tag_(token, rr_viewport_, tags, f.reactive ? 9 : 8, cl);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             LOGR("antialias: DLSS Ray Reconstruction tags %d: DLSS anti-aliasing instead", int(r));
+             return false;
+         }
+         const sl::BaseStructure* inputs[] = {&rr_viewport_};
+         r = g_sl->evaluate_(sl::kFeatureDLSS_RR, token, inputs, 1, cl);
+-        if (r != sl::Result::eOk) {
++        if (!SlDone(r, "streamline")) {
+             LOGR("antialias: DLSS Ray Reconstruction evaluate %d at %ux%u from %ux%u: DLSS anti-aliasing instead",
+                  int(r), f.w, f.h, f.rw, f.rh);
+             return false;
+diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
+index c361218..32325ff 100644
+--- a/runtime/gpu/rt_giapply.hlsl
++++ b/runtime/gpu/rt_giapply.hlsl
+@@ -18,7 +18,8 @@ cbuffer P : register(b0) {
+                   // character gets above it is added (XBE_RT_GI_CHAR_BOOST); the reactive mask's SRV heap index + 1
+                   // (0: none)
+     float4 gy;    // the most a surface's light is raised (XBE_RT_GI_LIFT_MOST), and up to where it is raised as it
+-                  // gets more, then eased toward that most (XBE_RT_GI_LIFT_KNEE)
++                  // gets more, then eased toward that most (XBE_RT_GI_LIFT_KNEE); the distance the bounce pass's light
++                  // has faded out at (XBE_RT_GI_FADE, rt_gi.hlsl's gi.w)
+ };
+ #include "rt_scene.hlsli"
+ 
+@@ -74,6 +75,13 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+     // surroundings; with the larger share they take the room's light as the stone beside them does
+     bool person = a.a < 0.75f;
+     float share = person ? gx.y : gu.w;
++    // far off, as the game drew it: the bounce pass's light fades out from half its fade distance (gy.z) to all of
++    // it, and there a room's average took the whole fill out of a far mountainside and the sky's dome, and lit up the
++    // last of its noise in colours (5.9's sky, a green and orange smear). Set against the average as it was before the
++    // fade, so what is half faded is not taken for dark, then given as much of its gain as it has of its light
++    float near = gy.z > 0 ? saturate((gy.z - zc) / (0.5f * gy.z)) : 1;
++    if (near <= 0) return kAsIs;
++    light /= max(near, 0.1f);
+     float dim = share * saturate(1 - Luma(light) / lm);
+     // and a character gains none (XBE_RT_GI_CHAR_BOOST, 0) of what it gets above the average: the game's own lights
+     // light it already, and added to theirs it stood out brighter than the floor beside it. Twice its own at most
+@@ -82,6 +90,8 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+     // a purple lamp, doubled, lost its carving to a flat purple
+     float most = max(gy.x, 1e-3f), knee = clamp(gy.y, 0, most);
+     float3 lift = select(x < knee, x, knee + (most - knee) * (1 - exp(-(x - knee) / max(most - knee, 1e-3f))));
++    lift *= near;
++    dim *= near;
+     // under the frame's effects (the anti-aliasing's reactive mask, gx.w its SRV heap index + 1: a glow, a beam of
+     // light, fire, drawn into the frame before this) their share of the pixel is left as the game drew it: the gain
+     // is the surface's behind them, not theirs (10.5's purple beam lost half its light to the dark corner behind it)
 -- 
 2.43.0
 
