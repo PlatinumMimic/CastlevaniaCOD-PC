@@ -841,7 +841,12 @@ Changes this game needed beyond the generated config:
   models against the pack's own pictures of the same textures (`kAliases`' and those): of
   RealESRGAN_x4plus, UltraSharpV2, GTAV textures (RGT, and its dither model) and GameAI 2.0, RealESRGAN_x4plus came
   closest by far (31.2 dB on average, 45 dB on one, the others 26.7 to 28.7), the pack likely made with it, so its
-  pictures look like the pack's. They are the game's art, as a pack is: they stay out of this repository.
+  pictures look like the pack's. They are the game's art, as a pack is: they stay out of this repository. The
+  menus' text is pictures too (the words, digits and panels of the pause menu's pages, the title screen's menu, the
+  loading and save screens: 71 sheets the pack never covered, seen with `CV_TEXPACK_MISSES` on cvtest's
+  `pausemenu`), so the same run makes them sharp, with the pack's own redrawn pieces placed in where it has them;
+  `tools\texpack\clean_menu_bars.py` then redraws the pause menu's button bars' ends, painted ragged in the game's
+  sheets, as a smooth fade (its docstring says which two sheets draw a bar, and how).
 - `widescreen.json` keeps the screens widescreen reaches the sides of: the pause menu, the map, and with a route
   step's `"box_shots": true` each box on the first-save recording (the save point's, and the Memorial Ticket's
   dimmed panel when the first enemy drops it).
