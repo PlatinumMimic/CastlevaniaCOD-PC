@@ -1,5 +1,6 @@
 {
   "name": "rtdoor",
+  "vendor": true,
   "after": "newgame.json",
   "perf": true,
   "note": "Ray tracing through a door: from the first courtyard down the corridor to the door out of 5.1, then walking through it in 6 frame steps with a shot after each (the room transition), then in 5.0.",

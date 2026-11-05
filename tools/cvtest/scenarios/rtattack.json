@@ -1,5 +1,6 @@
 {
   "name": "rtattack",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Lights from effects: in a room near a save room (its marker under Hector) and two others, Hector stands (two shots) then attacks (a shot after each swing), then stands again.",

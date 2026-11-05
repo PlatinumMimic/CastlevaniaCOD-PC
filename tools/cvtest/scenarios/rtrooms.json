@@ -1,5 +1,6 @@
 {
   "name": "rtrooms",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Ray tracing across rooms: from the courtyard (5.1) warped to 5.0 and 5.2, a shot every 5 frames of each transition, then four 2 frames apart as the room comes in and three 3 frames apart after it settles (flicker between them).",

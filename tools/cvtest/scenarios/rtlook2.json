@@ -1,5 +1,6 @@
 {
   "name": "rtlook2",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Torchlight: three rooms lit by torches and braziers (2.17, 10.5, 8.2), a shot standing and one turned.",

@@ -1,5 +1,6 @@
 {
   "name": "glowturn",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Rooms lit by torches and glows (5.8's lamp, 10.5's braziers, 6.2's, the save room 5.27): the camera turned right four steps, so the lights go out of view, then back; for the glows remembered off screen (XBE_RT_GLOW_MEMORY) and how steady the lights' light is (XBE_RT_LIGHTS_REUSE).",

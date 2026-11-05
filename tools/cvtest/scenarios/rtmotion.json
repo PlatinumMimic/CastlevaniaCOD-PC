@@ -1,5 +1,6 @@
 {
   "name": "rtmotion",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Ray tracing in motion in the gargoyle fountain courtyard (the room the play folder starts in): shots while the camera pans and while walking, for ghosting and smearing behind moving things (DLSS Ray Reconstruction against DLSS's own anti-aliasing: XBE_DLSS_RR=0).",

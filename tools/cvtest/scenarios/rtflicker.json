@@ -1,5 +1,6 @@
 {
   "name": "rtflicker",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Ray tracing's steadiness room to room: warped to rooms of each area, stood 2 s, then six shots 2 frames apart (Hector standing still: what changes between them is flicker, or the game's own animation). Ten rooms that exist on the disc (a warp to one that does not, 13.2, stopped the game at its disc error screen).",

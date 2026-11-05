@@ -1,5 +1,6 @@
 {
   "name": "shadowspot",
+  "vendor": true,
   "save": "julian",
   "note": "5.0's grass path, Hector stood on open ground (linespot's walk), shot at three spots: his ray traced shadow (XBE_RT_SHADOWS_TAKE=0: the two by a lamp, as before; XBE_RT_SHADOWS_LAMPS=0: the light above's alone)",
   "steps": [

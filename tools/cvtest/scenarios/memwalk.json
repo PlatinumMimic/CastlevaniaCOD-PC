@@ -1,5 +1,6 @@
 {
  "name": "memwalk",
+ "vendor": true,
  "save": "julian",
  "note": "Sixteen rooms at 4K with Julian's settings (ray tracing, frame generation, HDR, fov 150, draw distance 400%, no fog, DLSS Performance), seven seconds in each (5.8 and 6.2 again at the end): the GPU's time and the graphics card's memory as it goes (XBE_PERF: the renderer's own by kind every 10 s), to see what grows room after room and the texture pack's pictures let go (TrimReplacements) Hector healed through each room (enemies once killed him in 6.2, the walk then at the title screen).",
  "steps": [

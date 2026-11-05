@@ -21,6 +21,7 @@
 #include <shellapi.h>
 #include <urlmon.h>
 #include <wincodec.h>
+#include <wininet.h>
 #include <wrl/client.h>
 #else
 // Linux: an SDL window drawn with OpenGL, the graphics cards Vulkan's, pictures stb's (the SDK's linux/)
@@ -52,6 +53,7 @@ extern char** environ;
 #include <fstream>
 #include <cwchar>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -955,6 +957,167 @@ bool RtxCard(const std::string& name) {
     return name.find("NVIDIA") != std::string::npos && name.find("RTX") != std::string::npos;
 }
 
+// The port's own updates (Updater, below): the newest release of the port on GitHub, looked up when the launcher
+// starts and offered on the Home page when it is not the one here. The release here is version.txt beside the
+// launcher, which release.bat writes into the package (the tag without its v: 1.4.0-qol10); a build without one is
+// a developer's and is never offered an update. An update replaces the program files alone (the exes, the launcher,
+// the compiler folder, the docs): the saves (hdd), castlevania.toml, the textures and the game files are never touched
+constexpr const char* kUpdateRepo = "PlatinumMimic/CastlevaniaCOD-PC";
+constexpr const wchar_t* kUpdateApi = L"https://api.github.com/repos/PlatinumMimic/CastlevaniaCOD-PC/releases?per_page=10";
+constexpr const char* kUpdateReleases = "https://github.com/PlatinumMimic/CastlevaniaCOD-PC/releases";
+constexpr const char* kVersionFile = "version.txt";
+
+// a release of the port as GitHub lists it
+struct PortRelease {
+    std::string tag;     // without its v
+    std::string name;    // the release's title
+    std::string date;    // published, YYYY-MM-DD
+    std::string published;  // and the whole time, for the order
+    std::string page;    // its page on GitHub
+    std::string url;     // the package's download
+    std::string asset;   // the package's file name
+    std::string sha256;  // its digest as GitHub gives it (empty: none)
+    uint64_t size = 0;
+    bool prerelease = false;
+};
+
+// the release here (version.txt beside the launcher), empty for a developer's build
+std::string OwnRelease() {
+    std::ifstream f(ExeDir() / kVersionFile);
+    std::string v;
+    if (!f || !std::getline(f, v)) return {};
+    while (!v.empty() && (v.back() == '\r' || v.back() == ' ' || v.back() == '\t')) v.pop_back();
+    while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
+    if (!v.empty() && (v[0] == 'v' || v[0] == 'V')) v.erase(v.begin());
+    return v;
+}
+
+// GitHub's JSON, read for the few fields the update needs rather than parsed whole: a key's value in an object (a
+// string without its quotes and with \" \\ \/ \n undone, a number or true/false as written; empty when not there),
+// and an array's objects one by one, by their brackets, strings skipped
+namespace json {
+
+std::string Value(std::string_view obj, std::string_view key) {
+    std::string quoted = "\"" + std::string(key) + "\"";
+    size_t at = 0;
+    while ((at = obj.find(quoted, at)) != std::string_view::npos) {
+        size_t p = at + quoted.size();
+        while (p < obj.size() && (obj[p] == ' ' || obj[p] == '\t' || obj[p] == '\n' || obj[p] == '\r')) p++;
+        if (p >= obj.size() || obj[p] != ':') {  // the key as a value, somewhere else
+            at = p;
+            continue;
+        }
+        p++;
+        while (p < obj.size() && (obj[p] == ' ' || obj[p] == '\t' || obj[p] == '\n' || obj[p] == '\r')) p++;
+        if (p >= obj.size()) return {};
+        if (obj[p] == '"') {
+            std::string out;
+            for (p++; p < obj.size() && obj[p] != '"'; p++) {
+                if (obj[p] == '\\' && p + 1 < obj.size()) {
+                    char e = obj[++p];
+                    out += e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e;  // \u is left as it is
+                } else {
+                    out += obj[p];
+                }
+            }
+            return out;
+        }
+        size_t e = p;
+        while (e < obj.size() && obj[e] != ',' && obj[e] != '}' && obj[e] != ']' && obj[e] != ' ' && obj[e] != '\n')
+            e++;
+        return std::string(obj.substr(p, e - p));
+    }
+    return {};
+}
+
+// the objects of the array that starts at obj[from] (its [), each with its brackets; the nested ones are inside them
+std::vector<std::string_view> Objects(std::string_view obj, size_t from) {
+    std::vector<std::string_view> out;
+    if (from >= obj.size() || obj[from] != '[') return out;
+    int depth = 0;
+    size_t start = 0;
+    bool in_string = false;
+    for (size_t i = from + 1; i < obj.size(); i++) {
+        char c = obj[i];
+        if (in_string) {
+            if (c == '\\') i++;
+            else if (c == '"') in_string = false;
+            continue;
+        }
+        if (c == '"') in_string = true;
+        else if (c == '{' || c == '[') {
+            if (depth++ == 0) start = i;
+        } else if (c == '}' || c == ']') {
+            if (depth == 0) break;  // the array's own ]
+            if (--depth == 0) out.push_back(obj.substr(start, i + 1 - start));
+        }
+    }
+    return out;
+}
+
+// the array a key holds, as its objects
+std::vector<std::string_view> Array(std::string_view obj, std::string_view key) {
+    std::string quoted = "\"" + std::string(key) + "\"";
+    size_t at = obj.find(quoted);
+    if (at == std::string_view::npos) return {};
+    size_t p = obj.find('[', at);
+    return p == std::string_view::npos ? std::vector<std::string_view>{} : Objects(obj, p);
+}
+
+}  // namespace json
+
+// the newest release of the port in GitHub's list, by when it was published (the list's own order is by the commit
+// each was tagged on, which a release made from an older commit falls behind in): a draft left out, a prerelease as
+// asked, and only one that has the package. False when none
+bool NewestRelease(const std::string& list, bool prereleases, PortRelease& out) {
+    bool found = false;
+    for (std::string_view r : json::Objects(list, list.find('['))) {
+        if (json::Value(r, "draft") == "true") continue;
+        bool pre = json::Value(r, "prerelease") == "true";
+        if (pre && !prereleases) continue;
+        PortRelease rel;
+        rel.tag = json::Value(r, "tag_name");
+        if (!rel.tag.empty() && (rel.tag[0] == 'v' || rel.tag[0] == 'V')) rel.tag.erase(rel.tag.begin());
+        if (rel.tag.empty()) continue;
+        rel.name = json::Value(r, "name");
+        std::string published = json::Value(r, "published_at");  // ISO 8601, UTC: its order is the text's
+        rel.date = published.substr(0, 10);
+        rel.page = json::Value(r, "html_url");
+        rel.prerelease = pre;
+        for (std::string_view a : json::Array(r, "assets")) {
+            std::string name = json::Value(a, "name");
+            if (name.size() < 4 || name.compare(name.size() - 4, 4, ".zip") != 0 ||
+                name.compare(0, 17, "CastlevaniaCOD-PC") != 0 || name.find("linux") != std::string::npos)
+                continue;
+            rel.asset = name;
+            rel.url = json::Value(a, "browser_download_url");
+            rel.size = std::strtoull(json::Value(a, "size").c_str(), nullptr, 10);
+            std::string digest = json::Value(a, "digest");  // "sha256:<hex>"
+            if (digest.compare(0, 7, "sha256:") == 0) rel.sha256 = digest.substr(7);
+            break;
+        }
+        if (rel.url.empty()) continue;
+        if (!found || published > out.published) {
+            out = rel;
+            out.published = published;
+            found = true;
+        }
+    }
+    return found;
+}
+
+// what an update leaves alone: the player's own places and files, by their first folder or name under the game's
+// folder (the package has the assets and textures folders' notes only, which a player's folders need not take)
+bool UpdateKeeps(const fs::path& rel) {
+    static const char* const kKeep[] = {"assets", "textures", "hdd", "logs", "streamline", "licences",
+                                        "castlevania.toml", "update", "backup"};
+    std::string first = rel.begin()->string();
+    for (char& c : first) c = char(std::tolower(uint8_t(c)));
+    for (const char* k : kKeep)
+        if (first == k) return true;
+    return false;
+}
+
 #ifdef _WIN32
 // each download's SHA-256 as AMD and NVIDIA released it at those versions: a file that differs (a changed or broken
 // download) is deleted, never used
@@ -1145,6 +1308,232 @@ struct FrameGenDownload {
     }
 };
 
+// The port's own update (kUpdateRepo): Check looks up the newest release in the background and Apply brings it in,
+// each a thread of its own; the Home page draws the state. Apply: the package downloaded into update\ (a .part until
+// whole, then checked against the size and SHA-256 GitHub gives), unpacked there by Windows' tar, the exes and the
+// launcher here moved aside into update\previous (a running exe may be renamed, not written: so the launcher updates
+// itself), then the package's files copied over this folder but for the player's (UpdateKeeps) and the compiler's
+// work folder (not in the package: the recompiled objects stay, and the game's next start builds again only what the
+// new executable changes). Then the new launcher is started and this one closes
+struct Updater {
+    enum class State { Idle, Off, Developer, Checking, Unreachable, UpToDate, Available, Downloading, Installing, Restart, Failed };
+    std::atomic<State> state{State::Idle};
+    std::atomic<float> progress{0};
+    PortRelease latest;  // the newest release, from Check (read by the frame once state says so)
+    std::string own;    // the release here
+    std::string error;  // Failed's reason, a number
+    std::thread worker;
+
+    bool Busy() const {
+        State s = state;
+        return s == State::Checking || s == State::Downloading || s == State::Installing;
+    }
+
+    // URLDownloadToFile keeps what it fetched: the list is asked for anew each time
+    static bool FetchFresh(const std::wstring& url, const fs::path& to, std::atomic<float>& progress, float from,
+                           float span, HRESULT& hr) {
+        DeleteUrlCacheEntryW(url.c_str());
+        FrameGenDownload::Progress p{};
+        p.out = &progress;
+        p.from = from;
+        p.span = span;
+        fs::path part = to;
+        part += L".part";
+        hr = URLDownloadToFileW(nullptr, url.c_str(), part.c_str(), 0, &p);
+        std::error_code ec;
+        if (FAILED(hr) || fs::file_size(part, ec) == 0) {
+            fs::remove(part, ec);
+            if (SUCCEEDED(hr)) hr = E_FAIL;
+            return false;
+        }
+        fs::remove(to, ec);
+        fs::rename(part, to, ec);
+        if (ec) hr = HRESULT_FROM_WIN32(ec.value());
+        return !ec;
+    }
+
+    void Check(bool enabled, bool prereleases) {
+        if (Busy()) return;
+        if (worker.joinable()) worker.join();
+        own = OwnRelease();
+        if (!enabled) {
+            state = State::Off;
+            return;
+        }
+        if (own.empty()) {
+            state = State::Developer;
+            return;
+        }
+        state = State::Checking;
+        worker = std::thread([this, prereleases] {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            std::error_code ec;
+            fs::path dir = ExeDir() / L"update";
+            fs::create_directories(dir, ec);
+            fs::path list = dir / L"releases.json";
+            HRESULT hr = S_OK;
+            State result = State::Unreachable;
+            if (FetchFresh(kUpdateApi, list, progress, 0, 1, hr)) {
+                std::ifstream f(list, std::ios::binary);
+                std::string text((std::istreambuf_iterator<char>(f)), {});
+                PortRelease r;
+                if (NewestRelease(text, prereleases, r)) {
+                    latest = r;
+                    result = r.tag == own ? State::UpToDate : State::Available;
+                }
+            }
+            fs::remove(list, ec);
+            CoUninitialize();
+            state = result;
+        });
+    }
+
+    // the game is not running: its exe may be written (one that runs is held open)
+    static bool GameClosed() {
+        for (const wchar_t* exe : {L"Castlevania.exe", L"CastlevaniaEU.exe"}) {
+            fs::path p = ExeDir() / exe;
+            std::error_code ec;
+            if (!fs::exists(p, ec)) continue;
+            HANDLE h = CreateFileW(p.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (h == INVALID_HANDLE_VALUE) return false;
+            CloseHandle(h);
+        }
+        return true;
+    }
+
+    void Apply() {
+        if (Busy() || state != State::Available) return;
+        if (worker.joinable()) worker.join();
+        state = State::Downloading;
+        progress = 0;
+        error.clear();
+        PortRelease r = latest;
+        worker = std::thread([this, r] {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            std::error_code ec;
+            fs::path game = ExeDir(), dir = game / L"update", unpacked = dir / L"unpacked";
+            fs::remove_all(unpacked, ec);
+            fs::create_directories(dir, ec);
+            fs::path zip = dir / Wide(r.asset);
+            HRESULT hr = S_OK;
+            bool ok = FetchFresh(Wide(r.url), zip, progress, 0, 0.9f, hr);
+            if (ok && r.size && fs::file_size(zip, ec) != r.size) {
+                ok = false;
+                hr = TRUST_E_BAD_DIGEST;
+            }
+            if (ok && !r.sha256.empty() && Sha256File(zip) != r.sha256) {
+                ok = false;
+                hr = TRUST_E_BAD_DIGEST;
+            }
+            if (ok) {
+                state = State::Installing;
+                fs::create_directories(unpacked, ec);
+                ok = FrameGenDownload::Extract(zip, unpacked, {});
+                if (!ok) hr = E_FAIL;
+            }
+            // the package's folder: the zip's one folder, else its root
+            fs::path from = unpacked;
+            if (ok) {
+                int folders = 0, files = 0;
+                fs::path only;
+                for (auto& e : fs::directory_iterator(unpacked, ec)) {
+                    if (e.is_directory(ec)) {
+                        folders++;
+                        only = e.path();
+                    } else {
+                        files++;
+                    }
+                }
+                if (folders == 1 && files == 0) from = only;
+                if (!fs::exists(from / L"CastlevaniaLauncher.exe", ec) || !fs::exists(from / L"Castlevania.exe", ec)) {
+                    ok = false;
+                    hr = E_INVALIDARG;
+                }
+            }
+            if (ok && !GameClosed()) {
+                ok = false;
+                hr = HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION);
+            }
+            if (ok) {
+                // each of the package's files into its place by two renames: the file here into update\previous (a
+                // file in use, the launcher that runs and the runtime DLLs it loaded, may be renamed though not
+                // written), then the unpacked one into its place (on the same volume: a rename). Nothing is copied
+                // over anything, so nothing is left half written; what fails is put back
+                fs::path previous = dir / L"previous";
+                fs::remove_all(previous, ec);
+                fs::create_directories(previous, ec);
+                std::vector<fs::path> moved;  // what went into previous, to put back on a failure
+                for (auto& e : fs::recursive_directory_iterator(from, ec)) {
+                    if (!e.is_regular_file(ec)) continue;
+                    fs::path rel = fs::relative(e.path(), from, ec);
+                    if (ec || UpdateKeeps(rel)) continue;
+                    if (rel.begin()->wstring() == L"compiler" && std::next(rel.begin()) != rel.end() &&
+                        std::next(rel.begin())->wstring() == L"work")
+                        continue;
+                    fs::path target = game / rel;
+                    if (fs::exists(target, ec)) {
+                        fs::create_directories((previous / rel).parent_path(), ec);
+                        fs::rename(target, previous / rel, ec);
+                        if (ec) {
+                            ok = false;
+                            hr = HRESULT_FROM_WIN32(ec.value());
+                            break;
+                        }
+                        moved.push_back(rel);
+                    }
+                    fs::create_directories(target.parent_path(), ec);
+                    fs::rename(e.path(), target, ec);
+                    if (ec) {
+                        ok = false;
+                        hr = HRESULT_FROM_WIN32(ec.value());
+                        break;
+                    }
+                }
+                if (ok) {
+                    progress = 0.98f;
+                    // the assets and textures folders' notes, where the folders are not there yet
+                    for (const wchar_t* d : {L"assets", L"textures"})
+                        if (!fs::exists(game / d, ec) && fs::exists(from / d, ec))
+                            fs::copy(from / d, game / d, fs::copy_options::recursive, ec);
+                    // the release this is now (a package from before release.bat wrote version.txt has none)
+                    std::ofstream v(game / kVersionFile);
+                    v << r.tag << "\n";
+                } else {
+                    // back as it was: what was moved aside returns over whatever took its place
+                    for (const fs::path& rel : moved) {
+                        fs::remove(game / rel, ec);
+                        fs::rename(previous / rel, game / rel, ec);
+                    }
+                }
+            }
+            fs::remove_all(unpacked, ec);
+            if (ok) fs::remove(zip, ec);
+            progress = 1;
+            if (!ok) error = std::to_string(uint32_t(hr));
+            CoUninitialize();
+            state = ok ? State::Restart : State::Failed;
+        });
+    }
+
+    // the new launcher in this one's place, told what it was updated to; false when it could not be started
+    bool Restart() const {
+        fs::path exe = ExeDir() / L"CastlevaniaLauncher.exe";
+        std::wstring cmd = L"\"" + exe.wstring() + L"\" --updated " + Wide(latest.tag);
+        STARTUPINFOW si{sizeof(si)};
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, ExeDir().c_str(), &si, &pi))
+            return false;
+        AllowSetForegroundWindow(pi.dwProcessId);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return true;
+    }
+
+    ~Updater() {
+        if (worker.joinable()) worker.join();
+    }
+};
+
 #else
 // SHA-256 (FIPS 180-4), for the downloads' pins
 struct Sha256 {
@@ -1323,6 +1712,19 @@ struct FrameGenDownload {
         if (worker.joinable()) worker.join();
     }
 };
+
+// Linux: the port's update is not here yet (the package is Windows'); the Home page says so
+struct Updater {
+    enum class State { Idle, Off, Developer, Checking, Unreachable, UpToDate, Available, Downloading, Installing, Restart, Failed };
+    std::atomic<State> state{State::Idle};
+    std::atomic<float> progress{0};
+    PortRelease latest;
+    std::string own, error;
+    bool Busy() const { return false; }
+    void Check(bool, bool) {}
+    void Apply() {}
+    bool Restart() const { return false; }
+};
 #endif
 
 // settings: the keys the game reads, the rest of the file kept
@@ -1370,6 +1772,8 @@ struct Settings {
     uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     std::string release;                // the release played, by its executable's name, when there are more (the SDK's)
+    bool update_check = true;           // the launcher's own: the port's newest release looked up on GitHub at its start
+    bool update_prereleases = true;     // and a release marked a prerelease (a test build) offered too
     toml::table rest;
 
     fs::path File() const { return ExeDir() / kSettings; }
@@ -1427,6 +1831,8 @@ struct Settings {
         surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
         release = rest["release"].value_or(release);
+        update_check = rest["update_check"].value_or(update_check);
+        update_prereleases = rest["update_prereleases"].value_or(update_prereleases);
     }
 
     bool Save() {
@@ -1474,6 +1880,8 @@ struct Settings {
         rest.insert_or_assign("surface_depth", int64_t(surface_depth));
         rest.insert_or_assign("gpu", gpu);
         rest.insert_or_assign("release", release);
+        rest.insert_or_assign("update_check", update_check);
+        rest.insert_or_assign("update_prereleases", update_prereleases);
         std::ofstream f(File());
         f << rest << "\n";
         return bool(f);
@@ -1486,6 +1894,8 @@ struct Settings {
         d.language = language;
         d.game_language = game_language;
         d.release = release;  // which game, not how it plays
+        d.update_check = update_check;
+        d.update_prereleases = update_prereleases;
         *this = std::move(d);
     }
 };
@@ -2662,10 +3072,15 @@ public:
         auto_gpu_ = Automatic();
         modes_ = Resolutions();
         LoadArt();
+        updater_.Check(settings_.update_check, settings_.update_prereleases);
     }
 
     // the page shown, by the sidebar's order: --page on the command line, for screenshots of a page
     void ShowPage(int page) { page_ = page; }
+    // --updated <release>: this launcher was just put in place by the one before it
+    void Updated(const std::string& tag) {
+        Note(F("Updated to {}. The game builds its code again on its next start.", {tag}));
+    }
 
     // false: the launcher closes
     bool Frame() {
@@ -2714,6 +3129,12 @@ public:
         ImGui::End();
         AutoSave();
         g_marks.Write(page_);
+        // the update is in place: the new launcher takes over and this one closes
+        if (updater_.state == Updater::State::Restart) {
+            updater_.state = Updater::State::Idle;
+            if (updater_.Restart()) keep = false;
+            else Note(F("The update failed (error {}): check the connection and try again.", {std::to_string(GetLastError())}));
+        }
         return keep;
     }
 
@@ -2735,7 +3156,8 @@ private:
                std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
                std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
                std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + std::to_string(s.ray_tracing) + "|" + std::to_string(s.rt_lighting) + std::to_string(s.rt_quality) + "|" +
-               std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view);
+               std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view) + "|" +
+               std::to_string(s.update_check) + std::to_string(s.update_prereleases);
     }
 
     void AutoSave() {
@@ -2872,6 +3294,69 @@ private:
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("The release Play starts, of those in your game files"));
     }
 
+    // the port's own update (Updater): where it stands, and the button that brings it in; one row, as the pack's
+    void UpdateCard() {
+        using State = Updater::State;
+        State st = updater_.state;
+        BeginCard("update", S(12));
+        float row = S(38), y = ImGui::GetCursorPosY(), mid = y + (row - g_semi->FontSize) * 0.5f;
+        ImGui::SetCursorPosY(mid);
+        Text(g_semi, kText, T("Updates"));
+        ImGui::SameLine(0, S(26));
+        ImGui::SetCursorPosY(mid);
+#ifndef _WIN32
+        Status(kIconWarn, kMuted, T("Updates are not available on Linux yet: download the newest release from GitHub."));
+        (void)st;
+#else
+        const PortRelease& r = updater_.latest;
+        switch (st) {
+            case State::Off: Status(kIconCheck, kMuted, T("Update checks are off.")); break;
+            case State::Developer: Status(kIconCheck, kMuted, T("Development build: no update checks.")); break;
+            case State::Checking: Status(kIconGlobe, kMuted, T("Checking for updates...")); break;
+            case State::Unreachable: Status(kIconWarn, kAmber, T("Could not reach GitHub to check for updates.")); break;
+            case State::UpToDate: Status(kIconCheck, kGreen, F("Up to date ({})", {updater_.own})); break;
+            case State::Available:
+                Status(kIconWarn, kAmber, F("Update available: {} (you have {})", {r.tag + (r.date.empty() ? "" : ", " + r.date), updater_.own}));
+                break;
+            case State::Downloading:
+                Progress(updater_.progress, {S(420), S(30)}, F("Downloading {}...", {r.asset}).c_str());
+                break;
+            case State::Installing: Progress(updater_.progress, {S(420), S(30)}, T("Unpacking and installing...")); break;
+            case State::Restart: Status(kIconCheck, kGreen, T("Restarting the launcher...")); break;
+            case State::Failed:
+                Status(kIconWarn, kRed, updater_.error == std::to_string(uint32_t(HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION)))
+                                            ? T("Close the game before updating.")
+                                            : F("The update failed (error {}): check the connection and try again.", {updater_.error}));
+                break;
+            default: break;
+        }
+        // the buttons at the row's right: the update, and its notes on GitHub
+        if (st == State::Available || st == State::Failed) {
+            const char* update = T("Update");
+            const char* notes = T("Release notes");
+            float bw = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, update).x + S(40) + row * 0.6f;
+            float nw = g_italic->CalcTextSizeA(g_italic->FontSize, FLT_MAX, 0, notes).x + S(40) + row * 0.6f;
+            ImGui::SameLine();
+            ImGui::SetCursorPos({ImGui::GetContentRegionMax().x - bw - nw - S(10), y});
+            if (Button(notes, {nw, row}, Kind::Secondary) && !r.page.empty()) Open(Wide(r.page));
+            ImGui::SameLine(0, S(10));
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled(import_.running || prepare_.running);
+            if (Button(update, {bw, row}, Kind::Primary)) {
+                if (st == State::Failed) updater_.state = State::Available;
+                updater_.Apply();
+            }
+            ImGui::EndDisabled();
+            ImGui::SetCursorPosY(y + row);
+            ControlNote(kMuted, T("Your saves, settings and textures stay as they are. The game builds its code again on its next start."));
+        } else {
+            ImGui::SetCursorPosY(y + row);
+        }
+#endif
+        ImGui::Dummy({0, 0});
+        EndCard();
+    }
+
     bool HomePage() {
         // the title screen: night and fog, the crest faint behind, the logo
         float w = ImGui::GetContentRegionAvail().x, h = S(322);
@@ -2972,6 +3457,8 @@ private:
         ImGui::SetCursorPosY(y + row);
         ImGui::Dummy({0, 0});
         EndCard();
+
+        UpdateCard();
 
         // what is set, at a glance; each opens its page
         Label(T("CURRENT SETUP"));
@@ -3545,6 +4032,12 @@ private:
         BeginSetting(T("Keep launcher open"), T("Leave this window open while the game runs."));
         ToggleRight("keep", settings_.keep_open);
         EndSetting();
+#ifdef _WIN32
+        BeginSetting(T("Check for updates on start"),
+                     T("Looks up the newest release on GitHub each time the launcher opens and offers it on the Home page. An update replaces only the program files: saves, settings and textures are never touched."));
+        ToggleRight("updates", settings_.update_check);
+        EndSetting();
+#endif
         EndCard();
     }
 
@@ -3821,6 +4314,7 @@ private:
     bool play_after_prepare_ = false;
     std::vector<Res> modes_;
     FrameGenDownload fg_download_;
+    Updater updater_;
     std::string status_, saved_, shown_language_;
     double status_time_ = -100;
     bool rescan_ = false;
@@ -3870,6 +4364,30 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         d.Start(kind, ExeDir());
         if (d.worker.joinable()) d.worker.join();
         return HaveFrameGen(ExeDir(), kind) ? 0 : 1;
+    }
+    // --update-check: the newest release looked up without the window, the answer in update\check.txt (the state and
+    // the release); exit code 0 up to date, 3 an update available, 2 a developer build, 1 GitHub not reached.
+    // --update-apply: the update brought in too (the launcher is not restarted); exit code 0 once it is in place
+    if (std::wcsstr(GetCommandLineW(), L"--update-check") || std::wcsstr(GetCommandLineW(), L"--update-apply")) {
+        bool apply = std::wcsstr(GetCommandLineW(), L"--update-apply") != nullptr;
+        Settings settings;
+        settings.Load();
+        Updater u;
+        u.Check(true, settings.update_prereleases);
+        if (u.worker.joinable()) u.worker.join();
+        Updater::State s = u.state;
+        if (apply && s == Updater::State::Available) {
+            u.Apply();
+            if (u.worker.joinable()) u.worker.join();
+            s = u.state;
+        }
+        std::error_code ec;
+        fs::create_directories(ExeDir() / L"update", ec);
+        std::ofstream out(ExeDir() / L"update" / L"check.txt");
+        out << int(s) << " " << u.own << " " << u.latest.tag << " " << u.latest.asset << " " << u.error << "\n";
+        return s == Updater::State::UpToDate || s == Updater::State::Restart ? 0
+               : s == Updater::State::Available ? 3
+               : s == Updater::State::Developer ? 2 : 1;
     }
     float scale = float(GetDpiForSystem()) / 96.0f;
     {
@@ -3939,6 +4457,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                                                     L"textures", L"game", L"controls", L"files"};
     for (int i = 0; i < kPageCount; i++)
         if (std::wcsstr(GetCommandLineW(), (std::wstring(L"--page ") + kPageNames[i]).c_str())) launcher.ShowPage(i);
+    // --updated <release>: started by the launcher before, which put this one in place (Updater)
+    if (const wchar_t* at = std::wcsstr(GetCommandLineW(), L"--updated ")) {
+        std::wstring tag(at + 10);
+        size_t end = tag.find(L' ');
+        launcher.Updated(Utf8(tag.substr(0, end)));
+    }
     g_launcher = &launcher;
     g_paint = PaintFrame;
     while (g_running) {

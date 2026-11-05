@@ -1,5 +1,6 @@
 {
   "name": "watersweep",
+  "vendor": true,
   "save": "julian",
   "note": "Every room of every map with ray tracing on and CV_WATER_LIST=2: each 3D draw's texture logged once with its vertex program and the room it was first seen in (to find the game's water), and a screenshot of each room.",
   "settings": {

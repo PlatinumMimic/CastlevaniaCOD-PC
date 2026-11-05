@@ -1,5 +1,6 @@
 {
   "name": "charfight",
+  "vendor": true,
   "after": "newgame.json",
   "note": "first-save's walk with its fights (after newgame.json), ray tracing on as Julian plays: with XBE_RT_CHAR_LOG, the frames whose scene missed a character (its shadow and shade cut out in a fight: the game fading it, blinking as it is hurt)",
   "steps": [

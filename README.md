@@ -99,6 +99,14 @@ On top of Pazzi7054's port:
   whether it has Direct3D 12, and has the button layout, the bonus and the pack switch.
 - **Launcher in seven languages** - English, Deutsch, Español, Français, Italiano, Português (Brasil) and Русский,
   from a dropdown.
+- **Updates from the launcher** - each time it opens, the launcher looks up the newest release on GitHub and, when it
+  is not the one in your folder, offers it on the Home page: one click downloads the release, checks it, puts the
+  program files in place (the exes, the launcher, the compiler folder, the notes) and restarts the launcher. Your
+  saves (`hdd`), `castlevania.toml`, textures, movies and game files are never touched; the files replaced are kept
+  in `update\previous` until the next update. The game builds its code again on its first start after an update.
+  The check is a switch on the Game page (`update_check`); `update_prereleases = false` in `castlevania.toml` leaves
+  releases marked pre-release out. The release a folder holds is `version.txt` beside the launcher, which
+  `release.bat` writes into the package; a build folder without one is never offered an update. Windows only for now.
 - **Program icon** - the game's crest, made from your copy when you build.
 - **Newer recompiler** - Xbox XBE Recomp moved up to its commit `91146ff`, this fork's changes kept as a patch.
 - **Requirements written out** - what a PC needs to play, down to which graphics can run it.

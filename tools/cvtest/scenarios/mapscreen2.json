@@ -1,5 +1,6 @@
 {
  "name": "mapscreen2",
+ "vendor": true,
  "save": "julian2",
  "note": "Julian's own save of 5 Nov (half the castle explored): the map screen (its shape in widescreen and its colours: rooms blue, save rooms red), its frame captured with every draw's constants (XBE_CAPTURE_ALL), the map's room table dumped; then the pause menu's item pages (the item's 3D model beside its description, with fov 150 as Julian plays)",
  "dump": "0x55BA00:65536",

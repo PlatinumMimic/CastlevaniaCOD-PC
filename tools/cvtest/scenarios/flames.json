@@ -1,5 +1,6 @@
 {
   "name": "flames",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "The rooms with orange flames (10.5's wall torches, 6.2's lanterns, the save room's candles), each held long enough for CV_WIDE_TRACE / XBE_AA_TRACE to log a frame's draws, for why they are not ray tracing's lights.",

@@ -1,5 +1,6 @@
 {
   "name": "rt",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Ray tracing (raytrace.h): the play folder's save loaded from the title (Continue), then rooms shot after standing 4 s: the courtyard (5.1), a hall (2.1), a rock cave (10.5). Run with --set ray_tracing=0 or 1. XBE_AO_VIEW=1 shows the ambient occlusion alone, 3 unblurred; XBE_RT_VIEW=1 whether the scene is where the frame drew it, 2 the surfaces' slope, 3 where each pixel's place came from, 4 how near the rays' nearest hit is (rt_ao.hlsl). XBE_MUTE=1 and XBE_BACKGROUND=1 keep the game silent and behind other windows.",

@@ -1,5 +1,6 @@
 {
   "name": "rtlook",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Ray traced lighting's look room by room (contrast, torchlight): eight rooms, a shot standing and one with the camera turned.",

@@ -1,5 +1,6 @@
 {
   "name": "pcload",
+  "vendor": true,
   "save": "julian",
   "note": "The load messages that named the Xbox: title, Load Game with Julian's save, a shot at each press.",
   "settings": {

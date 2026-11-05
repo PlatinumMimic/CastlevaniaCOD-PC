@@ -1,5 +1,6 @@
 {
   "name": "rtleaf",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "rtreal's ivy and leaves rooms (5.8, 5.9) and the save room by the water (5.27), for looking into what darkens the first and lights the last",

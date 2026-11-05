@@ -111,7 +111,7 @@ target_compile_options(CastlevaniaLauncher PRIVATE -Wno-nontrivial-memcall)  # D
 # words.h checks every row of its phrases while compiling: more steps than clang allows by default
 target_compile_options(CastlevaniaLauncher PRIVATE -fconstexpr-steps=8388608)
 target_link_libraries(CastlevaniaLauncher PRIVATE tomlplusplus::tomlplusplus d3d11 d3d12 dxgi d3dcompiler bcrypt comdlg32 dwmapi shell32 urlmon
-                      ole32 windowscodecs)
+                      wininet ole32 windowscodecs)
 target_link_options(CastlevaniaLauncher PRIVATE -fuse-ld=lld)
 foreach(exe ${CV_RELEASES})
     add_dependencies(${exe} CastlevaniaLauncher)

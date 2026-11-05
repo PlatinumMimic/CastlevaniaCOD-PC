@@ -1,5 +1,6 @@
 {
   "name": "rtcap",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "rtleaf's views by the lamps in 5.8 and 5.9 with the renderer's capture of each (XBE_CAPTURE_DIR)",

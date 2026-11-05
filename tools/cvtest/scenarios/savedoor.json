@@ -1,5 +1,6 @@
 {
   "name": "savedoor",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "The save room door in 5.8 (its moving background behind its ironwork), turned round in six steps, two shots a step a few frames apart; then the save room 5.27 (its throne, the light by the water): turned four steps left, four back, the same view's light before and after.",

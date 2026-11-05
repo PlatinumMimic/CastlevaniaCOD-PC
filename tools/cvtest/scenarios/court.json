@@ -1,5 +1,6 @@
 {
   "name": "court",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Ray tracing's look in the gargoyle fountain courtyard (the room the play folder starts in): shot on arrival and after standing 4 s.",

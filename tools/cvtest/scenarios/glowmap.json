@@ -1,5 +1,6 @@
 {
   "name": "glowmap",
+  "vendor": true,
   "save": "julian",
   "perf": false,
   "note": "Rooms with glows drawn in 3D (water's caustics, mist, beams, flames): each warped to and stood in a second, for CV_WATER_LIST=2's list of every 3D draw's texture by name (with CV_TEXPACK_CENSUS, the pack's name too)",

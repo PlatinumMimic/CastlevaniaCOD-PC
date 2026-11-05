@@ -1,5 +1,6 @@
 {
   "name": "waterlook",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Water hunt: in each room the camera turned round in six steps, a shot at each (to see the room's water and whether it reflects).",

@@ -1,5 +1,6 @@
 {
   "name": "pctext",
+  "vendor": true,
   "note": "The save messages that named the Xbox, on a fresh start: New Game as in newgame.json, a shot at each press, for 'Checking...', 'There is no save data on your PC' and 'Creating new save data...'.",
   "settings": {
     "width": 1920,

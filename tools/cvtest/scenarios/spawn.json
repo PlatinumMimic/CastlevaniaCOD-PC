@@ -1,5 +1,6 @@
 {
  "name": "spawn",
+ "vendor": true,
  "after": "newgame.json",
  "note": "Enemies as they appear (room 5.12's armoured knights): shots a few frames apart as the room comes in, then a fight a shot each 1.5 s. Julian saw the axe armor drawn wider as it spawned (4:3, then the screen's shape): CV_WIDE_ODD logs the draws left unsqueezed; XBE_RT_VIEW=18 shows the ray tracing's guides (magenta: no surface of the scene there) to find enemies losing their ray traced shading in a fight.",
  "steps": [

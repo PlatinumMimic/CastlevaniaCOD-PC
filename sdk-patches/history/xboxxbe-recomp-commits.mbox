@@ -28281,3 +28281,152 @@ index 78833dc..15f8d00 100644
 -- 
 2.43.0
 
+From de256c8a0c20da7bc2e5ff74a678ba7e6a65f2c8 Mon Sep 17 00:00:00 2001
+From: Julian <julianharmon100@gmail.com>
+Date: Thu, 5 Nov 2026 13:44:53 -0500
+Subject: [PATCH] Ray traced lighting: a lamp's sprite lit from where it is,
+ not from behind its wall; shadow rays blocked by dense cut-outs
+
+Julian: in the Mountains the purple lamps' light bled onto surfaces it shouldn't reach and through objects.
+
+- A light drawn flat (a lamp's flame, a glow's sprite) was put 0.95 of the way to whatever the frame showed at its
+  middle: its wall, which is right when the lamp stands before a wall, but a lamp seen against the valley or a
+  room's far wall was put out there, and lit that wall all over and the backs of the railings and walls between
+  (through them, to the eye). FlatDepth (rt_scene.hlsli): no deeper than the sprite's own depth where that is past 4
+  times the near plane (a sprite drawn over everything sits at the near plane), in rt_lights.hlsli's LightEmits and
+  rt_shafts.hlsl's LightIn. Measured in the lights-only view (XBE_RT_VIEW=17) on rtleaf's 5.8 and 5.9 lamp spots:
+  the purple pixels down from 145 to 2, 216 to 32 and 108 to 23 per ten thousand in the views facing the lamps, the
+  dark views unchanged.
+- TraceSceneMasked reports nothing when its budget of cut-out tests runs out, so a shadow ray through enough ivy or
+  railing let a lamp's light through, and ambient occlusion's rays out. TraceOcclusion (rt_scene.hlsli) takes the
+  cut-out at the budget as solid: the shadow rays of LightAt and LightAtKept and ambient occlusion's TraceAo use it;
+  the eye's and the bounce rays keep what they met.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/rt_ao.hlsl      |  2 +-
+ runtime/gpu/rt_lights.hlsli |  6 +++---
+ runtime/gpu/rt_scene.hlsli  | 42 +++++++++++++++++++++++++++++++++++++
+ runtime/gpu/rt_shafts.hlsl  |  2 +-
+ 4 files changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/runtime/gpu/rt_ao.hlsl b/runtime/gpu/rt_ao.hlsl
+index 2b4d1b1..78ac758 100644
+--- a/runtime/gpu/rt_ao.hlsl
++++ b/runtime/gpu/rt_ao.hlsl
+@@ -54,7 +54,7 @@ float TraceAo(float3 o, float3 rd, float3 n, float reach) {
+     [loop] for (int pass = 0; pass < 3; pass++) {
+         uint g, pr;
+         float2 b;
+-        float th = TraceScene(o, rd, from, reach, 8, g, pr, b);
++        float th = TraceOcclusion(o, rd, from, reach, 8, g, pr, b);
+         if (th < 0 || sk.y <= 0) return th;
+         float3 hn = FaceNormal(g, pr, rd);
+         if (abs(dot(hn, n)) < 0.9f || dot(rd, n) * th >= sk.y) return th;
+diff --git a/runtime/gpu/rt_lights.hlsli b/runtime/gpu/rt_lights.hlsli
+index 0169f1f..36376c9 100644
+--- a/runtime/gpu/rt_lights.hlsli
++++ b/runtime/gpu/rt_lights.hlsli
+@@ -23,7 +23,7 @@ float3 LightEmits(uint li, uint prim, float2 bary, out Spot s, out float area) {
+         float2 mid = (FlatNdc(s.p[0]) + FlatNdc(s.p[1]) + FlatNdc(s.p[2])) / 3;
+         if (any(abs(mid) > 1.0f)) e = 0;
+         e *= sk.z;
+-        FlatAt(s, 0.95f * ViewZ(Depth(FlatPixel(s, float2(1.0f / 3, 1.0f / 3)))));
++        FlatAt(s, FlatDepth(s, 0.95f * ViewZ(Depth(FlatPixel(s, float2(1.0f / 3, 1.0f / 3))))));
+     }
+     area = 0.5f * length(cross(s.p[1] - s.p[0], s.p[2] - s.p[0]));
+     // a flame drawn flat (a torch's, a candle's) lights as one of at least lights[li].z's area would (as a float,
+@@ -229,7 +229,7 @@ float3 LightAt(float3 p, float3 n, uint2 id, uint frame, int tries) {
+     if (all(l == 0)) return 0;
+     float3 dq = q - p;
+     float dist = length(dq);
+-    if (dist < 1e-3f || TraceScene(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
++    if (dist < 1e-3f || TraceOcclusion(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
+     return l;
+ }
+ float3 LightAt(float3 p, float3 n, uint2 id, uint frame) { return LightAt(p, n, id, frame, int(lt.z)); }
+@@ -244,6 +244,6 @@ float3 LightAtKept(float3 p, float3 n, uint2 id, uint frame, int tries, Kept bef
+     if (all(l == 0)) return 0;
+     float3 dq = q - p;
+     float dist = length(dq);
+-    if (dist < 1e-3f || TraceScene(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
++    if (dist < 1e-3f || TraceOcclusion(p, dq / dist, 0, dist * 0.98f, 8) >= 0) return 0;
+     return l;
+ }
+diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
+index 15f8d00..e2a676c 100644
+--- a/runtime/gpu/rt_scene.hlsli
++++ b/runtime/gpu/rt_scene.hlsli
+@@ -169,6 +169,39 @@ void TopDraw(float3 o, float3 d, float at, inout float t, inout uint geom, inout
+         best = min(best, err);
+     }
+ }
++// A ray that asks only whether anything solid is in the way (a shadow ray, ambient occlusion's): the world's and the
++// characters', and past its budget of cut-out tests it takes the cut-out it is at as solid rather than reporting
++// nothing (as TraceSceneMasked does for the rays that need what they met): a run of leaves or railings that dense
++// does block, and reported clear it let a lamp's light through the ivy and the ambient occlusion's rays out of it
++float TraceOcclusion(float3 o, float3 d, float tmin, float tmax, int budget, out uint geom, out uint prim, out float2 bary) {
++    RayDesc r;
++    r.Origin = o;
++    r.Direction = d;
++    r.TMin = tmin;
++    r.TMax = tmax;
++    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
++    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x05, r);
++    while (q.Proceed()) {
++        if (q.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
++        uint cg = q.CandidateInstanceID() + q.CandidateGeometryIndex();
++        if (geo[cg].c.w != 0) continue;  // a light: not in the way
++        if (budget-- <= 0 || Solid(cg, q.CandidatePrimitiveIndex(), q.CandidateTriangleBarycentrics()))
++            q.CommitNonOpaqueTriangleHit();
++    }
++    geom = prim = 0;
++    bary = 0;
++    if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) return -1;
++    geom = q.CommittedInstanceID() + q.CommittedGeometryIndex();
++    prim = q.CommittedPrimitiveIndex();
++    bary = q.CommittedTriangleBarycentrics();
++    return q.CommittedRayT();
++}
++float TraceOcclusion(float3 o, float3 d, float tmin, float tmax, int budget) {
++    uint geom, prim;
++    float2 bary;
++    return TraceOcclusion(o, d, tmin, tmax, budget, geom, prim, bary);
++}
++
+ // the world's instance and the characters', not the water's
+ float TraceScene(float3 o, float3 d, float tmin, float tmax, int budget, out uint geom, out uint prim, out float2 bary) {
+     return TraceSceneMasked(o, d, tmin, tmax, budget, 0x05, geom, prim, bary);
+@@ -287,6 +320,15 @@ void FlatAt(inout Spot s, float z) {
+         s.p[k] = float3(n * cam.zw * z, z);
+     }
+ }
++// The depth a light drawn flat is put at: a little before what the frame shows at its middle (its wall), but no deeper
++// than the sprite's own depth where that is to be trusted (past 4 times the near plane: a sprite the title draws over
++// everything sits at the near plane). A lamp's flame is depth tested at the lamp, and where the frame showed the
++// valley behind it, the light was put in the valley, 0.95 of the way there, and lit the hillside and the backs of the
++// railings and walls between: purple light through the Mountains' walls
++float FlatDepth(Spot s, float frame_z) {
++    float own = min(s.p[0].z, min(s.p[1].z, s.p[2].z));
++    return own > 4 * cam.x ? min(frame_z, own) : frame_z;
++}
+ float FlatShare(Spot s) {
+     float2 a = FlatNdc(s.p[0]), b = FlatNdc(s.p[1]), c = FlatNdc(s.p[2]);
+     return 0.125f * abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+diff --git a/runtime/gpu/rt_shafts.hlsl b/runtime/gpu/rt_shafts.hlsl
+index 0b52482..8cc053c 100644
+--- a/runtime/gpu/rt_shafts.hlsl
++++ b/runtime/gpu/rt_shafts.hlsl
+@@ -52,7 +52,7 @@ float3 LightIn(float3 x, uint2 id, uint frame, uint k) {
+         // drawn flat: where it shows, before what the frame drew there; a haze over the view is none
+         if (FlatShare(s) > 0.02f) return 0;
+         e *= size.z;
+-        FlatAt(s, 0.95f * ViewZ(Tex(ix.x).Load(int3(FlatPixel(s, float2(1.0f / 3, 1.0f / 3)), 0)).r));
++        FlatAt(s, FlatDepth(s, 0.95f * ViewZ(Tex(ix.x).Load(int3(FlatPixel(s, float2(1.0f / 3, 1.0f / 3)), 0)).r)));
+     }
+     float3 q = s.p[0] * (1 - bary.x - bary.y) + s.p[1] * bary.x + s.p[2] * bary.y;
+     float area = 0.5f * length(cross(s.p[1] - s.p[0], s.p[2] - s.p[0]));
+-- 
+2.43.0
+

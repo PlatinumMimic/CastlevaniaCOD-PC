@@ -1,5 +1,6 @@
 {
   "name": "rtflick2",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "Flicker hunt, short: five rooms that sparkled with ray tracing (5.2, 11.2, 4.2, 10.5, 3.20); six shots 2 frames apart in each.",

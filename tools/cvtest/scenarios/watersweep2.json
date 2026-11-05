@@ -1,5 +1,6 @@
 {
   "name": "watersweep2",
+  "vendor": true,
   "save": "julian",
   "note": "The water census, maps 5 to 13 (watersweep covered 2 to 4 and 5.1): every room with ray tracing on and CV_WATER_LIST=2, each 3D draw's texture logged once with its program and room, and a screenshot of each room.",
   "settings": {

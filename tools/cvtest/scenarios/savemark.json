@@ -1,5 +1,6 @@
 {
   "name": "savemark",
+  "vendor": true,
   "save": "julian",
   "perf": true,
   "note": "The save room marker under Hector: rooms around the save room, each door in, a shot.",

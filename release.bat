@@ -49,6 +49,9 @@ for %%f in (msvcp140 vcruntime140 vcruntime140_1) do (
 )
 copy /y tools\release\README.txt "%PKG%\README.txt" >nul
 copy /y LICENSE "%PKG%\LICENSE.txt" >nul
+rem the release this package is, for the launcher's update check (its GitHub tag without the v): a folder without it
+rem is a developer's build, which is never offered an update
+(echo %VERSION%)> "%PKG%\version.txt"
 rem the SDK's third party notices, then the port's own: the SDK itself and xxHash
 copy /y /b "%SDK%\THIRD_PARTY.txt" + tools\release\THIRD_PARTY-port.txt "%PKG%\THIRD_PARTY.txt" >nul
 echo Put your game here: its disc image (.iso), or the extracted disc (default.xbe with its folders).> "%PKG%\assets\PUT YOUR GAME HERE.txt"

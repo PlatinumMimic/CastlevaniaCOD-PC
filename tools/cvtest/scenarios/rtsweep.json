@@ -1,5 +1,6 @@
 {
   "name": "rtsweep",
+  "vendor": true,
   "save": "julian",
   "note": "Ray tracing room by room: every room of maps 2 to 4 (the ones a light shafts haze whited out), a screenshot of each.",
   "settings": {
