@@ -655,7 +655,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..a1f4ab4 100644
+index fe65837..add41b7 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -17,13 +17,16 @@
@@ -3795,7 +3795,7 @@ index fe65837..a1f4ab4 100644
      std::filesystem::create_directories(cap_dir_, ec);
      cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");
      cap_i_ = cap_rt_ = 0;
-@@ -3223,49 +5375,2533 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3223,49 +5375,2537 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -5426,6 +5426,10 @@ index fe65837..a1f4ab4 100644
 +            uint32_t n = LightList(ac.lt, ac.sk, ac.list);
 +            ac.sk[0] = n ? kLampShadow : 0.0f;
 +        }
++        // XBE_RT_AO_SHEET: how far over a surface a sheet level with it still lies on it, its rays going on past it
++        // (rt_ao.hlsl TraceAo; 32 units, about 15 cm; 0: they stop at it)
++        static const float kSheet = env("XBE_RT_AO_SHEET", 32.0f);
++        ac.sk[1] = kSheet;
 +        Alloc rcb = Upload(sizeof(AoConstants), 256);
 +        std::memcpy(rcb.cpu, &ac, sizeof(ac));
 +        // drawn into the ambient occlusion's target as the screen space pass is, with the depth and the frame's
@@ -6346,7 +6350,7 @@ index fe65837..a1f4ab4 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +7911,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +7915,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -6357,7 +6361,7 @@ index fe65837..a1f4ab4 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +7931,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +7935,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -6378,7 +6382,7 @@ index fe65837..a1f4ab4 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +7955,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +7959,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -6411,7 +6415,7 @@ index fe65837..a1f4ab4 100644
      }
  }
  
-@@ -3312,17 +7988,45 @@ void LogPerf() {
+@@ -3312,17 +7992,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -6461,7 +6465,7 @@ index fe65837..a1f4ab4 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +8035,122 @@ void LogPerf() {
+@@ -3331,25 +8039,122 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -6589,7 +6593,7 @@ index fe65837..a1f4ab4 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +8161,29 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +8165,29 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -6620,7 +6624,7 @@ index fe65837..a1f4ab4 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +8191,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +8195,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -6628,7 +6632,7 @@ index fe65837..a1f4ab4 100644
      ApplySettings();
  }
  
-@@ -3386,13 +8203,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +8207,43 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -6674,7 +6678,7 @@ index fe65837..a1f4ab4 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +8247,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +8251,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -6682,7 +6686,7 @@ index fe65837..a1f4ab4 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +8537,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +8541,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
@@ -9274,10 +9278,10 @@ index 0000000..d97cee0
 +}  // namespace gpu
 diff --git a/runtime/gpu/rt_ao.hlsl b/runtime/gpu/rt_ao.hlsl
 new file mode 100644
-index 0000000..7bc0077
+index 0000000..e7182a5
 --- /dev/null
 +++ b/runtime/gpu/rt_ao.hlsl
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,194 @@
 +// Ray traced ambient occlusion (raytrace.cpp, DXR 1.1 inline ray queries, shader model 6.5, compiled to DXIL when the
 +// runtime is built): each pixel of the frame's 3D, found again in view space from its depth as the screen space pass
 +// finds it (kAoHlsl in d3d12.cpp), sends a few rays over the hemisphere above its surface into the frame's scene (the
@@ -9300,7 +9304,7 @@ index 0000000..7bc0077
 +    float4 sh;    // characters' shadows: the world's up in view space, their darkest (0: none)
 +    float4 sh2;   // how far above a character still shades, the light's width (the tangent of its half angle)
 +    float4 lt;    // the scene's lights (rt_lights.hlsli): listed, their brightness, candidates, the most they light
-+    float4 sk;    // the lamps' shadows' darkest (0: none); unused; the lights drawn flat's brightness; the most area
++    float4 sk;    // the lamps' shadows' darkest (0: none); a sheet's most height (Sheet); the lights drawn flat's brightness; the most area
 +    uint4 lights[128];  // each light's draw and triangles (rt_gi.hlsl's)
 +};
 +#include "rt_scene.hlsli"
@@ -9314,6 +9318,24 @@ index 0000000..7bc0077
 +    float2 uv = (float2(px) + 0.5) / part.xy;
 +    float z = ViewZ(d);
 +    return float3((uv.x * 2 - 1) * cam.z * z, (1 - uv.y * 2) * cam.w * z, z);
++}
++// What a ray from a surface meets within its reach, past the sheets that lie on that surface: level with it and less
++// than sk.y over it. This title lays its paths, borders and tracks as sheets a few units over the ground they cover,
++// and the ground beside a sheet's edge sent its rays in under the sheet into its underside: a black line along every
++// edge (the grass path by the mountains in 5.0, two long streaks that seemed to come from Hector's feet). A ledge or
++// a step stands taller, and a wall is not level with the floor
++float TraceAo(float3 o, float3 rd, float3 n, float reach) {
++    float from = 0;
++    [loop] for (int pass = 0; pass < 3; pass++) {
++        uint g, pr;
++        float2 b;
++        float th = TraceScene(o, rd, from, reach, 8, g, pr, b);
++        if (th < 0 || sk.y <= 0) return th;
++        float3 hn = FaceNormal(g, pr, rd);
++        if (abs(dot(hn, n)) < 0.9f || dot(rd, n) * th >= sk.y) return th;
++        from = th + 0.5f;  // a sheet: on past it
++    }
++    return -1;
 +}
 +// a number from 0 to 1 for a pixel, a ray and a frame, different for each
 +float Hash(uint3 v) {
@@ -9405,7 +9427,7 @@ index 0000000..7bc0077
 +        float r = sqrt(u1), a = 6.2831853f * u2;
 +        float3 rd = t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u1));
 +        // what it meets hides less the farther it is: none at the radius, as the screen space pass weighs it
-+        float th = TraceScene(o, rd, 0, ao.x, 8);
++        float th = TraceAo(o, rd, n, ao.x);
 +        if (th >= 0) {
 +            hidden += saturate(1 - th * th / (ao.x * ao.x));
 +            nearest = min(nearest, th);
