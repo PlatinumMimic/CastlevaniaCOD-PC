@@ -1,5 +1,7 @@
 ﻿# Castlevania: Curse of Darkness - XBE Recomp
 
+![Castlevania: Curse of Darkness, an unofficial native PC port for Windows and Linux](docs/images/cover.png)
+
 An unofficial native PC port of the original Xbox version of Castlevania: Curse of Darkness, statically recompiled
 into 64 bit executables for Windows and Linux. Rendering runs on Direct3D 12 (on Linux, through vkd3d on Vulkan) and
 sound on XAudio2 (on Linux, through SDL).
@@ -776,6 +778,8 @@ sponsored by them, and it is not an official product. Nothing here is sold.
   them from AMD's and NVIDIA's own releases, under their licences, which it saves beside them.
 - The recompiled code is generated on your own PC from your own copy of the game. `Castlevania.dll`, and an
   executable from `build.bat`, are for your personal use only. Do not distribute them, generated code or game files.
+- The cover at the top is fan art made for this project with an AI image model, after a screenshot of the port's
+  Abandoned Castle rampart. It is not Konami's artwork.
 - Castlevania and Curse of Darkness are trademarks of Konami Digital Entertainment. Xbox is a trademark of
   Microsoft Corporation. All other trademarks belong to their respective owners and are used only to identify the
   game this port works with.
