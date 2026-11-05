@@ -51,6 +51,9 @@
 // CV_BACKDROPS=1, gives the draws of the textures in kSky the room's own fog back (the coefficients in c91, as the
 // game set them) and holds back those wholly past the room's own far plane, for comparing. CV_BACKDROPS=1 with
 // CV_SKY_TRACE logs each room's candidates, the textures drawn only past its far plane; CV_SKY_HIDE hides them.
+// The skies have glow cards too (kSkyCards), drawn additively out where the game's own view never shows them: with the
+// view pushed out their edges showed as faint squares over the moon and the clouds, so then they are not drawn
+// (SkyCard). Their programs place them by constants of their own, so their depth is not measured.
 //
 // Overscan: the last pass of each frame draws a copy of the frame back over it with rows -16 to 496 of the copy
 // across rows 0 to 480, the PS2's 448 lines and their border shrunk into the NTSC frame; the European release's rows
@@ -117,6 +120,7 @@ uint64_t g_frame = 0;
 // the sky's draws of the frame before (Backdrop, with CV_BACKDROPS=1): given back the room's own fog, and not drawn,
 // wholly past its far plane
 uint32_t g_sky_fogged = 0, g_sky_held = 0;
+uint32_t g_sky_cards = 0;  // and its glow cards held back (kSkyCards)
 
 // a widescreen draw's width as a part of its own: the console's 4:3 over the frame's 16:9 (3/4) or 16:10 (5/6)
 float Squeeze() { return (4.0f / 3.0f) / app::WideAspect(); }
@@ -132,6 +136,12 @@ constexpr uint64_t kSky[] = {
     0xa13869efdd70cb49ull,  // 5.7, the Abandoned Castle's rampart: its ring of sky strips
     0x8713e8116bb8057bull,  // its moon
     0x2d6da7cc8094311cull,  // its clouds
+};
+// the skies' glow cards by their textures' Name, which the game's own view never shows: the rampart of 5.7, 2.1, 6.2,
+// 9.12, 11.0 and 3.2 shot at the game's view with them drawn and hidden gave the same picture, and a sweep of every
+// room found them only past each room's own far plane (30 rooms)
+constexpr uint64_t kSkyCards[] = {
+    0xc26555aa0ffd586dull,  // a grey glow and a dark diamond, two of its cards over the rampart's moon
 };
 constexpr int kFrameTexCoord = 2;  // the frame pass's texture coordinates, in texels
 constexpr int kTexCoord = 2;       // a 2D draw's, as the game's programs take them
@@ -326,8 +336,9 @@ public:
                 std::lock_guard lock(g_seen_m);
                 g_sky_fogged = sky_fogged_;
                 g_sky_held = sky_held_;
+                g_sky_cards = sky_cards_;
             }
-            sky_fogged_ = sky_held_ = 0;
+            sky_fogged_ = sky_held_ = sky_cards_ = 0;
             if (TexturePackCensus() && frame_ % 300 == 0) TexturePackCensusFlush();
             pack_epoch_ = TexturePackEpoch();
             MoviesFrame(frame_);
@@ -492,7 +503,7 @@ public:
         ext[4] = placed ? d_.move[1] : 0.0f;
         ext[5] = placed && squeeze && d_.tex.linear ? 1.0f : 0.0f;
         ext[6] = ext[7] = 0;
-        if (Backdrop(vsc)) ext[0] = ext[1] = ext[3] = ext[4] = 0;  // not drawn: every vertex at the centre
+        if (Backdrop(vsc) || SkyCard()) ext[0] = ext[1] = ext[3] = ext[4] = 0;  // not drawn: every vertex at the centre
         else if (back_buffer_ && d_.world && d_.mesh && vsc) SeeWorld(vsc, ext[0]);
         if (back_buffer_ && d_.name == kHud[0] && !d_.x.Empty()) {
             std::lock_guard lock(g_seen_m);
@@ -989,6 +1000,19 @@ private:
 
     static bool Sky(uint64_t name) { return std::find(std::begin(kSky), std::end(kSky), name) != std::end(kSky); }
 
+    // a draw of the sky's glow cards (kSkyCards) with the view pushed out (game/view.cpp): not drawn (true), as the
+    // game's own view does not show them
+    bool SkyCard() {
+        if (!d_.world || !d_.name ||
+            std::find(std::begin(kSkyCards), std::end(kSkyCards), d_.name) == std::end(kSkyCards))
+            return false;
+        float game[2], drawn[2], far_z = 0;
+        uint32_t room = 0;
+        if (!ViewBackdrop(game, drawn, far_z, room)) return false;
+        sky_cards_++;
+        return true;
+    }
+
     // A sky's draw (kSky) gets the room's own fog, and one wholly past the room's own far plane is not drawn (true):
     // the sky is as the game shows it, and the rest of the room has the fog and far plane as set.
     bool Backdrop(float (*vsc)[4]) {
@@ -1114,6 +1138,7 @@ private:
     float zscale_ = 16777215.0f;
     float gw_ = 640;
     uint32_t sky_fogged_ = 0, sky_held_ = 0;  // this frame's sky draws, Backdrop's
+    uint32_t sky_cards_ = 0;                  // and its glow cards held back, SkyCard's
     uint32_t pack_epoch_ = 0;                 // TexturePackEpoch's at the frame's first draw
     // backdrops (Backdrop): the room's own fog coefficients and far plane, the fog drawn, the backdrops' textures
     bool backdrop_ = false;
@@ -1136,7 +1161,8 @@ private:
 }  // namespace
 
 // "wide" for telemetry.cpp: {"marker": {"x": [lo, hi], "move": m, "ago": frames since drawn}, "hud": {...}}, each
-// once drawn, and "sky": the frame before's draws of a sky given back the room's own fog, and those held back
+// once drawn, and "sky": the frame before's draws of a sky given back the room's own fog, those held back, and its
+// glow cards held back
 std::string WideJson() {
     std::lock_guard lock(g_seen_m);
     std::string out;
@@ -1149,9 +1175,9 @@ std::string WideJson() {
         out += b;
     }
     if (g_frame) {
-        char b[96];
-        std::snprintf(b, sizeof(b), "%s\"sky\":{\"fogged\":%u,\"held\":%u}", out.empty() ? "" : ",", g_sky_fogged,
-                      g_sky_held);
+        char b[128];
+        std::snprintf(b, sizeof(b), "%s\"sky\":{\"fogged\":%u,\"held\":%u,\"cards\":%u}", out.empty() ? "" : ",",
+                      g_sky_fogged, g_sky_held, g_sky_cards);
         out += b;
     }
     return out.empty() ? out : "{" + out + "}";
