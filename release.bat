@@ -49,7 +49,8 @@ for %%f in (msvcp140 vcruntime140 vcruntime140_1) do (
 )
 copy /y tools\release\README.txt "%PKG%\README.txt" >nul
 copy /y LICENSE "%PKG%\LICENSE.txt" >nul
-copy /y "%SDK%\THIRD_PARTY.txt" "%PKG%\THIRD_PARTY.txt" >nul
+rem the SDK's third party notices, then the port's own: the SDK itself and xxHash
+copy /y /b "%SDK%\THIRD_PARTY.txt" + tools\release\THIRD_PARTY-port.txt "%PKG%\THIRD_PARTY.txt" >nul
 echo Put your game here: its disc image (.iso), or the extracted disc (default.xbe with its folders).> "%PKG%\assets\PUT YOUR GAME HERE.txt"
 echo Optional: an HD texture pack made for PCSX2. Put its replacement pictures here (.png or .dds files, folders inside are fine).> "%PKG%\textures\PUT A TEXTURE PACK HERE.txt"
 

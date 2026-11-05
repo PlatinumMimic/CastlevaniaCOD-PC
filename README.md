@@ -1,5 +1,10 @@
 ﻿# Castlevania: Curse of Darkness - XBE Recomp
 
+[![release](https://img.shields.io/github/v/release/jmafort/CastlevaniaCOD-PC?label=release&color=orange)](https://github.com/jmafort/CastlevaniaCOD-PC/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/jmafort/CastlevaniaCOD-PC/total?label=downloads&color=brightgreen)](https://github.com/jmafort/CastlevaniaCOD-PC/releases)
+[![license](https://img.shields.io/github/license/jmafort/CastlevaniaCOD-PC?label=license&color=green)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/jmafort/CastlevaniaCOD-PC?style=social)](https://github.com/jmafort/CastlevaniaCOD-PC/stargazers)
+
 ![Castlevania: Curse of Darkness, an unofficial native PC port for Windows and Linux](docs/images/cover.png)
 
 An unofficial native PC port of the original Xbox version of Castlevania: Curse of Darkness, statically recompiled
@@ -787,6 +792,7 @@ sponsored by them, and it is not an official product. Nothing here is sold.
 The source in this repository is released under the [GNU General Public License v2.0](LICENSE). The SDK patch in
 `sdk-patches` modifies
 [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) and is under its MIT License, Copyright (c) 2026 TGP482.
+Each release has the licences of everything else in it in `THIRD_PARTY.txt`, and LLVM's in `compiler`.
 
 ## Credits
 
@@ -812,7 +818,7 @@ The source in this repository is released under the [GNU General Public License 
   [stb](https://github.com/nothings/stb) for PNG files there; [Material Icons](https://github.com/google/material-design-icons)
   and URW's [P052](https://github.com/ArtifexSoftware/urw-base35-fonts) (AGPL 3.0 with a font exception) for the Linux
   launcher.
-- [xxHash](https://github.com/Cyan4973/xxHash) for hashing textures, and [PCSX2](https://pcsx2.net) for the texture
+- [xxHash](https://github.com/Cyan4973/xxHash) (BSD 2-Clause) for hashing textures, and [PCSX2](https://pcsx2.net) for the texture
   pack naming its replacement pictures follow.
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), the model `tools\texpack\upscale.py` makes HD pictures with
   for the textures the packs lack.

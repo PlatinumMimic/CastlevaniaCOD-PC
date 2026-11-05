@@ -106,8 +106,8 @@ cp /work/llvm/clang /work/llvm/ld.lld $PKG/compiler/
 cp $B/fonts/MaterialIcons-Regular.ttf /cache/P052-*.otf $PKG/fonts/
 cp $SRC/tools/release/README-linux.txt $PKG/README.txt
 cp $SRC/LICENSE $PKG/LICENSE.txt
-cat /src/XboxXBE-Recomp/THIRD_PARTY.txt $SRC/tools/linux/THIRD_PARTY-linux.txt /cache/urw-base35-LICENSE.txt \
-    /cache/urw-base35-COPYING.txt /work/ffmpeg-src/COPYING.LGPLv2.1 > $PKG/THIRD_PARTY.txt
+cat /src/XboxXBE-Recomp/THIRD_PARTY.txt $SRC/tools/release/THIRD_PARTY-port.txt $SRC/tools/linux/THIRD_PARTY-linux.txt \
+    /cache/urw-base35-LICENSE.txt /cache/urw-base35-COPYING.txt /work/ffmpeg-src/COPYING.LGPLv2.1 > $PKG/THIRD_PARTY.txt
 echo "Put your game here: its disc image (.iso), or the extracted disc (default.xbe with its folders)." > "$PKG/assets/PUT YOUR GAME HERE.txt"
 echo "Optional: an HD texture pack made for PCSX2. Put its replacement pictures here (.png or .dds files, folders inside are fine)." > "$PKG/textures/PUT A TEXTURE PACK HERE.txt"
 # files copied from a Windows drive come out executable: only the programs are (a file manager offers to run the rest)
