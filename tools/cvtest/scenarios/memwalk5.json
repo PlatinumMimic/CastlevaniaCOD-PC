@@ -1,0 +1,202 @@
+{
+ "name": "memwalk5",
+ "save": "julian",
+ "note": "memwalk's first five rooms, five seconds in each: the graphics card's memory room after room with Julian's settings Hector healed through each room (enemies once killed him in 6.2, the walk then at the title screen).",
+ "steps": [
+  {
+   "press": "0:wait:11000",
+   "shot": "title",
+   "expect": [
+    "not player.active"
+   ],
+   "judge": false
+  },
+  {
+   "until": "player.active and not cutscene and not loading and not menu",
+   "timeout": 90,
+   "poll": "0:a,90f:wait",
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ]
+   ],
+   "shot": "loaded",
+   "judge": false
+  },
+  {
+   "press": "0:warp=5.8,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 8 and player.active and not loading",
+   "timeout": 40,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:100f,0:heal,0f:wait:100f,0:heal,0f:wait:100f",
+   "shot": "00-5-8",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=6.2,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 6 and room == 2 and player.active and not loading",
+   "timeout": 40,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:100f,0:heal,0f:wait:100f,0:heal,0f:wait:100f",
+   "shot": "01-6-2",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=10.5,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 10 and room == 5 and player.active and not loading",
+   "timeout": 40,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:100f,0:heal,0f:wait:100f,0:heal,0f:wait:100f",
+   "shot": "02-10-5",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=5.27,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 5 and room == 27 and player.active and not loading",
+   "timeout": 40,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:100f,0:heal,0f:wait:100f,0:heal,0f:wait:100f",
+   "shot": "03-5-27",
+   "judge": false,
+   "stop_on_fail": false
+  },
+  {
+   "press": "0:warp=2.17,10f:wait:20f",
+   "stop_on_fail": false
+  },
+  {
+   "until": "map == 2 and room == 17 and player.active and not loading",
+   "timeout": 40,
+   "stop_on_fail": false,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ],
+    [
+     "modal",
+     "0:a,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:heal,0f:wait:100f,0:heal,0f:wait:100f,0:heal,0f:wait:100f",
+   "shot": "04-2-17",
+   "judge": false,
+   "stop_on_fail": false
+  }
+ ],
+ "settings": {
+  "width": 3840,
+  "height": 2160,
+  "ambient_occlusion": 2,
+  "anisotropic_filtering": 16,
+  "antialiasing": 2,
+  "draw_distance": 400,
+  "fog_distance": 0,
+  "fov": 150,
+  "fps_cap": 60,
+  "frame_generation": 2,
+  "hdr": true,
+  "hdr_peak_nits": 4000,
+  "hdr_scene_nits": 500,
+  "hud_edges": true,
+  "menu_spread": true,
+  "ray_tracing": 5,
+  "ray_tracing_lighting": 100,
+  "ray_tracing_quality": 2,
+  "render_percent": 100,
+  "sharpening": 50,
+  "surface_depth": 2,
+  "texture_pack": true,
+  "texture_pack_materials": true,
+  "texture_pack_size": 2048,
+  "upscaling": 3,
+  "vsync": true,
+  "widescreen": true
+ }
+}

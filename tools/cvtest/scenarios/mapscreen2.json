@@ -1,0 +1,110 @@
+{
+ "name": "mapscreen2",
+ "save": "julian2",
+ "note": "Julian's own save of 5 Nov (half the castle explored): the map screen (its shape in widescreen and its colours: rooms blue, save rooms red), its frame captured with every draw's constants (XBE_CAPTURE_ALL), the map's room table dumped; then the pause menu's item pages (the item's 3D model beside its description, with fov 150 as Julian plays)",
+ "dump": "0x55BA00:65536",
+ "steps": [
+  {
+   "press": "0:wait:11000",
+   "shot": "title",
+   "expect": [
+    "not player.active"
+   ],
+   "judge": false
+  },
+  {
+   "until": "player.active and not cutscene and not loading and not menu",
+   "timeout": 90,
+   "poll": "0:a,90f:wait",
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ]
+   ],
+   "shot": "loaded",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:60f",
+   "shot": "world",
+   "judge": false
+  },
+  {
+   "press": "0:back,2000:wait",
+   "shot": "map",
+   "judge": false
+  },
+  {
+   "press": "0:capture,0:wait:1500",
+   "shot": "map-captured",
+   "judge": false
+  },
+  {
+   "press": "0:back,2500:wait",
+   "shot": "back",
+   "judge": false
+  },
+  {
+   "press": "0:start,1500:wait",
+   "shot": "pause",
+   "judge": false
+  },
+  {
+   "press": "0:a,1500:wait",
+   "shot": "pause-a",
+   "judge": false
+  },
+  {
+   "press": "0:a,1500:wait",
+   "shot": "pause-aa",
+   "judge": false
+  },
+  {
+   "press": "0:capture,0:wait:1000",
+   "shot": "pause-aa-captured",
+   "judge": false
+  },
+  {
+   "press": "0:down,1000:wait",
+   "shot": "pause-aa-down",
+   "judge": false
+  },
+  {
+   "press": "0:down,1000:wait",
+   "shot": "pause-aa-down2",
+   "judge": false
+  },
+  {
+   "press": "0:b,1000:wait",
+   "shot": "pause-aa-b",
+   "judge": false
+  },
+  {
+   "press": "0:down,800:a,2300:wait",
+   "shot": "pause-2nd",
+   "judge": false
+  },
+  {
+   "press": "0:a,1500:wait",
+   "shot": "pause-2nd-a",
+   "judge": false
+  },
+  {
+   "press": "0:b,800:b,800:b,800:b,1500:wait",
+   "shot": "closed",
+   "judge": false
+  }
+ ],
+ "settings": {
+  "width": 1920,
+  "height": 1080,
+  "hdr": false,
+  "frame_generation": 0,
+  "antialiasing": 2,
+  "upscaling": 2,
+  "ambient_occlusion": 2,
+  "ray_tracing": 5,
+  "fov": 150
+ }
+}

@@ -1,0 +1,219 @@
+{
+ "name": "spawn",
+ "after": "newgame.json",
+ "note": "Enemies as they appear (room 5.12's armoured knights): shots a few frames apart as the room comes in, then a fight a shot each 1.5 s. Julian saw the axe armor drawn wider as it spawned (4:3, then the screen's shape): CV_WIDE_ODD logs the draws left unsqueezed; XBE_RT_VIEW=18 shows the ray tracing's guides (magenta: no surface of the scene there) to find enemies losing their ray traced shading in a fight.",
+ "steps": [
+  {
+   "press": "0:warp=5.12,10f:wait:20f"
+  },
+  {
+   "until": "room == 12 and player.active and not loading and not cutscene",
+   "timeout": 30,
+   "poll": "2f:wait",
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ]
+   ],
+   "shot": "in"
+  },
+  {
+   "press": "0:capture,0f:wait:2f",
+   "shot": "spawn-0",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:3f",
+   "shot": "spawn-1",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:5f",
+   "shot": "spawn-2",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:8f",
+   "shot": "spawn-3",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:12f",
+   "shot": "spawn-4",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:20f",
+   "shot": "spawn-5",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:30f",
+   "shot": "spawn-6",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:45f",
+   "shot": "spawn-7",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:30f",
+   "shot": "knights",
+   "expect": [
+    "len(enemies) > 0"
+   ]
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-00",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-01",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-02",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-03",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-04",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-05",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-06",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-07",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-08",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-09",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-10",
+   "judge": false
+  },
+  {
+   "press": "0:heal,0:fight:1500",
+   "shot": "fight-11",
+   "judge": false
+  },
+  {
+   "press": "0:warp=5.11,10f:wait:20f"
+  },
+  {
+   "until": "room == 11 and player.active and not loading and not cutscene",
+   "timeout": 30,
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ]
+   ]
+  },
+  {
+   "press": "0:warp=5.12,10f:wait:20f"
+  },
+  {
+   "until": "room == 12 and player.active and not loading and not cutscene",
+   "timeout": 30,
+   "poll": "2f:wait",
+   "poll_by": [
+    [
+     "cutscene",
+     "0:start,45f:wait"
+    ],
+    [
+     "menu",
+     "0:b,30f:wait"
+    ]
+   ],
+   "shot": "in2"
+  },
+  {
+   "press": "0f:wait:2f",
+   "shot": "spawn2-0",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:3f",
+   "shot": "spawn2-1",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:5f",
+   "shot": "spawn2-2",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:8f",
+   "shot": "spawn2-3",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:12f",
+   "shot": "spawn2-4",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:20f",
+   "shot": "spawn2-5",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:30f",
+   "shot": "spawn2-6",
+   "judge": false
+  },
+  {
+   "press": "0f:wait:45f",
+   "shot": "spawn2-7",
+   "judge": false
+  }
+ ],
+ "settings": {
+  "width": 1920,
+  "height": 1080,
+  "hdr": false,
+  "frame_generation": 0,
+  "ray_tracing": 5,
+  "ambient_occlusion": 2,
+  "antialiasing": 2,
+  "upscaling": 2
+ }
+}

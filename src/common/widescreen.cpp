@@ -79,6 +79,7 @@ extern bool g_hud_edges;  // menu.cpp
 bool PauseMenuUp();       // telemetry.cpp
 bool ViewBackdrop(float game[2], float drawn[2], float& far_z, uint32_t& room);  // game/view.cpp
 bool ModalUp();           // telemetry.cpp
+bool CameraSpecial();     // telemetry.cpp: the title's camera, the map screen's or a debug view's
 uint32_t SceneWord();     // telemetry.cpp
 std::shared_ptr<const gpu::Replacement> TexturePackReplaced(uint64_t id);                              // texpack.cpp
 bool TexturePackCensus();                                                                // texpack.cpp
@@ -291,9 +292,11 @@ public:
             hud_ = false;
             ui_ = false;
             menu_ = PauseMenuUp();
+            screen_ = menu_ || CameraSpecial();
             modal_ = ModalUp();
             card_free_ = g_hud_edges && !menu_ && !modal_;
-            trace_now_ = g_wide_trace_frame.exchange(false) || (kTrace && frame_ % kTrace == 0);
+            trace_now_ = g_wide_trace_frame.exchange(false) || (kTrace && frame_ % kTrace == 0) ||
+                         frame_ <= odd_trace_until_;
             if (trace_now_) LOGR("wide %llu: the frame's draws (menu %d, modal %d, scene %08x)", (unsigned long long)frame_,
                                  int(menu_), int(ModalUp()), SceneWord());
             MenuGroups();
@@ -314,6 +317,11 @@ public:
 
     void Sampled(const gpu::TextureDesc& d, const gpu::Target* t, uint8_t, gpu::TexInfo&) override {
         d_.target |= t != nullptr;
+        if (t && !d_.src_data) {
+            d_.src_data = t->data;
+            d_.src_w = t->gw;
+            d_.src_h = t->gh;
+        }
         // a picture the game composed in a target of its own (an area's name card: in a 640x480 one, then drawn to
         // the frame as a mesh), not the one drawn into
         d_.card |= t && (t->gw != guest_w_ || t->gh != guest_h_ || t->data != trace_rt_);
@@ -336,9 +344,11 @@ public:
         return MoviesOwn(id) ? MoviesReplaced(id) : TexturePackReplaced(id);
     }
 
-    // the 3D world drawn into the frame takes anti-aliasing's sub-pixel offset (the SDK's Jitter); its 2D, the HUD,
-    // menus and the frame pass, never
-    bool Jitter() override { return back_buffer_ && d_.world; }
+    // the 3D world drawn into the frame takes anti-aliasing's sub-pixel offset (the SDK's Jitter), which also puts it
+    // in ray tracing's scene; its 2D, the HUD, menus and the frame pass, never. Nor the 3D of a screen of its own (the
+    // map screen's rooms, the pause menu's turning item and Innocent Devil, the title's castle): held still, they
+    // shook by the offset, and ray tracing's light and shade moved over them
+    bool Jitter() override { return back_buffer_ && d_.world && !screen_; }
     // a tip's page to the screen's sides (Constants): its texture read clamped, its edges' black past them
     bool Clamp() override { return clamp_; }
 
@@ -423,19 +433,36 @@ public:
         return true;
     }
 
-    void Constants(float (*vsc)[4], float* ext, const gpu::Target*, uint32_t src_blend) override {
+    void Constants(float (*vsc)[4], float* ext, const gpu::Target* rt, uint32_t src_blend) override {
         bool squeeze = d_.squeeze && back_buffer_ && app::Widescreen();
         // whole width: an untextured fade or tint, a panel whose texture does not change across it (a few texels
         // stretched over the frame: a message's dimmed panel), or the frame drawn back over itself
         float texels = (d_.u.hi - d_.u.lo) * (d_.tex.linear ? 1.0f : float(d_.tex.width));
         bool flat = !d_.textured || (d_.sampled && !d_.u.Empty() && texels <= 4);
-        if (d_.whole && (flat || d_.target)) squeeze = false;
+        // the 3D drawn into a target the console frame's size other than the frame (an enemy's after-images as it
+        // appears or swings: the room's armoured knights drawn there, then that picture laid over the frame a few
+        // times over, faded and moved): drawn as the game drew it, at the console's 4:3, so a picture of it laid
+        // over the whole frame is squeezed as the frame's own 3D is, or the copies stood a third wider than the
+        // knight (Julian: "it spawns 4:3, then 16:9 a moment later"). CV_WIDE_AFTERIMAGE=0: laid over whole, as before
+        static const bool afterimages =
+            !(std::getenv("CV_WIDE_AFTERIMAGE") && std::atoi(std::getenv("CV_WIDE_AFTERIMAGE")) == 0);
+        if (d_.world && !back_buffer_ && rt && rt->gw == guest_w_ && rt->gh == guest_h_ && !rt->depth)
+            offscreen3d_[rt->data] = frame_;
+        auto drawn3d = d_.target && d_.src_data ? offscreen3d_.find(d_.src_data) : offscreen3d_.end();
+        bool afterimage = afterimages && drawn3d != offscreen3d_.end() && frame_ - drawn3d->second <= 2;
+        if (d_.whole && (flat || (d_.target && !afterimage))) squeeze = false;
+        static int afterimages_said = 0;
+        if (afterimage && d_.whole && afterimages_said < 4 && ++afterimages_said)
+            LOGR("wide: a picture of the 3D drawn apart (%08x) laid over the frame, squeezed as the frame's 3D",
+                 d_.src_data);
         // a backdrop's edge pieces reach the screen's edges on a screen of their own: not over the 3D world or a
         // 4:3 picture drawn before them in the frame. In the pause menu the world is not drawn, and the 3D there is
         // the menu's own (an Innocent Devil's model on its page, 1600 vertices before the backdrop)
         bool edges = squeeze && d_.edge && !d_.target && (world_ < kWorld || menu_ || (modal_ && !hud_)) && !picture_;
         if (back_buffer_) {
-            world_ += d_.world ? d_.count : 0;
+            // the world's 3D is textured; the map screen's rooms are flat colour, drawn before its backdrop (126 of
+            // them, 3000 vertices, with half the castle explored: its backdrop stood as a 4:3 box)
+            world_ += d_.world && d_.textured ? d_.count : 0;
             picture_ |= squeeze && d_.whole && d_.textured && !d_.target;
         }
         // the HUD, from its first draw to the frame pass, to the screen's edges
@@ -458,7 +485,14 @@ public:
             bool named = std::find(std::begin(kHud), std::end(kHud), d_.name) != std::end(kHud);
             hud_ |= named;
             bool inside = !d_.x.Empty() && !d_.y.Empty() && d_.x.lo >= -2 && d_.x.hi <= d_.gw + 2;
-            if (hud_ && inside) shift = HudShift({d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, named, 0}, d_.count == 4);
+            if (hud_ && inside) {
+                // the draw's own key from frame to frame: its texture, and where its top left lies (a bar's fill
+                // changes its width, a figure its value, in place)
+                uint64_t key = (d_.name ^ 0x9E3779B97F4A7C15ull) * 1099511628211ull ^
+                               uint64_t(int64_t(std::lround(d_.x.lo / 8)) & 0xFFFF) << 16 ^
+                               uint64_t(int64_t(std::lround(d_.y.lo / 8)) & 0xFFFF) << 32 ^ (d_.count == 4 ? 1 : 2);
+                shift = HudShift({d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, named, 0}, d_.count == 4, key);
+            }
         } else if (squeeze && card_free_ && !d_.world && !d_.whole && (d_.card || card_fx)) {
             // an area's name card, drawn from the picture the game composed of it, and its effects (kCardFx), to its
             // side's screen edge as the HUD goes; it comes up as an area's opening scene ends, so a story scene does
@@ -539,6 +573,46 @@ public:
                  sides ? "to the sides" : edges ? "edges out" : menu.strip ? "menu strip" : menu.backdrop ? "menu backdrop"
                  : shift < 0 ? (menu_ ? "menu left" : "hud left") : shift > 0 ? (menu_ ? "menu right" : "hud right")
                  : squeeze ? "squeezed" : "kept");
+        // CV_WIDE_ODD: the draws drawn at the console's shape, each kind once (an enemy's spawn: the 4:3 shape it
+        // showed before taking the screen's)
+        static const bool odd = std::getenv("CV_WIDE_ODD") != nullptr;
+        if (odd) Odd(rt, ext[0]);
+    }
+
+    // CV_WIDE_ODD's: the 3D drawn into a target of its own; a mesh drawn onto the console frame by a program without
+    // the camera; a draw into the back buffer left unsqueezed; one that reads a target into it
+    std::set<uint64_t> odd_;
+    uint64_t odd_trace_until_ = 0;
+    int odd_traces_ = 0;
+    // the targets the console frame's size, not the frame, that the 3D was drawn into, by address, and the frame
+    std::unordered_map<uint32_t, uint64_t> offscreen3d_;
+    void Odd(const gpu::Target* rt, float sx) {
+        int kind = d_.world && !back_buffer_                                     ? 1
+                   : back_buffer_ && !d_.world && d_.program && d_.count > 32    ? 2
+                   : back_buffer_ && d_.squeeze && app::Widescreen() && sx == 1.0f ? 3
+                   : back_buffer_ && d_.target                                   ? 4
+                                                                                 : 0;
+        if (!kind) return;
+        // CV_WIDE_ODD=2: the frames after the 3D drawn apart traced whole (CV_WIDE_TRACE's lines)
+        static const int odd_level = std::atoi(std::getenv("CV_WIDE_ODD"));
+        if (kind == 1 && odd_level >= 2 && odd_traces_ < 6 && frame_ > odd_trace_until_) {
+            odd_traces_++;
+            odd_trace_until_ = frame_ + 2;
+            trace_now_ = true;
+        }
+        uint64_t key = uint64_t(kind) << 60 ^ d_.program * 31 ^ d_.name * 7 ^
+                       (rt ? uint64_t(rt->gw) << 40 ^ uint64_t(rt->gh) << 20 : 0) ^ (d_.target ? 1 : 0) ^
+                       uint64_t(d_.src_w) << 8 ^ uint64_t(d_.src_h) << 24 ^ (d_.skinned ? 2 : 0) ^ (d_.zwrite ? 4 : 0);
+        if (odd_.size() > 600 || !odd_.insert(key).second) return;
+        int room = RoomId();
+        LOGR("wide odd %d, frame %llu room %d.%d: into %08x %ux%u%s (guest %ux%u), n %u, program %016llx%s%s, tex "
+             "%ux%u %016llx%s%s, from target %08x %ux%u, blend %08x, x %.0f..%.0f y %.0f..%.0f, squeeze %.3f%s",
+             kind, (unsigned long long)frame_, room >> 8, room & 0xFF, rt ? rt->data : 0, rt ? rt->gw : 0,
+             rt ? rt->gh : 0, trace_device_ ? " device" : "", guest_w_, guest_h_, d_.count,
+             (unsigned long long)d_.program, d_.world ? " 3D" : "", d_.skinned ? " skinned" : "", d_.tex.width,
+             d_.tex.height, (unsigned long long)d_.name, d_.textured ? "" : " untextured", d_.zwrite ? " zwrite" : "",
+             d_.src_data, d_.src_w, d_.src_h, d_.blend, d_.x.lo, d_.x.hi, d_.y.lo, d_.y.hi, sx,
+             d_.whole ? " whole" : "");
     }
 
     // Frame generation's view (gpu::FrameView): the world drawn with the camera's view screen matrix and an object's
@@ -784,19 +858,25 @@ private:
         }
         for (Rect& p : pieces_) p.shift = p.named ? Side(p) : 0.0f;
         rects_.clear();
+        if (frame_ % 60 == 0) std::erase_if(hud_kept_, [&](const auto& k) { return frame_ - k.second.seen > kHudKeep; });
     }
 
-    // a HUD draw's move: as the piece of the frame before it is in, else as a draw of this frame it touches, else a
-    // quad of the HUD's own textures by itself (a piece's first frame)
-    float HudShift(Rect r, bool quad) {
+    // a HUD draw's move: as it moved the frame before, while it is drawn frame after frame in its place (key); a draw
+    // new to the HUD as the piece of the frame before it is in, else as a draw of this frame it touches, else a quad
+    // of the HUD's own textures by itself (a piece's first frame). A part of the HUD keeps its side while it is up: a
+    // boss's health bar coming up against the Innocent Devils' panel at the bottom left joined them into one piece
+    // across the frame, which went back to the 4:3 middle, and as the bar's parts came and went the panel jumped
+    // between the two from frame to frame
+    float HudShift(Rect r, bool quad, uint64_t key) {
         gw_ = d_.gw;
         r.shift = 0;
-        bool found = false;
-        for (const Rect& p : pieces_)
-            if (Touch(p, r)) {
-                r.shift = p.shift;
+        auto kept = hud_kept_.find(key);
+        bool found = kept != hud_kept_.end() && frame_ - kept->second.seen <= kHudKeep;
+        if (found) r.shift = kept->second.shift;
+        for (size_t i = 0; !found && i < pieces_.size(); i++)
+            if (Touch(pieces_[i], r)) {
+                r.shift = pieces_[i].shift;
                 found = true;
-                break;
             }
         for (size_t i = 0; !found && i < rects_.size(); i++)
             if (Touch(rects_[i], r)) {
@@ -804,9 +884,18 @@ private:
                 found = true;
             }
         if (!found && r.named && quad) r.shift = Side(r);
+        if (hud_kept_.size() < 1024) hud_kept_[key] = {r.shift, frame_};
         if (rects_.size() < 256) rects_.push_back(r);
         return r.shift;
     }
+    // each HUD draw's move by its key (HudShift), and the frame it was last drawn: kept while it is drawn at least
+    // every kHudKeep frames
+    struct HudKept {
+        float shift;
+        uint64_t seen;
+    };
+    std::unordered_map<uint64_t, HudKept> hud_kept_;
+    static constexpr uint64_t kHudKeep = 90;
 
     // the pause menu (menu_spread). Its sides: -1 left, 0 stays (the page buttons), 1 right, 2 a strip across it,
     // stretched (its title bar: the page's name, a bar and a line under them, drawn as tiles that meet)
@@ -1098,6 +1187,7 @@ private:
         bool squeeze = false, world = false, whole = false, edge = false, textured = false, target = false;
         bool sampled = false;
         bool card = false;     // samples a target smaller than the frame
+        uint32_t src_data = 0, src_w = 0, src_h = 0;  // the first target it samples (CV_WIDE_ODD)
         bool skinned = false;  // a skinned program's (Program::skinned)
         bool additive = false;
         uint64_t program = 0;  // its vertex program's (Classify's key), for CV_WATER_LIST
@@ -1120,8 +1210,8 @@ private:
     };
     Draw d_;
     bool back_buffer_ = false;
-    // the frame so far: vertices of 3D drawn (the map screen's shapes are some 150, the world's thousands), a 4:3
-    // picture over the whole frame
+    // the frame so far: vertices of textured 3D drawn (the world's thousands; the map screen's rooms are flat colour),
+    // a 4:3 picture over the whole frame
     static constexpr uint32_t kWorld = 1000;
     uint64_t frame_ = ~0ull;
     uint32_t guest_w_ = 640, guest_h_ = 480;
@@ -1135,6 +1225,7 @@ private:
     bool clamp_ = false;     // the draw at hand reads its texture clamped (Clamp)
     bool card_free_ = false;  // an area's name card may
     bool menu_ = false;       // the pause menu is up this frame
+    bool screen_ = false;     // a screen of its own: the pause menu, the map screen, the title (CameraSpecial)
     std::vector<MenuRect> menu_rects_, menu_before_;  // the pause menu's draws, this frame's and the frame before's
     std::vector<Rect> menu_back_;  // this frame's backdrop: its edge pieces, the large pieces against them
     float menu_move_[2] = {};      // from the frame before: the moves left and right, in console pixels

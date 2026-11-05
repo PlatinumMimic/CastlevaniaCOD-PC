@@ -30,7 +30,7 @@ void Scale(uint8_t* base, uint32_t va, float k) {
 // The camera's matrices, made again when the camera changed (a PS2 style libvu0 camera: sceVu0ViewScreenMatrix and
 // clip matrices). Widescreen draws more at the sides (widescreen.cpp), so the clip data objects are culled against
 // is made wider by the same 4:3 to 16:9 (or 16:10); the matrices the scene is drawn with are left alone.
-void ViewMake(const X86Context& ctx, const uint8_t* base);  // game/view.cpp: CV_VIEW_TRACE
+void ViewMake(const X86Context& ctx, uint8_t* base);  // game/view.cpp: the field of view kept out of menus, CV_VIEW_TRACE
 
 X86_EXTERN_FUNC(__imp__sub_00012CD0);
 X86_FUNC(sub_00012CD0) {

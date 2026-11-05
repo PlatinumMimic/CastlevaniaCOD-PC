@@ -205,6 +205,14 @@ bool PauseMenuUp() {
     return Read(0xB25518u, v) && v;
 }
 
+// the active camera is the title's, the map screen's or a debug view's rather than the play camera (view.cpp: the
+// field of view is the play camera's alone)
+bool CameraSpecial() {
+    uint32_t descriptor = 0, callback = 0;
+    return Read(0xC36B70u, descriptor) && descriptor && Read(descriptor + 0x1D0, callback) &&
+           (callback == 0x345020 || callback == 0x4E7D0);
+}
+
 // a message box is up: the save point's, an item's, a hint
 bool ModalUp() {
     uint32_t at = 0, flags = 0;
