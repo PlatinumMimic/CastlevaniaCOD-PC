@@ -27662,3 +27662,622 @@ index d97cee0..dac6157 100644
 -- 
 2.43.0
 
+From f387a95bb6690fb72ac485bacb2b0b28842ae892 Mon Sep 17 00:00:00 2001
+From: Julian <julianharmon100@gmail.com>
+Date: Thu, 5 Nov 2026 12:56:46 -0500
+Subject: [PATCH] Ray tracing: rays spread by blue noise, ambient occlusion at
+ half size above 1080p, the eye's ray traced once
+
+The ray tracing review's first rounds (the port's docs, rt-review-2026-11-05):
+
+- The passes' random numbers are spread rather than drawn at random (rt_scene.hlsli's Ign, R2 and Sample2):
+  interleaved gradient noise for each pixel's start, then the R2 sequence on from there, each frame's points after
+  the frame before's, a stream apart for the rays, the lights' candidates and the shadow's. White noise (Hash) left
+  a texel's few rays bunched and its neighbours' errors alike, which the denoisers averaged into blotches. Measured
+  on the rampart (rtnoise, DLSS Ray Reconstruction): the flicker on the lamp-lit turned views down a quarter, the
+  rest unchanged.
+- Ray traced ambient occlusion is worked out at half the 3D's size above 1080p's pixels, with 8 rays a pixel
+  (XBE_RT_AO_SCALE sets it). At 4K the rays from every pixel took most of the ray tracing's time, and the bounce
+  lighting's rays were halved to make room: at 4K DLSS Balanced on the RTX 5080 the ambient occlusion went from
+  1.43 to 0.43 ms, the ray tracing from 4.43 to 3.67 ms a frame, and the bounce lighting kept its 4 rays.
+- The eye's ray through each pixel is traced once, by the guides (rt_guide.hlsl's sixth target, EyeHit: the draw,
+  its triangle, the point and the distance, each exact in a float), and the bounce lighting and ambient occlusion
+  take their surface from it rather than tracing it again. They also take TopDraw's choice of the draw at the depth.
+- The surfaces the denoisers tell apart carry the face's normal, not one bent by a texture pack's normal map: across
+  a flat wall the bent ones swung 10 to 30 degrees texel to texel, and at the smoothing's sharpness that left the
+  wall's noise alone. The bounce lighting's smoothing and apply read them too.
+- A character's shadow by a lamp falls from the lamp the bounce lighting kept for that surface the frame before
+  (rt_gi.hlsl's reservoir, read in rt_ao.hlsl with the camera's move), weighed as it weighs it, rather than from a
+  fresh pick of two candidates that flickered between two lamps. The two candidates stay as the fallback.
+- The lights' points kept from frame to frame count for up to 6 frames' candidates (XBE_RT_LIGHTS_REUSE, was 4).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp          | 117 +++++++++++++++++++++++++--------
+ runtime/gpu/rt_ao.hlsl         |  70 ++++++++++++++++----
+ runtime/gpu/rt_gi.hlsl         |  27 ++++++--
+ runtime/gpu/rt_giapply.hlsl    |   3 +-
+ runtime/gpu/rt_gitemporal.hlsl |   3 +-
+ runtime/gpu/rt_guide.hlsl      |  30 +++++++--
+ runtime/gpu/rt_lights.hlsli    |   8 +--
+ runtime/gpu/rt_scene.hlsli     |  19 ++++++
+ 8 files changed, 220 insertions(+), 57 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index fce8561..80c2559 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -89,9 +89,14 @@ constexpr uint32_t kAoRtv = kAaRxRtv + 1;            // ambient occlusion's (Amb
+ constexpr uint32_t kGiRtv = kAoRtv + 1;              // ray traced bounce lighting's (Lighting)
+ constexpr uint32_t kGuideRtv = kGiRtv + 1;           // ray tracing's four guides (Guides), last
+ constexpr uint32_t kGuides = 4;
++// after them their two surfaces (this frame's and the frame before's) and the eye's hits (rt_guide.hlsl's sixth target:
++// what the eye's ray through each pixel met, which the bounce lighting and ambient occlusion take rather than tracing it
++// again)
++constexpr uint32_t kGuideExtra = 3;
++constexpr uint32_t kGuideHit = kGuides + 2;
+ // the bounce lighting's own denoiser's (Lighting): its history, moments and surfaces twice over (this frame's and the
+ // frame before's) and its smoothing's two, last
+-constexpr uint32_t kDnRtv = kGuideRtv + kGuides + 2;  // after the guides and their two surfaces
++constexpr uint32_t kDnRtv = kGuideRtv + kGuides + kGuideExtra;  // after the guides, their two surfaces and the hits
+ constexpr uint32_t kDn = 8;
+ // the reflections' and ambient occlusion's own denoiser's (Reflections, AmbientOcclusion), last: the reflections alone,
+ // their history and frames twice over, their smoothing's; the ambient occlusion's history twice over
+@@ -1253,8 +1258,13 @@ private:
+     D3D12_RESOURCE_STATES rs_state_[kRs] = {};
+     uint32_t rs_w_ = 0, rs_h_ = 0;
+     uint64_t rs_frame_ = UINT64_MAX;
++    uint32_t rs_gw_ = 0, rs_gh_ = 0;  // the part of them drawn (the bounce target's), for ambient occlusion's lamps
+     bool rs_said_ = false;
+     bool EnsureReservoirs(uint32_t tw, uint32_t th);
++    // the eye's hits (kGuideHit) are this frame's, at the target's size: the passes read them rather than tracing
++    bool EyeHits(const Target& t) const {
++        return guide_frame_ == presents_ && guide_[kGuideHit] && guide_w_ == t.w && guide_h_ == t.h;
++    }
+     // the glows remembered off screen (rt_glowmem.hlsl, RGBA32F): the listed lights' summary (128 x 3), the slots this
+     // frame and the frame before (kGlowSlots x 2, by the frame's number), the last frame that wrote them
+     ComPtr<ID3D12Resource> glow_[kGlow];
+@@ -1271,8 +1281,8 @@ private:
+     // and the camera's place, rows)
+     // after the four, each pixel's surface (world normal, view depth: RGBA16F) this frame and the frame before, by the
+     // frame's number (SurfaceNow, SurfaceBefore)
+-    ComPtr<ID3D12Resource> guide_[kGuides + 2];
+-    D3D12_RESOURCE_STATES guide_state_[kGuides + 2] = {};
++    ComPtr<ID3D12Resource> guide_[kGuides + kGuideExtra];
++    D3D12_RESOURCE_STATES guide_state_[kGuides + kGuideExtra] = {};
+     uint64_t surface_frame_[2] = {UINT64_MAX, UINT64_MAX};
+     uint32_t SurfaceNow() const { return kGuides + uint32_t(presents_ & 1); }
+     uint32_t SurfaceBefore() const { return kGuides + uint32_t((presents_ & 1) ^ 1); }
+@@ -6066,19 +6076,22 @@ void D3D12Backend::EndRtPass() {
+ }
+ 
+ // the guides' formats (Guides)
+-static const DXGI_FORMAT kGuideFmt[kGuides + 2] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
+-                                                   DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16_FLOAT,
+-                                                   DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT};
++static const DXGI_FORMAT kGuideFmt[kGuides + kGuideExtra] = {
++    DXGI_FORMAT_R8G8B8A8_UNORM,       DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
++    DXGI_FORMAT_R16_FLOAT,            DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT,
++    // the eye's hits: the draw, its triangle, the point on it and the distance, each exact in a float
++    DXGI_FORMAT_R32G32B32A32_FLOAT};
+ 
+ // Ray tracing's guides at the frame's full size (rt_guide.hlsl), once a frame: each pixel's surface albedo, normal,
+-// roughness and specular albedo, which the bounce lighting's smoothing takes and DLSS Ray Reconstruction denoises with
++// roughness and specular albedo, which the bounce lighting's smoothing takes and DLSS Ray Reconstruction denoises with;
++// its surface for the own denoisers; and what the eye's ray met there (kGuideHit), for the passes after it
+ bool D3D12Backend::Guides(const Target& t, uint32_t rw, uint32_t rh) {
+     if (guide_frame_ == presents_) return true;
+     const DXGI_FORMAT* kFmt = kGuideFmt;
+     if (!guide_[0] || guide_w_ != t.w || guide_h_ != t.h) {
+         LOGR_FIRST(16, "ray tracing: guides made at %ux%u (frame %llu)", t.w, t.h, (unsigned long long)presents_);
+         surface_frame_[0] = surface_frame_[1] = UINT64_MAX;  // new: no surfaces from before
+-        for (uint32_t i = 0; i < kGuides + 2; i++) {
++        for (uint32_t i = 0; i < kGuides + kGuideExtra; i++) {
+             if (guide_[i]) Release(std::move(guide_[i]));
+             D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+             D3D12_RESOURCE_DESC td = Texture2DDesc(kFmt[i], t.w, t.h);
+@@ -6134,21 +6147,24 @@ bool D3D12Backend::Guides(const Target& t, uint32_t rw, uint32_t rh) {
+     }
+     Alloc cb = Upload(256, 256);
+     std::memcpy(cb.cpu, p, sizeof(p));
+-    // the four, and this frame's surfaces (the frame before's kept)
++    // the four, this frame's surfaces (the frame before's kept) and the eye's hits
+     const uint32_t sn = SurfaceNow();
+     for (uint32_t i = 0; i < kGuides; i++) Transition(guide_[i].Get(), guide_state_[i], D3D12_RESOURCE_STATE_RENDER_TARGET);
+     Transition(guide_[sn].Get(), guide_state_[sn], D3D12_RESOURCE_STATE_RENDER_TARGET);
+-    rt::Scene::Out more[kGuides];
++    Transition(guide_[kGuideHit].Get(), guide_state_[kGuideHit], D3D12_RESOURCE_STATE_RENDER_TARGET);
++    rt::Scene::Out more[kGuides + 1];
+     for (uint32_t i = 1; i < kGuides; i++) more[i - 1] = {Cpu(rtv_heap_.Get(), kGuideRtv + i, rtv_inc_), kFmt[i]};
+     more[kGuides - 1] = {Cpu(rtv_heap_.Get(), kGuideRtv + sn, rtv_inc_), kFmt[sn]};
++    more[kGuides] = {Cpu(rtv_heap_.Get(), kGuideRtv + kGuideHit, rtv_inc_), kFmt[kGuideHit]};
+     bool drawn = rt_.Trace(rt::Scene::Pass::Guides, cb.gpu, Gpu(srv_heap_.Get(), slot, srv_inc_),
+                            Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kGuideRtv, rtv_inc_), kFmt[0], rw,
+-                           rh, more, kGuides);
++                           rh, more, kGuides + 1);
+     const D3D12_RESOURCE_STATES kRead =
+         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+     // the hit distance stays a target for the reflections (Reflections), the rest are read
+     for (uint32_t i = 0; i + 1 < kGuides; i++) Transition(guide_[i].Get(), guide_state_[i], kRead);
+     Transition(guide_[sn].Get(), guide_state_[sn], kRead);
++    Transition(guide_[kGuideHit].Get(), guide_state_[kGuideHit], kRead);
+     if (drawn) surface_frame_[presents_ & 1] = presents_;
+     EndRtPass();
+     if (drawn) guide_frame_ = presents_;
+@@ -6630,12 +6646,16 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     uint32_t gw = std::max(1u, uint32_t(float(rw) * kScale)), gh = std::max(1u, uint32_t(float(rh) * kScale));
+     // the depth (the bounce pass's table, and every pass's by its index), the bounce target, the guides (the
+     // smoothing's), the motion and the denoiser's targets (Denoise's)
+-    // (and after them, the lights' points kept the frame before, rt_gi.hlsl's, the glows remembered's three, and the
+-    // anti-aliasing's reactive mask, rt_giapply.hlsl's)
+-    uint32_t slot = AllocSrvSlots(10 + kDn);
+-    ID3D12Resource* src[5 + kDn] = {aa_depth_.Get(), gi_.Get(), guide_[0].Get(), guide_[1].Get(), aa_motion_.Get()};
+-    DXGI_FORMAT fmt[5 + kDn] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, kGuideFmt[0], kGuideFmt[1],
+-                                DXGI_FORMAT_R16G16_FLOAT};
++    // (and after them, the lights' points kept the frame before, rt_gi.hlsl's, the glows remembered's three, the
++    // anti-aliasing's reactive mask, rt_giapply.hlsl's, and the eye's hits, the guides')
++    uint32_t slot = AllocSrvSlots(11 + kDn);
++    // the normals the smoothing and the denoiser tell surfaces apart by are the faces' (this frame's surfaces,
++    // rt_guide.hlsl's fifth target), not the guides' bent by a texture pack's normal map: across a flat wall the bent
++    // ones swing 10 to 30 degrees texel to texel, and at the smoothing's sharpness (64) that left the wall's noise alone
++    ID3D12Resource* src[5 + kDn] = {aa_depth_.Get(), gi_.Get(), guide_[0].Get(), guide_[SurfaceNow()].Get(),
++                                    aa_motion_.Get()};
++    DXGI_FORMAT fmt[5 + kDn] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, kGuideFmt[0],
++                                kGuideFmt[SurfaceNow()], DXGI_FORMAT_R16G16_FLOAT};
+     // the bounce lighting denoised here, with DLSS Ray Reconstruction too unless XBE_RT_GI_DENOISE=0 (the lights'
+     // samples left to it alone flickered on the walls they lit, a frame's grain too coarse for it to settle)
+     static const bool kGiDenoise = env("XBE_RT_GI_DENOISE", 1) != 0;
+@@ -6707,11 +6727,12 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     gc.gl[2] = kBounce2;
+     gc.gl[3] = std::max(1.0f, kBounce2Tries);
+     // XBE_RT_LIGHTS_REUSE: each bounce texel's lights' point kept from frame to frame and resampled with the next
+-    // frame's candidates (ReSTIR's reuse over time), counting for at most this many frames' candidates (4; 0: each
+-    // frame's afresh). A torch found once is kept while it is strong there: the grain of its light on a wall settles
+-    // rather than crawls, as if it were picked of several times the candidates
++    // frame's candidates (ReSTIR's reuse over time), counting for at most this many frames' candidates (6, the most the
++    // kept point's 6 bits hold with High's 8 candidates; 0: each frame's afresh). A torch found once is kept while it
++    // is strong there: the grain of its light on a wall settles rather than crawls, as if it were picked of several
++    // times the candidates
+     // XBE_RT_LIGHTS_REUSE_DEPTH: kept only where the surface was as deep as this one was, within this part (0.05)
+-    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 4.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 6.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
+     const uint32_t rs_cur = uint32_t(presents_ & 1), rs_prev = rs_cur ^ 1;
+     const bool kept = EnsureReservoirs(tw, th);
+     const bool reuse = kept && kReuse > 0 && !rt_reset_ && rs_frame_ != UINT64_MAX && rs_frame_ + 1 == presents_;
+@@ -6753,6 +6774,14 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // the glows remembered off screen (RememberGlows), every one a candidate for the lights' sample
+     gc.gm[0] = RememberGlows(slot, slot + 6 + kDn, rw, rh, gc.lt, gc.sk, gc.list);
+     gc.gm[1] = float(kGlowSlots);
++    // the eye's hits (Guides, kGuideHit): the bounce pass takes each texel's surface from them, not from a ray of its own
++    gc.gm[2] = -1.0f;
++    if (EyeHits(t)) {
++        TextureSrv(guide_[kGuideHit].Get(), kGuideFmt[kGuideHit], slot + 10 + kDn);
++        gc.gm[2] = float(slot + 10 + kDn);
++    }
++    rs_gw_ = gw;
++    rs_gh_ = gh;
+     Alloc gcb = Upload(sizeof(GiConstants), 256);
+     std::memcpy(gcb.cpu, &gc, sizeof(gc));
+     const D3D12_RESOURCE_STATES kRead =
+@@ -7232,12 +7261,22 @@ void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const F
+     ID3D12PipelineState* opso = EnsurePassPipeline(kAoHlsl, "aomain", DXGI_FORMAT_R8_UNORM, -1);
+     ID3D12PipelineState* apso = EnsureAoApplyPipeline(t.fmt);
+     if (!opso || !apso) return;
+-    uint32_t aw = std::max(1u, uint32_t(float(rw) * aq.scale)), ah = std::max(1u, uint32_t(float(rh) * aq.scale));
++    // ray traced (raytrace.h): through the frame's scene, worked out at a part of the 3D's size: the quality's up to
++    // 1080p's pixels, half above (XBE_RT_AO_SCALE: as set). At 4K the rays from every pixel took most of the ray
++    // tracing's time (some 2.6 ms of 4.3 to 5.7 on the 5080, and the bounce lighting's rays were halved to make room);
++    // aoapply reads the target smoothly by depth, as it does Low's half
++    bool traced = (g_ray_tracing.load(std::memory_order_relaxed) & kRtAmbientOcclusion) && BuildRtScene(rw, rh);
++    static const float kRtAoScale = std::getenv("XBE_RT_AO_SCALE") ? float(std::atof(std::getenv("XBE_RT_AO_SCALE"))) : 0.0f;
++    const float scale = !traced ? aq.scale
++                        : kRtAoScale > 0 ? std::clamp(kRtAoScale, 0.25f, 1.0f)
++                        : uint64_t(rw) * uint64_t(rh) > 1920ull * 1080ull ? std::min(aq.scale, 0.5f) : aq.scale;
++    uint32_t aw = std::max(1u, uint32_t(float(rw) * scale)), ah = std::max(1u, uint32_t(float(rh) * scale));
+     const D3D12_RESOURCE_STATES kRead =
+         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+     Transition(aa_depth_.Get(), aa_depth_state_, kRead);
+     if (rx) Transition(aa_rx_.Get(), aa_rx_state_, kRead);
+-    uint32_t slot = AllocSrvSlots(4);
++    // (and after the four, for the ray traced pass: the eye's hits and the bounce lighting's kept lights)
++    uint32_t slot = AllocSrvSlots(6);
+     ID3D12Resource* src[4] = {aa_depth_.Get(), ao_.Get(), rx ? aa_rx_.Get() : nullptr, nullptr};
+     DXGI_FORMAT fmt[4] = {DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_UNORM, kBgra};
+     for (int i = 0; i < 4; i++) {
+@@ -7255,9 +7294,7 @@ void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const F
+                    radius, diag::AoStrength(aq.strength), aq.reach * radius / aq.radius, aq.samples,
+                    float(presents_ % 1024), rx ? 1.0f : 0.0f, 1.0f / float(aw), 1.0f / float(ah),
+                    float(aw) / float(t.w), float(ah) / float(t.h), float(diag::AoView()), 0};
+-    // ray traced (raytrace.h): through the frame's scene
+     int rt_view = 0;
+-    bool traced = (g_ray_tracing.load(std::memory_order_relaxed) & kRtAmbientOcclusion) && BuildRtScene(rw, rh);
+     if (traced) {
+         static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
+         auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
+@@ -7265,9 +7302,10 @@ void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const F
+                            kRays = env("XBE_RT_AO_RAYS", 0), kBias = env("XBE_RT_AO_BIAS", 1.0f);
+         rt_view = kView;
+         float rr = kRadius > 0 ? kRadius : radius;
+-        // the quality's (RtQuality): low 2 rays a pixel, medium 4 (3 at ambient occlusion's Low), high 6 (3)
++        // the quality's (RtQuality): low 2 rays a pixel, medium 4 (3 at ambient occlusion's Low), high 6 (3); 8 where
++        // High is worked out at half the size (a third of the rays a frame still)
+         const uint32_t rq = RtQuality();
+-        float rays = kRays > 0 ? kRays : rq == 0 ? 2.0f : q >= 2 ? (rq == 1 ? 4.0f : 6.0f) : 3.0f;
++        float rays = kRays > 0 ? kRays : rq == 0 ? 2.0f : q >= 2 ? (rq == 1 ? 4.0f : scale < aq.scale ? 8.0f : 6.0f) : 3.0f;
+         // characters' shadows (rt_ao.hlsl): from a soft light above, which the characters alone block; XBE_RT_SHADOWS
+         // their darkest (0.7, 0: none), XBE_RT_SHADOW_REACH how far toward the light a character still shades (1000:
+         // about two and a half characters' height), XBE_RT_SHADOW_SPREAD the light's width (0.2: about 11 degrees),
+@@ -7300,12 +7338,35 @@ void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const F
+             float p[24];
+             float lt[4];
+             float sk[4];
++            float hv[4];
++            float rs[4];
++            float pv[16];
+             uint32_t list[kMaxLights][4];
+         } ac{};
+         std::memcpy(ac.p, rp, sizeof(rp));
+-        if (shade && kLampShadow > 0 && (g_ray_tracing.load(std::memory_order_relaxed) & kRtLighting)) {
++        ac.hv[0] = ac.rs[0] = -1.0f;
++        const bool lamps = shade && kLampShadow > 0 && (g_ray_tracing.load(std::memory_order_relaxed) & kRtLighting);
++        if (lamps) {
+             uint32_t n = LightList(ac.lt, ac.sk, ac.list);
+             ac.sk[0] = n ? kLampShadow : 0.0f;
++            // the lamp each surface's shadow falls from: the bounce lighting's kept light there the frame before
++            // (rs_[], rt_gi.hlsl's reservoirs, read as its KeptBefore does with the camera's move), else picked afresh
++            const uint32_t rs_prev = uint32_t((presents_ & 1) ^ 1);
++            if (n && rs_[rs_prev] && !rt_reset_ && rs_frame_ != UINT64_MAX && rs_frame_ + 1 == presents_ && rs_gw_ &&
++                rs_gh_) {
++                Transition(rs_[rs_prev].Get(), rs_state_[rs_prev], kRead);
++                TextureSrv(rs_[rs_prev].Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, slot + 5);
++                ac.rs[0] = float(slot + 5);
++                ac.rs[1] = float(rs_gw_);
++                ac.rs[2] = float(rs_gh_);
++                ac.rs[3] = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++            }
++        }
++        std::memcpy(ac.pv, rt_clip_to_prev_, sizeof(ac.pv));
++        // the eye's hits (Guides, kGuideHit), where the guides ran before this: the surface each pixel's rays leave from
++        if (EyeHits(t)) {
++            TextureSrv(guide_[kGuideHit].Get(), kGuideFmt[kGuideHit], slot + 4);
++            ac.hv[0] = float(slot + 4);
+         }
+         // XBE_RT_AO_SHEET: how far over a surface a sheet level with it still lies on it, its rays going on past it
+         // (rt_ao.hlsl TraceAo; 32 units, about 15 cm; 0: they stop at it)
+diff --git a/runtime/gpu/rt_ao.hlsl b/runtime/gpu/rt_ao.hlsl
+index e396787..2b4d1b1 100644
+--- a/runtime/gpu/rt_ao.hlsl
++++ b/runtime/gpu/rt_ao.hlsl
+@@ -7,7 +7,8 @@
+ // pixel shader into the ambient occlusion's target, as that pass is, so the frame's pictures (a cut-out's, which the
+ // rays see through where it is see-through) are read as the draws read them.
+ //
+-// Where each pixel is comes from a ray from the eye through it into the scene, its surface's slope from the triangle
++// Where each pixel is comes from a ray from the eye through it into the scene (the guides' EyeHit when they ran this
++// frame, rt_guide.hlsl, else traced here), its surface's slope from the triangle
+ // it meets (exact at every edge, where the depth's neighbours are not), unless the depth holds something nearer that
+ // the scene does not: then from the depth. A ray that meets the scene farther than the depth has slipped through a
+ // crack between two of its meshes (rays half a pixel aside meet the surface at the depth: its place is the depth's) or
+@@ -22,6 +23,13 @@ cbuffer P : register(b0) {
+                   // fast a lamp's shadow takes the light above's place (0: as much as the lamp lights the surface)
+     float4 lt;    // the scene's lights (rt_lights.hlsli): listed, their brightness, candidates, the most they light
+     float4 sk;    // the lamps' shadows' darkest (0: none); a sheet's most height (Sheet); the lights drawn flat's brightness; the most area
++    float4 hv;    // x: the SRV heap index of the eye's hits (rt_guide.hlsl's EyeHit; -1: none, the ray traced here)
++    float4 rs;    // the lights' points the bounce lighting kept the frame before (rt_gi.hlsl's reservoirs): the SRV
++                  // heap's index (-1: none), the bounce target's part (gw, gh), the depth's tolerance (a part of it)
++    float4 pv0;   // the camera's move: this frame's clip space to the frame before's, rows
++    float4 pv1;
++    float4 pv2;
++    float4 pv3;
+     uint4 lights[128];  // each light's draw and triangles (rt_gi.hlsl's)
+ };
+ #include "rt_scene.hlsli"
+@@ -63,6 +71,23 @@ float Hash(uint3 v) {
+     return float(v.x & 0xFFFFFF) / 16777216.0f;
+ }
+ #include "rt_lights.hlsli"
++// the lights' point the bounce lighting kept the frame before for this pixel's surface (rt_gi.hlsl's KeptBefore: none,
++// m 0, without one, or where the surface was not as deep then): where the camera's move puts the pixel in the frame
++// before's bounce target
++Kept KeptBefore(int2 px, float d) {
++    Kept none = (Kept)0;
++    if (rs.x < 0) return none;
++    float4 c = float4((float(px.x) + 0.5) / part.x * 2 - 1, 1 - (float(px.y) + 0.5) / part.y * 2, d, 1);
++    float4 q = float4(dot(pv0, c), dot(pv1, c), dot(pv2, c), dot(pv3, c));
++    if (abs(q.w) < 1e-20f) return none;
++    float2 uv = float2(q.x / q.w * 0.5f + 0.5f, 0.5f - q.y / q.w * 0.5f);
++    int2 at = int2(floor(uv * rs.yz));
++    if (any(at < 0) || any(at >= int2(rs.yz))) return none;
++    float4 v = pictures[NonUniformResourceIndex(uint(rs.x))].Load(int3(at, 0));
++    float zc = ViewZ(saturate(q.z / q.w));
++    if (v.w <= 0 || abs(v.w - zc) > rs.w * zc) return none;
++    return UnpackKept(v);
++}
+ // the scene's surface along d from the eye between tmin and tmax: its distance (-1 for none) and its normal
+ float Primary(float3 d, float tmin, float tmax, out float3 n, out uint geom, out uint prim, out float2 bary) {
+     float t = TraceScene(0, d, tmin, tmax, 32, geom, prim, bary);
+@@ -82,12 +107,24 @@ float ps(float4 pos : SV_Position) : SV_Target {
+     float d = Depth(px);
+     float3 p = ViewPos(px, d);
+     if (p.z >= 0.999 * max(cam.x, cam.y)) return fr.y == 1 ? 0.25f : 1.0f;  // nothing drawn there: the far plane
+-    // the surface: the scene's, met from the eye
++    // the surface: the scene's, met from the eye (as the guides found it, rt_guide.hlsl's EyeHit, where they ran this
++    // frame; else traced here)
+     float len = length(p);
+     float3 dir = p / len, n;
+     uint hit_geom, hit_prim;
+     float2 hit_bary;
+-    float t = Primary(dir, 0, 1e30f, n, hit_geom, hit_prim, hit_bary);
++    float t;
++    if (hv.x >= 0) {
++        float4 h = pictures[NonUniformResourceIndex(uint(hv.x))].Load(int3(px, 0));
++        t = h.x < 0 ? -1 : h.w;
++        hit_geom = uint(max(h.x, 0));
++        hit_prim = uint(h.y);
++        uint pb = uint(h.z);
++        hit_bary = float2(pb & 4095u, pb >> 12) / 4095.0f;
++        n = t >= 0 ? FaceNormal(hit_geom, hit_prim, dir) : 0;
++    } else {
++        t = Primary(dir, 0, 1e30f, n, hit_geom, hit_prim, hit_bary);
++    }
+     // XBE_RT_VIEW 1: whether the scene is where the frame drew it: a ray from the eye through the pixel meets it
+     // within 2% of the depth (white), farther or nearer (grey: the depth from something not in the scene), or not at
+     // all (black). 2: the surface's slope as used (the share of it facing up, 0.5 level). 3, 4: below
+@@ -138,11 +175,11 @@ float ps(float4 pos : SV_Position) : SV_Target {
+     int rays = int(ao.w);
+     float hidden = 0, nearest = ao.x;
+     [loop] for (int k = 0; k < rays; k++) {
+-        // cosine weighted over the hemisphere: more rays near the normal, as light falls
+-        float u1 = Hash(uint3(id, uint(fr.x) * 16u + uint(k)));
+-        float u2 = Hash(uint3(id.yx + 7919u, uint(fr.x) * 16u + uint(k) + 1013u));
+-        float r = sqrt(u1), a = 6.2831853f * u2;
+-        float3 rd = t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u1));
++        // cosine weighted over the hemisphere: more rays near the normal, as light falls (the rays spread,
++        // rt_scene.hlsli's Sample2, not drawn at random: fewer frames to settle, no blotches)
++        float2 u = Sample2(id, uint(fr.x), uint(k), uint(max(rays, 1)));
++        float r = sqrt(u.x), a = 6.2831853f * u.y;
++        float3 rd = t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u.x));
+         // what it meets hides less the farther it is: none at the radius, as the screen space pass weighs it
+         float th = TraceAo(o, rd, n, ao.x);
+         if (th >= 0) {
+@@ -162,8 +199,8 @@ float ps(float4 pos : SV_Position) : SV_Target {
+         float3 up = sh.xyz;
+         float3 tu = normalize(abs(up.y) < 0.99f ? cross(up, float3(0, 1, 0)) : cross(up, float3(1, 0, 0)));
+         float3 bu = cross(up, tu);
+-        float v1 = Hash(uint3(id, uint(fr.x) * 16u + 101u)), v2 = Hash(uint3(id.yx + 31u, uint(fr.x) * 16u + 211u));
+-        float rr = sqrt(v1) * sh2.y, ra = 6.2831853f * v2;
++        float2 v = Sample2(id, uint(fr.x), 0u, 1u, 1u);  // its own stream, apart from the rays'
++        float rr = sqrt(v.x) * sh2.y, ra = 6.2831853f * v.y;
+         float3 ld = normalize(up + tu * (rr * cos(ra)) + bu * (rr * sin(ra)));
+         if (dot(ld, n) > 0.02f) {
+             float th = TraceCharacters(o, ld, 2, sh2.x);
+@@ -176,8 +213,17 @@ float ps(float4 pos : SV_Position) : SV_Target {
+     // 1 / sh2.z part of the most a lamp can (lt.w), the lamp's then as dark as sk.x. Each fell where its light put it,
+     // half as dark, and a character standing by a torch had two (sh2.z 0: so, each as much as the lamp's part)
+     if (sk.x > 0 && lt.x > 0) {
+-        float3 q;
+-        float ll = dot(PickLight(o, n, id, uint(fr.x), 2, q) * lt.y, float3(0.2126f, 0.7152f, 0.0722f));
++        // the lamp: the point the bounce lighting kept for this surface the frame before (rt_gi.hlsl's reservoir: the
++        // light that lights it most, settled over the frames, so the shadow falls one way rather than flickering
++        // between two lamps as a fresh pick did), weighed as it weighs it; else picked afresh of two candidates
++        float3 q = 0, l = 0;
++        Kept k = KeptBefore(px, d);
++        if (k.m > 0 && k.li < uint(lt.x) && k.prim < max(lights[min(k.li, 127u)].y, 1u)) {
++            float inv;
++            l = LightPoint(k.li, k.prim, k.bary, o, n, q, inv) * k.w / 3.14159265f;
++        }
++        if (all(l == 0)) l = PickLight(o, n, id, uint(fr.x), 2, q);
++        float ll = dot(l * lt.y, float3(0.2126f, 0.7152f, 0.0722f));
+         float share = saturate(ll / max(lt.w, 1e-3f));
+         float take = sh2.z > 0 ? saturate(share * sh2.z) : share;
+         float3 dq = q - o;
+diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
+index 83c542c..f19508b 100644
+--- a/runtime/gpu/rt_gi.hlsl
++++ b/runtime/gpu/rt_gi.hlsl
+@@ -29,7 +29,8 @@ cbuffer P : register(b0) {
+     float4 pv1;
+     float4 pv2;
+     float4 pv3;
+-    float4 gm;    // the glows remembered off screen (rt_glowmem.hlsl's): their SRV heap index (-1: none), their slots
++    float4 gm;    // the glows remembered off screen (rt_glowmem.hlsl's): their SRV heap index (-1: none), their slots;
++                  // z: the SRV heap index of the eye's hits (rt_guide.hlsl's EyeHit, -1: none, the ray traced here)
+     uint4 lights[128];  // each light's draw among the scene's and its triangles
+ };
+ #include "rt_scene.hlsli"
+@@ -94,7 +95,19 @@ Out ps(float4 pos : SV_Position) {
+     float3 dir = p / len;
+     uint geom, prim;
+     float2 bary;
+-    float t = TraceScene(0, dir, 0, 1e30f, 32, geom, prim, bary);
++    float t;
++    if (gm.z >= 0) {
++        // the eye's hit as the guides found it (rt_guide.hlsl's EyeHit: the draw at the depth, TopDraw's), not traced
++        // again here
++        float4 h = pictures[NonUniformResourceIndex(uint(gm.z))].Load(int3(px, 0));
++        t = h.x < 0 ? -1 : h.w;
++        geom = uint(max(h.x, 0));
++        prim = uint(h.y);
++        uint pb = uint(h.z);
++        bary = float2(pb & 4095u, pb >> 12) / 4095.0f;
++    } else {
++        t = TraceScene(0, dir, 0, 1e30f, 32, geom, prim, bary);
++    }
+     if (t < 0 || abs(t - len) > 0.02f * len) return res;  // not the scene's surface: no bounce
+     Spot s = SpotOf(geom, prim, bary);
+     float3 n = Facing(s.p[0], s.p[1], s.p[2], dir);
+@@ -116,11 +129,11 @@ Out ps(float4 pos : SV_Position) {
+     bool open = any(skyc > 0);
+     float3 glow = 0, bounced = 0;
+     [loop] for (int k = 0; k < rays; k++) {
+-        // cosine weighted: each ray counts as much as the light from its way does
+-        float u1 = Hash(uint3(id, uint(fr.x) * 8u + uint(k)));
+-        float u2 = Hash(uint3(id.yx + 7919u, uint(fr.x) * 8u + uint(k) + 1013u));
+-        float r = sqrt(u1), a = 6.2831853f * u2;
+-        float3 rd = t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u1));
++        // cosine weighted: each ray counts as much as the light from its way does (the rays spread, rt_scene.hlsli's
++        // Sample2: white noise bunched them, and the denoiser left blotches)
++        float2 u = Sample2(id, uint(fr.x), uint(k), uint(max(rays, 1)));
++        float r = sqrt(u.x), a = 6.2831853f * u.y;
++        float3 rd = t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u.x));
+         uint g2, p2;
+         float2 b2;
+         // the world alone: a character throws no light (Hector's red sash lit the floor under him red) and lets the
+diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
+index e53582a..618ce97 100644
+--- a/runtime/gpu/rt_giapply.hlsl
++++ b/runtime/gpu/rt_giapply.hlsl
+@@ -11,7 +11,8 @@ cbuffer P : register(b0) {
+     float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
+     float4 part;  // the 3D's size in depth texels (rw, rh), the bounce target's part (gw, gh)
+     float4 ap;    // the SRV heap's indices of the depth and the bounce target, its step between taps, XBE_RT_VIEW
+-    float4 gu;    // the SRV heap's indices of the guides' albedo and normals, of the room's average bounce (-1: none,
++    float4 gu;    // the SRV heap's indices of the guides' albedo and of the surfaces (the faces' normals, rt_guide.hlsl's
++                  // fifth target), of the room's average bounce (-1: none,
+                   // all of it added, XBE_RT_GI_NEUTRAL=0), the share of the game's light that is its fill
+     float4 gx;    // how much of what a surface gets above the room's average is added (XBE_RT_GI_BOOST); the share of
+                   // the game's light a character gives up as it gets less (XBE_RT_GI_CHAR_FILL); how much of what a
+diff --git a/runtime/gpu/rt_gitemporal.hlsl b/runtime/gpu/rt_gitemporal.hlsl
+index f964668..f4f802c 100644
+--- a/runtime/gpu/rt_gitemporal.hlsl
++++ b/runtime/gpu/rt_gitemporal.hlsl
+@@ -12,7 +12,8 @@ cbuffer P : register(b0) {
+     float4 cam;   // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
+     float4 part;  // the 3D's size in depth texels (rw, rh), the bounce target's part (gw, gh)
+     float4 ix;    // the SRV heap's indices: the bounce target, and the frame before's history, moments and surfaces
+-    float4 ix2;   // the SRV heap's indices: the motion, the guides' normals, the depth; the frames gathered at most
++    float4 ix2;   // the SRV heap's indices: the motion, the surfaces (the faces' normals, rt_guide.hlsl's fifth target),
++                  // the depth; the frames gathered at most
+     float4 m0;    // the camera's move: this frame's clip space to the frame before's, rows
+     float4 m1;
+     float4 m2;
+diff --git a/runtime/gpu/rt_guide.hlsl b/runtime/gpu/rt_guide.hlsl
+index 1ce54be..a3672f9 100644
+--- a/runtime/gpu/rt_guide.hlsl
++++ b/runtime/gpu/rt_guide.hlsl
+@@ -6,9 +6,11 @@
+ // direction's rays bring that it gives back: a texture pack's materials only, the game's own surfaces reflect nothing).
+ // Where the scene is not what the frame drew (an effect, the sky), the albedo is white with alpha 0 (the passes leave
+ // the pixel as the game drew it, and the denoiser takes its colour as light). The fourth target, the reflections' hit
+-// distance, is 0 here and written by rt_refl.hlsl where it traces. The fifth, each pixel's surface (its world normal
+-// and view depth, the face toward the eye where the scene is not what the frame drew, 0 where nothing was), is kept a
+-// frame for the port's own denoiser to tell whether a pixel shows the same surface as it did a frame before.
++// distance, is 0 here and written by rt_refl.hlsl where it traces. The fifth, each pixel's surface (its face's world
++// normal, unbent by any normal map, and view depth; the face toward the eye where the scene is not what the frame
++// drew, 0 where nothing was), is kept a frame for the port's own denoiser to tell whether a pixel shows the same
++// surface as it did a frame before, and guides the bounce lighting's smoothing. The sixth is what the eye's ray met
++// (EyeHit), which the bounce lighting and ambient occlusion read in place of tracing that ray again.
+ cbuffer P : register(b0) {
+     float4 cam;    // the view's depth at the buffer's 0 and its 1, tan of half the view across, down
+     float4 part;   // the 3D's size in depth texels (rw, rh); 1: characters' metal shines (CharacterGloss), water's
+@@ -44,8 +46,22 @@ struct Guide {
+     float4 specular : SV_Target2;  // specular albedo
+     float hit : SV_Target3;        // the reflections' hit distance, theirs to write
+     float4 surface : SV_Target4;   // world normal, view depth
++    // what the eye's ray through the pixel met (EyeHit): the bounce lighting and ambient occlusion take it from here
++    // rather than tracing the same ray again
++    float4 eye : SV_Target5;
+ };
+ 
++// The eye's hit for the passes after this one (d3d12.cpp's kGuideHit): the draw (-1: the ray met nothing), its triangle,
++// the point on it (its barycentrics in 12 bits each) and the distance along the ray, each exact in a float (the draws
++// and triangles are under 2^24; a small whole number's bits read as a float are a denormal, which a target may flush).
++// The distance is the ray's own, whether or not it is the depth's: each pass judges that as it did (rt_gi.hlsl within 2%
++// of the depth, rt_ao.hlsl's cracks and glows)
++float4 EyeHit(float t, uint geom, uint prim, float2 bary) {
++    if (t < 0) return float4(-1, 0, 0, 0);
++    float2 b = round(saturate(bary) * 4095);
++    return float4(float(geom), float(prim), b.x + 4096 * b.y, t);
++}
++
+ Guide ps(float4 pos : SV_Position) {
+     Guide o;
+     o.albedo = float4(1, 1, 1, 0);
+@@ -53,6 +69,7 @@ Guide ps(float4 pos : SV_Position) {
+     o.specular = 0;
+     o.hit = 0;
+     o.surface = 0;
++    o.eye = float4(-1, 0, 0, 0);
+     int2 px = int2(pos.xy);
+     float3 p = ViewPos(px, depth.Load(int3(px, 0)));
+     if (p.z >= 0.999 * max(cam.x, cam.y)) return o;
+@@ -62,12 +79,15 @@ Guide ps(float4 pos : SV_Position) {
+     uint geom, prim;
+     float2 bary;
+     float t = TraceScene(0, dir, 0, 1e30f, 32, geom, prim, bary);
++    o.eye = EyeHit(t, geom, prim, bary);
+     if (t < 0 || abs(t - len) > 0.02f * len) return o;
+     TopDraw(0, dir, len, t, geom, prim, bary);
++    o.eye = EyeHit(t, geom, prim, bary);  // the draw at the depth, as the passes should see it
+     Draw g = geo[geom];
+     Spot s = SpotOf(geom, prim, bary);
+     float3 n = Facing(s.p[0], s.p[1], s.p[2], dir);
+     if (all(n == 0)) return o;
++    const float3 face = n;  // the face's, before a normal map bends it: the surface target's (below)
+     float footprint = t * 2 * cam.w / part.y;
+     float3 albedo = 1;
+     if (g.a.z != kNone) {
+@@ -109,7 +129,9 @@ Guide ps(float4 pos : SV_Position) {
+     }
+     o.albedo = float4(albedo, g.c.z == 2 ? 0.5f : 1.0f);  // alpha: the scene's surface, a half for a character's
+     o.normal = float4(ToWorld(n), rough);
+-    o.surface = float4(o.normal.xyz, p.z);
++    // the surface's normal is the face's: the denoisers tell one surface from another by it, and a normal map's relief
++    // across a flat wall is still one wall (the bent normal held the bounce lighting's smoothing to each bump)
++    o.surface = float4(ToWorld(face), p.z);
+     if (g.b.x != kNone || person || water)
+         o.specular = float4(SpecularAlbedo(water ? float3(0.02f, 0.02f, 0.02f)
+                                                  : lerp(float3(0.04f, 0.04f, 0.04f), saturate(albedo), metal),
+diff --git a/runtime/gpu/rt_lights.hlsli b/runtime/gpu/rt_lights.hlsli
+index d8bf424..0169f1f 100644
+--- a/runtime/gpu/rt_lights.hlsli
++++ b/runtime/gpu/rt_lights.hlsli
+@@ -133,10 +133,10 @@ float3 PickLightKept(float3 p, float3 n, uint2 id, uint frame, int tries, Kept b
+     float3 keep_l = 0, keep_q = 0;
+     float keep_f = 0, wsum = 0;
+     [loop] for (int k = 0; k < (count > 0 ? tries : 0); k++) {
+-        float u0 = Hash(uint3(id, frame * 16u + uint(k) + 101u));
+-        float u1 = Hash(uint3(id.yx + 31u, frame * 16u + uint(k) + 211u));
+-        float u2 = Hash(uint3(id + 977u, frame * 16u + uint(k) + 331u));
+-        float u3 = Hash(uint3(id.yx + 4111u, frame * 16u + uint(k) + 457u));
++        // the candidates spread over the lights, their triangles and their points (rt_scene.hlsli's Sample2, two
++        // streams of its own), rather than drawn at random
++        float2 ua = Sample2(id, frame, uint(k), uint(max(tries, 1)), 2u), ub = Sample2(id, frame, uint(k), uint(max(tries, 1)), 3u);
++        float u0 = ua.x, u1 = ua.y, u2 = ub.x, u3 = ub.y;
+         uint li = min(uint(u0 * count), count - 1);
+         uint tris = max(lights[li].y, 1u);
+         uint prim = min(uint(u1 * tris), tris - 1);
+diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
+index 78833dc..15f8d00 100644
+--- a/runtime/gpu/rt_scene.hlsli
++++ b/runtime/gpu/rt_scene.hlsli
+@@ -19,6 +19,25 @@ Texture2D<float4> pictures[] : register(t0, space1);
+ SamplerState wrap : register(s0);
+ static const uint kNone = 0xFFFFFFFFu;
+ 
++// The passes' random numbers, spread rather than drawn at random (blue noise): white noise (Hash, each pass's) left a
++// texel's few rays bunched and its neighbours' errors alike, which the denoisers' taps then averaged into blotches the
++// size of a floor tile. Ign (interleaved gradient noise, Jimenez 2014): a number for a pixel that differs most from its
++// neighbours'. R2 (Roberts 2018): the k-th point of a sequence that fills the square evenly, in 32-bit fixed point so it
++// is exact at any index. Sample2: the k-th of n two-dimensional samples for a pixel and frame, a stream apart from the
++// other streams' (the rays' from the lights' from the shadow's): the pixel's own start, then the sequence on from
++// there, each frame's n points after the frame before's, so a texel's rays spread over the hemisphere and its samples
++// over the frames fill it, and its neighbours start elsewhere
++float Ign(uint2 px) {
++    float2 p = float2(px);
++    return frac(52.9829189f * frac(0.06711056f * p.x + 0.00583715f * p.y));
++}
++float2 R2(uint k) { return float2(k * 3242174889u, k * 2447445413u) / 4294967296.0f; }
++float2 Sample2(uint2 px, uint frame, uint k, uint n, uint stream) {
++    float2 start = float2(Ign(px), Ign(px.yx));
++    return frac(start + R2(k + frame * n + stream * 0x10000000u));
++}
++float2 Sample2(uint2 px, uint frame, uint k, uint n) { return Sample2(px, frame, k, n, 0u); }
++
+ // a captured vertex in view space
+ float3 VertexView(uint v) {
+     float3 c = asfloat(verts.Load3(v * 32));
+-- 
+2.43.0
+

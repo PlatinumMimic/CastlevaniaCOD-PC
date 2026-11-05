@@ -407,8 +407,18 @@ background first); the size pictures load at applies from the next start.
       held within this frame's neighbours the same way, then smoothed as widely as the surface's roughness blurs it.
 
     Together they cost about 0.55 ms at 1080p on a GeForce RTX 5080.
+  - *Sampling*: the rays' directions, the lights' candidates and the shadows' points are spread rather than drawn at
+    random (a low-discrepancy sequence from a blue-noise start of each pixel's own, each frame's points after the
+    frame before's), so a texel's few rays cover its hemisphere and its neighbours' errors cancel, which the
+    denoisers settle faster. The eye's ray through each pixel is traced once, by the guides, and the ambient
+    occlusion and bounce lighting take their surface from it. Above 1080p's pixels the ray traced ambient occlusion
+    is worked out at half the 3D's size, with 8 rays a pixel (`XBE_RT_AO_SCALE` sets it): at 4K its rays from every
+    pixel took most of the ray tracing's time, and the bounce lighting's rays were halved to make room. A
+    character's shadow by a lamp falls from the lamp the bounce lighting has settled on for that surface, so it
+    holds still rather than flickering between two lamps.
 
-  All of it costs about 3 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms).
+  All of it costs about 3 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms), and
+  about 3.7 ms at 4K with DLSS Balanced.
   **Ray tracing quality** (`ray_tracing_quality`: 0 low, 1 medium, 2 high, the default) is for slower graphics cards
   (AMD's, Intel's, a handheld's): low lights the room with one ray a pixel at a third of the frame's size, reaches
   less far, sends fewer ambient occlusion rays, reflects only the smoothest surfaces and leaves the light shafts out

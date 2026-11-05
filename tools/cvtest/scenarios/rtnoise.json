@@ -1,6 +1,7 @@
 {
   "name": "rtnoise",
   "save": "julian",
+  "vendor": true,
   "note": "Julian's rampart arena (5.9: the round floor, the purple brazier) where the traced light showed blotches and pools from nothing; 5.8's lamps, 2.17's torches. Each spot shot six times two frames apart (the flicker), then turned",
   "steps": [
     {

@@ -1,6 +1,7 @@
 {
   "name": "rtreal",
   "save": "julian",
+  "vendor": true,
   "perf": true,
   "note": "Ray traced lighting's realism: rooms with ivy and fallen leaves (5.8, 5.9) and with Hector among enemies and torches (6.2, 10.5, 2.17), each turned round in three steps.",
   "settings": {
