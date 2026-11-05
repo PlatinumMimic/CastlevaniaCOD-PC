@@ -62,7 +62,7 @@ On top of Pazzi7054's port:
 - **PS2 button layout** - the PS2's button icons (from a PS2 HD pack) and shoulder buttons, as an option.
 - **Lament of Innocence bonus** - the Moai the PS2 game gave for a Lament of Innocence save, as an option.
 - **Field of view, draw distance and fog** - a wider view, the world drawn farther and its fog pushed out or gone,
-  with the rampart's painted sky kept as the game shows it. By Calm-Consideration41.
+  with the painted skies kept as the game shows them. By Calm-Consideration41.
 - **HUD at the screen's corners** - in widescreen the health bar and the rest of the HUD sit in the corners of the
   screen, not of the 4:3 middle. By Calm-Consideration41.
 - **PS2 stick response, inverted camera and rumble** - Hector walks any way the stick points, as on the PS2, instead
@@ -325,10 +325,10 @@ background first); the size pictures load at applies from the next start.
 - **Draw Distance and Fog** - How far the world is drawn (the game's, 1.5x, 2x or 4x) and how far out its fog and
   darkness start (the game's, 1.5x, 2x, 4x, or none). **Far View** sets both to 4x (`draw_distance = 400`,
   `fog_distance = 400`). Rooms the game fogs heavily open up most; a room's far scenery can end where its fog used to
-  hide it. Some skies are painted cards the game placed past a room's far plane, in its fog (the Abandoned Castle's
-  rampart has a moon 45,000 units out, its fog ending at 39,000): pushed out, they showed their edges. That sky's
-  textures keep the room's own fog, so it looks as the game shows it, while the rest of the room is drawn as far as
-  set.
+  hide it. The skies are painted strips, clouds and moons the game placed far out (the Abandoned Castle's rampart
+  has a moon 45,000 units out, its fog ending at 39,000); they look as the game shows them with the fog pushed out
+  too, their pictures repeating across them as on the PS2 (before 1.8.0 they were read stretched, which showed as
+  smears and the strips' edges).
 - **Anti-Aliasing** - Smooth, steady edges on the 3D, gathered over the frames: AMD FSR on any graphics card, NVIDIA
   DLSS on a GeForce RTX (from the game's next start once chosen), their files downloaded by the launcher's Graphics
   page from AMD and NVIDIA (the game loads them only signed by AMD or NVIDIA, the launcher checks their SHA-256). On
@@ -752,9 +752,6 @@ Changes this game needed beyond the generated config:
   Windows. It has not been tried on a Linux PC's own graphics drivers yet.
 - Linux has no HDR and no frame generation yet, and its anti-aliasing and upscaling are the game's own TAA: AMD FSR
   and NVIDIA DLSS are Windows libraries. The TAA is new and has been tested in the first areas only.
-- With the fog pushed out or off, or Far View on, some rooms' skies show the edges of the painted cards they are
-  made of. The Abandoned Castle's rampart keeps its sky as the game shows it; a fix for the other rooms is being
-  worked on.
 - Nothing in a release is code-signed (the port's programs, nor the Clang and LLD of the LLVM project). Windows 11's
   Smart App Control, where it is on, may block such programs; that is untested.
 

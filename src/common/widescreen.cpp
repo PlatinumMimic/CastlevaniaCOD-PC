@@ -46,11 +46,11 @@
 // Skies past the fog: the game builds its skies from painted strips, a moon and clouds placed far out in the world,
 // past a room's far plane where its fog has hidden everything (the rampart of 5.7: a ring of sky strips up to 62000
 // out, the moon at 45000, with fog from 14000 to 39000 and the far plane at 39000). With the fog and the far plane
-// pushed out (game/view.cpp) they show as the cards they are, their edges and overlaps never meant to be seen. The
-// draws of a sky's textures (kSky) get the room's own fog back (the coefficients in c91, as the game set them) and
-// are not drawn where wholly past the room's own far plane; everything else is drawn as far as set. A texture is
-// listed by hand: level geometry lies past a room's far plane too, and only the sky's cards are held back.
-// CV_SKY_TRACE logs the candidates, CV_SKY_HIDE hides them, CV_BACKDROPS=0 draws the skies pushed out too.
+// pushed out (game/view.cpp) they show as the PS2 shows them so: their pictures scrolled by their programs and
+// wrapped (the SDK's TexcoordsAsGiven; clamped, they smeared into streaks and hard-edged blocks). Backdrop, off unless
+// CV_BACKDROPS=1, gives the draws of the textures in kSky the room's own fog back (the coefficients in c91, as the
+// game set them) and holds back those wholly past the room's own far plane, for comparing. CV_BACKDROPS=1 with
+// CV_SKY_TRACE logs each room's candidates, the textures drawn only past its far plane; CV_SKY_HIDE hides them.
 //
 // Overscan: the last pass of each frame draws a copy of the frame back over it with rows -16 to 496 of the copy
 // across rows 0 to 480, the PS2's 448 lines and their border shrunk into the NTSC frame; the European release's rows

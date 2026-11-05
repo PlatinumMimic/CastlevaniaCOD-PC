@@ -38,8 +38,7 @@ is chosen at the bottom of its sidebar.
 
 The field of view, the draw distance and the fog (Graphics), the HUD in the screen's corners in
 widescreen, the PS2's stick response, the inverted camera and the rumble on both motors (Controls)
-are by Calm-Consideration41. With the fog pushed out or off, some rooms' skies show the edges of
-the painted cards they are made of; a fix is being worked on.
+are by Calm-Consideration41.
 
 Name a new game @CRAZY for Crazy mode or @TREVOR to play as Trevor Belmont; here these work
 without beating the game first. The @ is on the last row of the name screen's letters.
