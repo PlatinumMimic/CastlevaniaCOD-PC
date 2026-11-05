@@ -308,6 +308,7 @@ public:
                   (std::fabs(x.lo - 0.5f) <= 1.5f || std::fabs(x.hi - gw - 0.5f) <= 1.5f);
         // a quad on the frame: across it, how far its texture coordinates go
         if (inside && a.vertex_count == 4) d_.u = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[0]; });
+        if (inside && a.vertex_count == 4) d_.v = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[1]; });
         // any quad's, for TexelBox
         if (a.vertex_count == 4) {
             d_.box_u = Read(a, kTexCoord, [](const float* v, uint32_t) { return v[0]; });
@@ -667,9 +668,10 @@ public:
                  (unsigned long long)d_.name, d_.blend, d_.zwrite ? " zwrite" : "", d_.ntex ? " pack " : "",
                  d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "");
         else if (trace_now_ && d_.squeeze)
-            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g%s blend %u%s%s: %s%s",
+            LOGR("wide %llu: into %08x%s n %u x %.0f..%.0f y %.0f..%.0f tex %ux%u at %08x %016llx u %g..%g v %g..%g%s blend %u%s%s: %s%s",
                  (unsigned long long)frame_, trace_rt_, trace_device_ ? " device" : "", d_.count, d_.x.lo, d_.x.hi,
                  d_.y.lo, d_.y.hi, d_.tex.width, d_.tex.height, d_.tex.data, (unsigned long long)d_.name, d_.u.lo, d_.u.hi,
+                 d_.v.lo, d_.v.hi,
                  d_.target ? " target" : "", src_blend, d_.ntex ? " pack " : "",
                  d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "", d_.whole ? "whole, " : "",
                  sides ? "to the sides" : edges ? "edges out" : menu.strip ? "menu strip" : menu.backdrop ? "menu backdrop"
@@ -1417,7 +1419,7 @@ private:
         float gw = 640;     // the console frame's width
         float gh = 480;     // and height
         uint32_t count = 0;
-        Span x, y, u;  // on the console frame; the first texture coordinate, for one quad on it
+        Span x, y, u, v;  // on the console frame; the first texture coordinates, for one quad on it (v for the trace)
         bool at_point = false;  // a 2D draw placed at a point of the world, by that point's depth
         Span box_u, box_v;  // a quad's texture coordinates, on the frame or not (TexelBox)
         gpu::TextureDesc tex;

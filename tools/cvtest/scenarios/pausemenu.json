@@ -1,0 +1,24 @@
+{
+  "name": "pausemenu",
+  "save": "julian3",
+  "note": "The pause menu at 4K as Julian plays it (DLSS, the menu spread across the screen): the first page with the cursor on each of its buttons, then the pages by the shoulder buttons, for the text's sharpness and the buttons' column (Julian, 5 Nov: the text sharper, the middle column of options better).",
+  "settings": {"width": 3840, "height": 2160, "hdr": false, "antialiasing": 2, "upscaling": 1, "widescreen": true, "menu_spread": true},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "expect": ["not player.active"], "judge": false},
+    {"until": "player.active and not cutscene and not loading and not menu", "timeout": 90,
+     "poll": "0:a,90f:wait", "poll_by": [["cutscene", "0:start,45f:wait"]], "shot": "loaded", "judge": false},
+    {"press": "0f:wait:60f", "shot": "stand", "judge": false},
+    {"press": "0:start,1500:wait", "shot": "page-1", "expect": ["menu"], "judge": false},
+    {"press": "0:down,800:wait", "shot": "page-1-b2", "expect": ["menu"], "judge": false},
+    {"press": "0:down,800:wait", "shot": "page-1-b3", "expect": ["menu"], "judge": false},
+    {"press": "0:down,800:wait", "shot": "page-1-b4", "expect": ["menu"], "judge": false},
+    {"press": "0:down,800:wait", "shot": "page-1-b5", "expect": ["menu"], "judge": false},
+    {"press": "0:down,800:wait", "shot": "page-1-b6", "expect": ["menu"], "judge": false},
+    {"press": "0:a,1500:wait", "shot": "sub-1", "expect": ["menu"], "judge": false},
+    {"press": "0:b,1000:wait", "shot": "page-1-back", "expect": ["menu"], "judge": false},
+    {"press": "0:rt,1500:wait", "shot": "page-2", "expect": ["menu"], "judge": false},
+    {"press": "0:rt,1500:wait", "shot": "page-3", "expect": ["menu"], "judge": false},
+    {"press": "0:rt,1500:wait", "shot": "page-4", "expect": ["menu"], "judge": false},
+    {"press": "0:b,1500:wait", "shot": "closed", "judge": false}
+  ]
+}
