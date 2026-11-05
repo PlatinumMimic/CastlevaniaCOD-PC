@@ -1,0 +1,21 @@
+{
+  "name": "rt",
+  "save": "julian",
+  "perf": true,
+  "note": "Ray tracing (raytrace.h): the play folder's save loaded from the title (Continue), then rooms shot after standing 4 s: the courtyard (5.1), a hall (2.1), a rock cave (10.5). Run with --set ray_tracing=0 or 1. XBE_AO_VIEW=1 shows the ambient occlusion alone, 3 unblurred; XBE_RT_VIEW=1 whether the scene is where the frame drew it, 2 the surfaces' slope, 3 where each pixel's place came from, 4 how near the rays' nearest hit is (rt_ao.hlsl). XBE_MUTE=1 and XBE_BACKGROUND=1 keep the game silent and behind other windows.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "frame_generation": 0, "antialiasing": 1, "ambient_occlusion": 2},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "expect": ["not player.active"], "judge": false},
+    {"until": "player.active and not cutscene and not loading and not menu", "timeout": 90,
+     "poll": "0:a,90f:wait", "poll_by": [["cutscene", "0:start,45f:wait"]], "shot": "loaded", "judge": false},
+    {"press": "0:warp=5.1,10f:wait:20f"},
+    {"until": "map == 5 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r5-1", "judge": false},
+    {"press": "0:warp=2.1,10f:wait:20f"},
+    {"until": "map == 2 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r2-1", "judge": false},
+    {"press": "0:warp=10.5,10f:wait:20f"},
+    {"until": "map == 10 and room == 5 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:240f", "shot": "r10-5", "judge": false}
+  ]
+}

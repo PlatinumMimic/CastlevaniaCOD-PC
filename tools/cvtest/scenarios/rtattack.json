@@ -1,0 +1,254 @@
+{
+  "name": "rtattack",
+  "save": "julian",
+  "perf": true,
+  "note": "Lights from effects: in a room near a save room (its marker under Hector) and two others, Hector stands (two shots) then attacks (a shot after each swing), then stands again.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.25,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 25 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "5-25-stand",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "5-25-stand2",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk1",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk2",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk3",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk4",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk5",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk6",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk7",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-25-atk8",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "5-25-after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.2,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 2 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "5-2-stand",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "5-2-stand2",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk1",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk2",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk3",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk4",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk5",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk6",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk7",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-2-atk8",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "5-2-after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.1,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 1 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "5-1-stand",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:2f",
+      "shot": "5-1-stand2",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk1",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk2",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk3",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk4",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk5",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk6",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk7",
+      "judge": false
+    },
+    {
+      "press": "0f:x:3f,4f:wait:1f",
+      "shot": "5-1-atk8",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "5-1-after",
+      "judge": false
+    }
+  ]
+}

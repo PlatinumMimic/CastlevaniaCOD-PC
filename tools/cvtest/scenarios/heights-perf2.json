@@ -1,0 +1,83 @@
+{
+  "name": "heights-perf2",
+  "save": "julian",
+  "perf": true,
+  "note": "As heights-perf, the 3D drawn at 400% (7680x4320 inside a 1920x1080 window) so the graphics card, not the monitor's 144 Hz cap, sets the frame rate: rooms 5.1, 5.7 and 2.1 held 8 s each.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "texture_pack_size": 0,
+    "frame_generation": 0,
+    "surface_depth": 2,
+    "vsync": false,
+    "fps_cap": 0,
+    "render_percent": 400
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.1,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 1 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:120f"
+    },
+    {
+      "press": "0:wait:8000",
+      "shot": "p5-1",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.7,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 7 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:120f"
+    },
+    {
+      "press": "0:wait:8000",
+      "shot": "p5-7",
+      "judge": false
+    },
+    {
+      "press": "0:warp=2.1,10f:wait:20f"
+    },
+    {
+      "until": "map == 2 and room == 1 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:120f"
+    },
+    {
+      "press": "0:wait:8000",
+      "shot": "p2-1",
+      "judge": false
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "heights-perf",
+  "save": "julian",
+  "perf": true,
+  "note": "Surface depth's cost: the play folder's save, then rooms with masonry (5.1, 2.1, 4.0) held 10 s each with the frame rate unlocked and the 3D drawn at 200% (3840x2160 inside a 1920x1080 window), so the graphics card sets the frame rate. Compare step.fps across builds or --set surface_depth=0.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "texture_pack_size": 0, "frame_generation": 0,
+               "surface_depth": 2, "vsync": false, "fps_cap": 0, "render_percent": 200},
+  "steps": [
+    {"press": "0:wait:11000", "expect": ["not player.active"], "judge": false},
+    {"until": "player.active and not cutscene and not loading and not menu", "timeout": 90,
+     "poll": "0:a,90f:wait", "poll_by": [["cutscene", "0:start,45f:wait"]], "judge": false},
+    {"press": "0:warp=5.1,10f:wait:20f"},
+    {"until": "map == 5 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:120f"},
+    {"press": "0:wait:10000", "shot": "p5-1", "judge": false},
+    {"press": "0:warp=2.1,10f:wait:20f"},
+    {"until": "map == 2 and room == 1 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:120f"},
+    {"press": "0:wait:10000", "shot": "p2-1", "judge": false},
+    {"press": "0:warp=4.0,10f:wait:20f"},
+    {"until": "map == 4 and room == 0 and player.active and not loading", "timeout": 40},
+    {"press": "0f:wait:120f"},
+    {"press": "0:wait:10000", "shot": "p4-0", "judge": false}
+  ]
+}

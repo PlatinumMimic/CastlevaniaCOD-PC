@@ -1,0 +1,78 @@
+{
+  "name": "shadowspot",
+  "save": "julian",
+  "note": "5.0's grass path, Hector stood on open ground (linespot's walk), shot at three spots: his ray traced shadow (XBE_RT_SHADOWS_TAKE=0: the two by a lamp, as before; XBE_RT_SHADOWS_LAMPS=0: the light above's alone)",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 0 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-0-a",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-1000/-14650/150:20000,40f:wait"
+    },
+    {
+      "press": "0:walk=-3000/-16900/150:20000,60f:wait",
+      "shot": "q1",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-8740/-15930/150:20000,60f:wait",
+      "shot": "q2",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-11100/-18600/150:20000,60f:wait",
+      "shot": "q3",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "ray_tracing": 5,
+    "ambient_occlusion": 2,
+    "antialiasing": 2,
+    "upscaling": 2
+  }
+}

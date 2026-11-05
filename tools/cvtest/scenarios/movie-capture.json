@@ -1,0 +1,14 @@
+{
+  "name": "movie-capture",
+  "note": "The CG movies' draw path: a new game from the title (as newgame.json) into the first movies, a renderer capture and screenshots while they play (XBE_CAPTURE_DIR set), the log's file opens.",
+  "settings": {"width": 1920, "height": 1080, "hdr": false, "frame_generation": 0},
+  "steps": [
+    {"press": "0:wait:11000", "shot": "title", "judge": false},
+    {"press": "1000:a,4000:a,4600:a,5200:a,6000:start,7000:a,9000:a,13000:left,14000:a,18000:a,21000:a,24000:a,26000:wait", "shot": "after-save", "judge": false},
+    {"press": "0:wait:4000", "shot": "movie-1", "judge": false},
+    {"press": "0:capture,0:wait:3000", "shot": "movie-2", "judge": false},
+    {"press": "0:wait:6000", "shot": "movie-3", "judge": false},
+    {"press": "0:start,0:wait:6000", "shot": "movie-4", "judge": false},
+    {"press": "0:capture,0:wait:3000", "shot": "movie-5", "judge": false}
+  ]
+}

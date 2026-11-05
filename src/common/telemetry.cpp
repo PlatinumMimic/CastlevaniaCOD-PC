@@ -12,7 +12,7 @@
 //                        the game's getters sub_00334640 and sub_00334510 return
 //   Hector               int32 attributes at 0xB2CCC0 + n * 4: 3 EXP, 5 max HP, 6 HP, 31 max MP, 32 MP; gold 0xB35204
 //   camera               view u32 0xC36B74: angles float3 +0x20, target +0x30, position +0x40. The title, the map
-//                        screen and debug views run callback 0x345020 or 0x4E7D0, at [u32 0xC36B70] + 0x1D0
+//                        screen and debug views run callback 0x345020 or 0x4E7D0, at [u32 0xC36B70] + 0x1D0 (USA)
 //   menus                u32 0xB25518 is not 0 while the pause or inventory menu is up; a modal box sets bit 16 of the
 //                        word at u32 [0x548C10]
 //   scene                u32 0xB23410 (found here, by comparing memory in play and in a story scene)
@@ -236,6 +236,14 @@ void HealPlayer() {
 bool PauseMenuUp() {
     uint32_t v = 0;
     return Read(cv::kMenu, v) && v;
+}
+
+// the active camera is the title's, the map screen's or a debug view's rather than the play camera (view.cpp: the
+// field of view is the play camera's alone)
+bool CameraSpecial() {
+    uint32_t descriptor = 0, callback = 0;
+    return Read(cv::kCameraDescriptor, descriptor) && descriptor && Read(descriptor + 0x1D0, callback) &&
+           (callback == cv::kTitleCallback || callback == cv::kDebugCallback);
 }
 
 // a message box is up: the save point's, an item's, a hint

@@ -1,0 +1,30 @@
+{
+  "name": "charfight",
+  "after": "newgame.json",
+  "note": "first-save's walk with its fights (after newgame.json), ray tracing on as Julian plays: with XBE_RT_CHAR_LOG, the frames whose scene missed a character (its shadow and shade cut out in a fight: the game fading it, blinking as it is hurt)",
+  "steps": [
+    {
+      "route": "first-save",
+      "shot": "route-end",
+      "expect": [
+        "map == 5",
+        "room == 2",
+        "step.saved",
+        "player.exp > 0",
+        "not menu",
+        "not modal",
+        "not camera.special"
+      ]
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "ray_tracing": 5,
+    "ambient_occlusion": 2,
+    "antialiasing": 2,
+    "upscaling": 2
+  }
+}

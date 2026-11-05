@@ -997,7 +997,7 @@ def play_route(game, route, step, prev, box_shots=None):
     def keep_box(where):
         """box_shots: the box once it is drawn (it opens over some frames)"""
         nonlocal boxes
-        if not box_shots or play("45f:wait") or not game.alive():
+        if not box_shots or play(os.environ.get("CV_BOX_WAIT", "45f") + ":wait") or not game.alive():
             return
         img = capture(game.hwnd)
         if img:

@@ -1,0 +1,118 @@
+{
+  "name": "world-upscale",
+  "save": "julian",
+  "note": "Rooms with the world textures the pack had no pictures for (replacements\\world-upscale): ivy and leaves (10.6), gates (4.26), doors and windows (4.17), the forest backdrop (10.8), an orb (8.15), the pachinko machine (13.15), cliffs (10.22). Shot after standing 4 s; run before and after the pictures go in.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "texture_pack_size": 0,
+    "frame_generation": 0,
+    "surface_depth": 2
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "judge": false
+    },
+    {
+      "press": "0:warp=10.6,10f:wait:20f"
+    },
+    {
+      "until": "map == 10 and room == 6 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w10-6",
+      "judge": false
+    },
+    {
+      "press": "0:warp=4.26,10f:wait:20f"
+    },
+    {
+      "until": "map == 4 and room == 26 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w4-26",
+      "judge": false
+    },
+    {
+      "press": "0:warp=4.17,10f:wait:20f"
+    },
+    {
+      "until": "map == 4 and room == 17 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w4-17",
+      "judge": false
+    },
+    {
+      "press": "0:warp=10.8,10f:wait:20f"
+    },
+    {
+      "until": "map == 10 and room == 8 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w10-8",
+      "judge": false
+    },
+    {
+      "press": "0:warp=8.15,10f:wait:20f"
+    },
+    {
+      "until": "map == 8 and room == 15 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w8-15",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.15,10f:wait:20f"
+    },
+    {
+      "until": "map == 13 and room == 15 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w13-15",
+      "judge": false
+    },
+    {
+      "press": "0:warp=10.22,10f:wait:20f"
+    },
+    {
+      "until": "map == 10 and room == 22 and player.active and not loading",
+      "timeout": 40
+    },
+    {
+      "press": "0f:wait:240f",
+      "shot": "w10-22",
+      "judge": false
+    }
+  ]
+}

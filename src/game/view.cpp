@@ -35,6 +35,8 @@
 extern uint32_t g_fov;            // menu.cpp: percent of the game's field of view (of the tan of its half angle)
 extern uint32_t g_draw_distance;  // menu.cpp: percent of the game's far plane
 extern uint32_t g_fog_distance;   // menu.cpp: percent of the game's fog distance, 0 for no fog
+bool PauseMenuUp();               // telemetry.cpp
+bool CameraSpecial();             // telemetry.cpp: the title's camera, the map screen's or a debug view's
 
 namespace {
 
@@ -62,6 +64,7 @@ int32_t Times(int32_t v, uint32_t percent) {
 struct View {
     uint8_t* base = nullptr;
     int32_t screen = 0, far_z = 0;  // the game's own, as it last set them
+    int32_t drawn = 0;              // the screen distance last put in its place (the field of view's)
     int32_t fog_near = 0, fog_far = 0;
     bool fog_set = false;
     uint32_t far_made = 100, fog_made = 100;  // the settings they were last applied with
@@ -114,6 +117,15 @@ const bool kTrace = std::getenv("CV_VIEW_TRACE") != nullptr;
 bool Traced(uint32_t& n) { return kTrace && (n++ < 8 || n % 300 == 0); }
 uint32_t Caller(const X86Context& ctx, const uint8_t* base) { return Get<uint32_t>(base, ctx.esp); }
 
+// the field of view is the play camera's: the pause menu's own 3D (an item turning beside its description, an
+// Innocent Devil on its page) and the map screen's rooms are framed for the game's view, and keep it. At 150% the
+// menu's item was drawn two thirds its size toward the screen's middle, above and right of its place beside its
+// description. CV_MENU_FOV: widened there too, as before
+bool MenuView() {
+    static const bool widened = std::getenv("CV_MENU_FOV") != nullptr;
+    return !widened && (PauseMenuUp() || CameraSpecial());
+}
+
 }  // namespace
 
 // each frame of play, from the camera update: settings changed since the game last set its values
@@ -147,8 +159,16 @@ bool ViewBackdrop(float game[2], float drawn[2], float& far_z, uint32_t& room) {
     return far_z > 0 && game[1] != 0;
 }
 
-// the camera's matrices about to be made (hooks.cpp, sub_00012CD0), traced
-void ViewMake(const X86Context& ctx, const uint8_t* base) {
+// the camera's matrices about to be made (hooks.cpp, sub_00012CD0), traced. In a menu (MenuView) the play camera's
+// screen distance as the field of view drew it is put back to the game's own, should the menu make its matrices from
+// it without setting its own
+void ViewMake(const X86Context& ctx, uint8_t* base) {
+    if (g_view.drawn && g_view.drawn != g_view.screen && Get<int32_t>(base, kScreenDistance) == g_view.drawn &&
+        MenuView()) {
+        Put<int32_t>(base, kScreenDistance, g_view.screen);
+        if (kTrace) LOGR("view: in a menu, the screen distance %d put back to the game's %d", g_view.drawn, g_view.screen);
+        g_view.drawn = 0;
+    }
     static uint32_t n = 0;
     if (Traced(n))
         LOGR("view %u: matrices made for %08x: screen distance %d far %d fog %g %g", n, Caller(ctx, base),
@@ -193,12 +213,15 @@ X86_FUNC(CV_HOOK(CV_SCREEN_DISTANCE)) {
     uint32_t fov = std::clamp<uint32_t>(g_fov, 50, 300);
     uint32_t word = Get<uint32_t>(base, kScene);
     bool scene = (word & 0x20000) != 0;
-    int32_t used = fov == 100 || scene || d <= 0 ? d : std::max<int32_t>(1, int32_t(std::lround(d * 100.0 / fov)));
+    bool menu = fov != 100 && MenuView();
+    int32_t used = fov == 100 || scene || menu || d <= 0 ? d : std::max<int32_t>(1, int32_t(std::lround(d * 100.0 / fov)));
+    g_view.drawn = used != d ? used : 0;
     static uint32_t n = 0;
     static int32_t traced = -1;
     if (kTrace && used != traced && n++ < 400) {
         traced = used;
-        LOGR("view %u: screen distance %d, drawn with %d, scene %x, from %08x", n, d, used, word, Caller(ctx, base));
+        LOGR("view %u: screen distance %d, drawn with %d, scene %x%s, from %08x", n, d, used, word, menu ? ", menu" : "",
+             Caller(ctx, base));
     }
     Put<int32_t>(base, at, used);
     CV_ORIGINAL(CV_SCREEN_DISTANCE)(ctx, base);

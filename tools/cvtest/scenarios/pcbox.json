@@ -1,0 +1,29 @@
+{
+  "name": "pcbox",
+  "after": "newgame.json",
+  "note": "first-save's walk (after newgame.json) with a screenshot of every box that comes up on the way (the tip picked up from the hint box among them), on a 16:9 screen with the HUD at the edges: a window over the world is widened to the screen's sides and the HUD stays at the edges while it is up.",
+  "steps": [
+    {
+      "route": "first-save",
+      "shot": "route-end",
+      "expect": [
+        "map == 5",
+        "room == 2",
+        "step.saved",
+        "player.exp > 0",
+        "not menu",
+        "not modal",
+        "not camera.special"
+      ],
+      "box_shots": true
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "ray_tracing": 0,
+    "hud_edges": true
+  }
+}

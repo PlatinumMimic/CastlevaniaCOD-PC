@@ -67,6 +67,7 @@ extern char** environ;
 #include <toml++/toml.hpp>
 
 #include "app/app.h"
+#include "app/window_icon.h"
 #include "kernel/disc.h"
 #include "../common/crest.h"
 #include "../common/marks.h"
@@ -310,6 +311,9 @@ struct Gpu {
     std::string name;
     bool d3d12 = false;
     bool software = false;  // Windows' own renderer on the CPU, no graphics driver installed
+    // the card and its driver as the game's pipeline cache names them (vendor:device:driver version), which its
+    // shaders were last prepared for when cache/shaders/pipelines.stamp says so
+    std::string identity;
 };
 
 #ifdef _WIN32
@@ -325,6 +329,13 @@ Gpu Describe(IDXGIAdapter1* a, bool d3d12) {
     if (a && SUCCEEDED(a->GetDesc1(&d))) {
         g.name = Utf8(d.Description);
         g.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        // as the SDK's runtime/gpu/d3d12.cpp writes it (DeviceIdentity)
+        LARGE_INTEGER umd{};
+        a->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd);
+        char id[96];
+        std::snprintf(id, sizeof(id), "%04x:%04x:%u.%u.%u.%u", d.VendorId, d.DeviceId, unsigned(umd.HighPart >> 16),
+                      unsigned(umd.HighPart & 0xFFFF), unsigned(umd.LowPart >> 16), unsigned(umd.LowPart & 0xFFFF));
+        g.identity = id;
     }
     return g;
 }
@@ -375,6 +386,41 @@ DisplayHdr PrimaryHdr() {
         }
     }
     return last;
+}
+
+// Whether a graphics card traces rays as the game's renderer does (runtime/gpu/raytrace.cpp): DXR 1.1 and shader
+// model 6.5. Asked once a card, by its name (empty: the fastest). CV_NO_RAYS=1 pretends none does
+bool TracesRays(const std::string& name) {
+    static std::vector<std::pair<std::string, bool>> known;
+    for (auto& k : known)
+        if (k.first == name) return k.second;
+    bool yes = false;
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> f6;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> a;
+    if (!GetEnvironmentVariableW(L"CV_NO_RAYS", nullptr, 0) && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        factory.As(&f6);
+        for (UINT i = 0;; i++) {
+            HRESULT hr = f6 ? f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&a))
+                            : factory->EnumAdapters1(i, &a);
+            if (FAILED(hr)) break;
+            Gpu g = Describe(a.Get(), true);
+            if (g.software || (!name.empty() && g.name != name)) continue;
+            Microsoft::WRL::ComPtr<ID3D12Device> dev;
+            if (SUCCEEDED(D3D12CreateDevice(a.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) {
+                D3D12_FEATURE_DATA_D3D12_OPTIONS5 o5{};
+                D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_5};
+                yes = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &o5, sizeof(o5))) &&
+                      o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1 &&
+                      SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm))) &&
+                      sm.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+                break;
+            }
+            if (!name.empty()) break;
+        }
+    }
+    known.push_back({name, yes});
+    return yes;
 }
 
 // what the game takes with no card named: the fastest, else the default adapter
@@ -483,6 +529,9 @@ Gpu Automatic() {
     if (!best) return {};
     return VulkanCards::Describe(best, v.Runs(best));
 }
+
+// Linux's build has no ray tracing (its shaders are made by the Windows SDK's dxc): no card traces rays here
+bool TracesRays(const std::string&) { return false; }
 
 #endif
 
@@ -718,19 +767,112 @@ uint32_t GameLanguageFor(const std::string& launcher) {
     return 1;
 }
 
+// The game's shaders prepared for this PC's graphics card before it starts (the SDK's runtime/gpu/pipeline_cache.h):
+// every pipeline the game draws with is listed (the release's pipelines.list, and the player's own in cache/shaders),
+// and made for a card and driver once; the stamp beside them says which. On a first run, another card or a new
+// driver, Play runs the game with --prepare-shaders first, which makes them all on every core and ends, so no room's
+// first frame waits for one (each took 10-25 ms, a hitch). Its progress is in cache/shaders/prepare.txt
+#ifdef _WIN32
+struct Prepare {
+    std::atomic<bool> running{false};
+    std::atomic<uint32_t> done{0}, total{0};
+    std::atomic<bool> skip{false};
+    std::thread worker;
+
+    static fs::path CacheDir() {
+        if (const wchar_t* v = _wgetenv(L"XBE_SHADER_CACHE"); v && *v) return v;
+        return ExeDir() / "cache" / "shaders";
+    }
+    // whether the card's pipelines need making: the stamp missing or for another card, driver or release list
+    static bool Needed(const Gpu& gpu) {
+        if (gpu.identity.empty() || GetEnvironmentVariableW(L"CV_NO_PREPARE", nullptr, 0)) return false;
+        std::error_code ec;
+        fs::path shipped = ExeDir() / "pipelines.list", own = CacheDir() / "pipelines.list";
+        bool any = fs::exists(shipped, ec) || fs::exists(own, ec);
+        if (!any) return false;  // nothing listed yet: the game lists them as it draws
+        uint64_t n = fs::file_size(shipped, ec);
+        std::string want = gpu.identity + "\nlist " + std::to_string(ec ? 0 : n) + "\n", have;
+        if (FILE* f = _wfopen((CacheDir() / "pipelines.stamp").c_str(), L"rb")) {
+            char buf[256];
+            size_t got = std::fread(buf, 1, sizeof(buf), f);
+            have.assign(buf, got);
+            std::fclose(f);
+        }
+        return have != want;
+    }
+
+    void Start(const fs::path& exe) {
+        if (running) return;
+        if (worker.joinable()) worker.join();
+        running = true;
+        skip = false;
+        done = total = 0;
+        worker = std::thread([this, exe] {
+            std::wstring cmd = L"\"" + exe.wstring() + L"\" --prepare-shaders";
+            STARTUPINFOW si{sizeof(si)};
+            PROCESS_INFORMATION pi{};
+            if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+                                nullptr, exe.parent_path().c_str(), &si, &pi)) {
+                running = false;
+                return;
+            }
+            CloseHandle(pi.hThread);
+            fs::path progress = CacheDir() / "prepare.txt";
+            for (;;) {
+                DWORD w = WaitForSingleObject(pi.hProcess, 100);
+                if (FILE* f = _wfopen(progress.c_str(), L"rb")) {
+                    unsigned d = 0, t = 0;
+                    if (std::fscanf(f, "%u %u", &d, &t) == 2) {
+                        done = d;
+                        total = t;
+                    }
+                    std::fclose(f);
+                }
+                if (w == WAIT_OBJECT_0) break;
+                // skipped: the game makes the rest as it runs (in the background, before most are drawn)
+                if (skip) {
+                    TerminateProcess(pi.hProcess, 1);
+                    WaitForSingleObject(pi.hProcess, 2000);
+                    break;
+                }
+            }
+            CloseHandle(pi.hProcess);
+            running = false;
+        });
+    }
+    float Fraction() const { return total ? std::min(1.0f, float(done) / float(total)) : 0.0f; }
+    ~Prepare() {
+        skip = true;
+        if (worker.joinable()) worker.join();
+    }
+};
+#else
+// Linux: no step of its own (the SDK's pipeline library is D3D12's on Windows); the game makes its pipelines as it runs
+struct Prepare {
+    std::atomic<bool> running{false};
+    std::atomic<uint32_t> done{0}, total{0};
+    std::atomic<bool> skip{false};
+    static bool Needed(const Gpu&) { return false; }
+    void Start(const fs::path&) {}
+    float Fraction() const { return 0.0f; }
+};
+#endif
+
 // Frame generation's libraries (the SDK's runtime/gpu/framegen.h), which this game's download does not carry: the
 // player's own copy, downloaded from the vendor's official GitHub release into the game's folder with their licences.
 // AMD FSR 3: its signed DLLs beside the game, the loader, frame generation and the upscaler (the game's
-// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G and DLSS files in streamline\ (frame generation, and
-// the game's anti-aliasing and upscaling).
+// anti-aliasing). NVIDIA DLSS: Streamline's release, its DLSS-G, DLSS and DLSS-RR files in streamline\ (frame
+// generation, the game's anti-aliasing and upscaling, and its Ray Reconstruction with ray tracing on).
 constexpr const wchar_t* kFsrRaw = L"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/";
 constexpr const char* kFsrLicence = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/v2.3.0/Kits/FidelityFX/docs/license.md";
 constexpr const wchar_t* kDlssZip = L"https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip";
 constexpr const char* kDlssLicence = "https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/license.txt";
 const wchar_t* const kFsrFiles[] = {L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll",
                                     L"amd_fidelityfx_upscaler_dx12.dll"};
-const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll",
-                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll"};
+// the last two DLSS Ray Reconstruction's (ray tracing's light denoised by DLSS)
+const wchar_t* const kDlssFiles[] = {L"sl.interposer.dll", L"sl.common.dll",   L"sl.dlss_g.dll", L"sl.reflex.dll",
+                                     L"sl.pcl.dll",       L"nvngx_dlssg.dll", L"sl.dlss.dll",   L"nvngx_dlss.dll",
+                                     L"sl.dlss_d.dll",    L"nvngx_dlssd.dll"};
 
 #ifndef _WIN32
 // Linux: NVIDIA DLSS's files from NVIDIA's DLSS SDK on GitHub, which the game builds its bridge to NVIDIA's NGX from on
@@ -1222,6 +1364,9 @@ struct Settings {
     uint32_t upscaling = 0;             // 0 native, 1 quality, 2 balanced, 3 performance
     uint32_t sharpening = 30;           // percent, AMD FSR's
     uint32_t ambient_occlusion = 1;     // 0 off, 1 low, 2 high
+    uint32_t ray_tracing = 0;           // 0 off, 1 ambient occlusion, 5 lighting (menu.cpp); reflections are not offered
+    uint32_t rt_lighting = 100;         // percent, how strongly its lighting shows (menu.cpp)
+    uint32_t rt_quality = 2;            // 0 low, 1 medium, 2 high: how much ray tracing a frame does (menu.cpp)
     uint32_t surface_depth = 2;         // 0 off, 1 low, 2 high: a pack's material maps seen into (parallax)
     std::string gpu;                    // the graphics card by its name, empty the fastest (the SDK's)
     std::string release;                // the release played, by its executable's name, when there are more (the SDK's)
@@ -1274,6 +1419,11 @@ struct Settings {
         upscaling = std::min(rest["upscaling"].value_or(upscaling), 3u);
         sharpening = std::min(rest["sharpening"].value_or(sharpening), 100u);
         ambient_occlusion = std::min(rest["ambient_occlusion"].value_or(ambient_occlusion), 2u);
+        // bits (1 ambient occlusion, 2 reflections, 4 lighting) as the choices offer them: off, ambient occlusion, lighting
+        uint32_t rt = rest["ray_tracing"].value_or(ray_tracing);
+        ray_tracing = (rt & 6) ? 5u : (rt & 1);  // an older build's lighting and reflections (7): lighting
+        rt_lighting = std::min(rest["ray_tracing_lighting"].value_or(rt_lighting), 200u);
+        rt_quality = std::min(rest["ray_tracing_quality"].value_or(rt_quality), 2u);
         surface_depth = std::min(rest["surface_depth"].value_or(surface_depth), 2u);
         gpu = rest["gpu"].value_or(gpu);
         release = rest["release"].value_or(release);
@@ -1318,6 +1468,9 @@ struct Settings {
         rest.insert_or_assign("upscaling", int64_t(upscaling));
         rest.insert_or_assign("sharpening", int64_t(sharpening));
         rest.insert_or_assign("ambient_occlusion", int64_t(ambient_occlusion));
+        rest.insert_or_assign("ray_tracing", int64_t(ray_tracing));
+        rest.insert_or_assign("ray_tracing_lighting", int64_t(rt_lighting));
+        rest.insert_or_assign("ray_tracing_quality", int64_t(rt_quality));
         rest.insert_or_assign("surface_depth", int64_t(surface_depth));
         rest.insert_or_assign("gpu", gpu);
         rest.insert_or_assign("release", release);
@@ -2382,6 +2535,24 @@ Picture LoadCrest() {
 #endif
 }
 
+// the launcher window's icon (the taskbar's, the title bar's) from the crest made from the player's files, for a
+// launcher without one of its own (a release, Linux)
+void SetWindowIcon(const std::vector<uint8_t>& px, int size) {
+#ifdef _WIN32
+    static HICON big = nullptr, little = nullptr;
+    HICON old_big = big, old_little = little;
+    app::icon::Set(g_hwnd, px, size, &big, &little);
+    if (old_big) DestroyIcon(old_big);
+    if (old_little) DestroyIcon(old_little);
+#else
+    std::vector<uint8_t> copy = px;
+    SDL_Surface* s = SDL_CreateSurfaceFrom(size, size, SDL_PIXELFORMAT_BGRA32, copy.data(), size * 4);
+    if (!s) return;
+    SDL_SetWindowIcon(g_window, s);
+    SDL_DestroySurface(s);
+#endif
+}
+
 // a progress bar with its text still, in its middle: ImGui's own moves the text along with the fill
 void Progress(float fraction, ImVec2 size, const char* text) {
     ImGui::ProgressBar(fraction, size, "");
@@ -2392,8 +2563,9 @@ void Progress(float fraction, ImVec2 size, const char* text) {
 
 // the crest made from the player's own files, for a launcher without the icon (Linux, a release): as the build makes
 // the icon (src/common/crest.h), the HD pack's picture of it in its ring of runes, else the xbe's title image (assets'
-// default.xbe, or a disc image's); at the icon's largest size, 256. None without either
-Picture MakeCrest(const Files& f) {
+// default.xbe, or a disc image's); at the icon's largest size, 256. None without either. bgra: its pixels too, for the
+// window's icon
+Picture MakeCrest(const Files& f, std::vector<uint8_t>* bgra = nullptr) {
     try {
         crest::Image art;
         std::vector<uint8_t> px;
@@ -2423,7 +2595,9 @@ Picture MakeCrest(const Files& f) {
             return {};
         }
         if (art.w != 256) art = crest::Resize(art, 256);
-        return Upload(crest::Bgra(art), 256, 256);
+        std::vector<uint8_t> out = crest::Bgra(art);
+        if (bgra) *bgra = out;
+        return Upload(out, 256, 256);
     } catch (const std::string&) {
         return {};
     }
@@ -2560,7 +2734,7 @@ private:
                std::to_string(s.fog_distance) + "|" + s.release + "|" +
                std::to_string(s.hdr) + std::to_string(s.hdr_peak_nits) + "|" + std::to_string(s.hdr_scene_nits) + "|" +
                std::to_string(s.frame_generation) + "|" + std::to_string(s.menu_spread) + std::to_string(s.antialiasing) +
-               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + "|" +
+               std::to_string(s.upscaling) + std::to_string(s.ambient_occlusion) + std::to_string(s.surface_depth) + std::to_string(s.ray_tracing) + "|" + std::to_string(s.rt_lighting) + std::to_string(s.rt_quality) + "|" +
                std::to_string(s.sharpening) + "|" + std::to_string(s.hd_movies) + std::to_string(s.movie_view);
     }
 
@@ -2732,10 +2906,25 @@ private:
 
         ImGui::SetCursorScreenPos(a + ImVec2(S(30), h - S(26) - S(54)));
         bool keep = true, ready = files_.Playable();
-        ImGui::BeginDisabled(!ready || import_.running);
-        if (Button(T("Play"), {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
-        g_marks.Mark("play");
-        ImGui::EndDisabled();
+        if (prepare_.running) {
+            // the shaders being prepared, then the game: the bar where Play was, and a way past it
+            uint32_t done = prepare_.done, total = prepare_.total;
+            std::string bar = total ? F("Preparing shaders for your graphics card...  {} / {}",
+                                        {std::to_string(done), std::to_string(total)})
+                                    : T("Preparing shaders for your graphics card...");
+            ImGui::ProgressBar(prepare_.Fraction(), {S(460), S(54)}, bar.c_str());
+            ImGui::SameLine(0, S(14));
+            if (Button(T("Skip"), {0, S(54)}, Kind::Secondary)) prepare_.skip = true;
+        } else {
+            if (play_after_prepare_) {
+                play_after_prepare_ = false;
+                keep = Launch();
+            }
+            ImGui::BeginDisabled(!ready || import_.running);
+            if (Button(T("Play"), {S(230), S(54)}, Kind::Primary, g_button)) keep = Play();
+            g_marks.Mark("play");
+            ImGui::EndDisabled();
+        }
         float buttons_mid = ImGui::GetItemRectMax().y - S(54) * 0.5f;  // for what is beside them
         if (!ready) {
             ImGui::SameLine(0, S(22));
@@ -2747,6 +2936,7 @@ private:
         ImVec2 end = ImGui::GetItemRectMax();
         ImGui::SetCursorScreenPos({end.x + S(20), buttons_mid - g_semi->FontSize * 0.5f});
         if (!UsedGpu().d3d12) Status(kIconWarn, kRed, T(CV_WIN_LINUX("No Direct3D 12", "No Vulkan")));
+        else if (prepare_.running) Status(kIconCheck, kGreen, T("Once, for this card and driver"));
         else if (ready) Status(kIconCheck, kGreen, T("Ready to play"));
         else if (!files_.exe) Status(kIconWarn, kRed, T(CV_WIN_LINUX("Castlevania.exe is missing", "Castlevania is missing")));
         else Status(kIconWarn, kAmber, T("Game files needed"));
@@ -3105,6 +3295,38 @@ private:
                      true);
         Segmented<uint32_t>("ao", settings_.ambient_occlusion, {0, 1, 2}, {T("Off"), T("Low"), T("High")});
         EndSetting();
+        {
+            bool rays = TracesRays(settings_.gpu);
+            BeginOff(!aa || !rays);
+            BeginSetting(T("Ray tracing"), T("Rays through the room itself. Ambient occlusion: found from the room "
+                                             "rather than from what the screen shows, so it holds at the screen's "
+                                             "edges and behind things. Lighting adds the light the room's surfaces "
+                                             "throw onto each other: water's on the stone beside it, a torchlit wall's "
+                                             "on the floor. Needs a graphics card with DirectX ray tracing."),
+                         true);
+            Segmented<uint32_t>("rt", settings_.ray_tracing, {0, 1, 5}, {T("Off"), T("Ambient occlusion"), T("Lighting")});
+            EndOff();
+            if (!rays) ControlNote(kAmber, T("This graphics card has no DirectX ray tracing."));
+            else if (!aa) ControlNote(kAmber, T("Needs anti-aliasing on."));
+            else if ((settings_.ray_tracing & 1) && !settings_.ambient_occlusion)
+                ControlNote(kAmber, T("Ambient occlusion is off: only the lighting is traced."));
+            EndSetting();
+            BeginOff(!aa || !rays || !(settings_.ray_tracing & 4));
+            BeginSetting(T("Lighting strength"),
+                         T("How strongly ray tracing's lighting shows: the light the room's surfaces throw onto each "
+                           "other, in place of the flat fill the game lit each room with. 100% keeps each room as "
+                           "bright as the game made it; more brings out the glow and the shade."));
+            Slider("rtlight", settings_.rt_lighting, 0, 200,
+                   settings_.rt_lighting ? std::to_string(settings_.rt_lighting) + "%" : std::string(T("Off")));
+            EndOff();
+            if (rays && aa && !(settings_.ray_tracing & 4)) ControlNote(kMuted, T("Needs ray tracing's Lighting."));
+            EndSetting();
+            BeginOff(!aa || !rays || !settings_.ray_tracing);
+            BeginSetting(T("Ray tracing quality"), T("How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it."));
+            Segmented<uint32_t>("rtq", settings_.rt_quality, {0, 1, 2}, {T("Low"), T("Medium"), T("High")});
+            EndOff();
+            EndSetting();
+        }
         BeginSetting(T("Anisotropic filtering"), T("Keeps floors and walls sharp where they are seen at an angle. It costs "
                                                    "little."));
         Segmented<uint32_t>("aniso", settings_.aniso, {0, 2, 4, 8, 16}, {T("Off"), "2x", "4x", "8x", "16x"});
@@ -3457,6 +3679,17 @@ private:
             Note(T("Could not write the settings file"));
             return true;
         }
+        // a first run, another card or a new driver: the shaders prepared first, then the game (HomePage)
+        if (Prepare::Needed(UsedGpu())) {
+            prepare_.Start(files_.Player(settings_.release));
+            play_after_prepare_ = true;
+            return true;
+        }
+        return Launch();
+    }
+
+    // the game started; false: the launcher closes (unless kept open)
+    bool Launch() {
         fs::path exe = files_.Player(settings_.release);
 #ifndef _WIN32
         std::string path = exe.string(), dir = ExeDir().string();
@@ -3561,7 +3794,9 @@ private:
         if (!icon_ && from != crest_from_) {
             crest_.Release();
             crest_from_ = from;
-            crest_ = MakeCrest(files_);
+            std::vector<uint8_t> px;
+            crest_ = MakeCrest(files_, &px);
+            if (!px.empty()) SetWindowIcon(px, 256);  // the taskbar's too
         }
         if (files_.logo == logo_file_) return;
         logo_.Release();
@@ -3582,6 +3817,8 @@ private:
     std::mutex picked_lock_;
     fs::path picked_;  // the dialog's file, for the next frame (Picked)
 #endif
+    Prepare prepare_;
+    bool play_after_prepare_ = false;
     std::vector<Res> modes_;
     FrameGenDownload fg_download_;
     std::string status_, saved_, shown_language_;

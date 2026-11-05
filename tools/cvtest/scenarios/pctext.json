@@ -1,0 +1,132 @@
+{
+  "name": "pctext",
+  "note": "The save messages that named the Xbox, on a fresh start: New Game as in newgame.json, a shot at each press, for 'Checking...', 'There is no save data on your PC' and 'Creating new save data...'.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ray_tracing": 0
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "press": "1000:a,3000:wait",
+      "shot": "p01",
+      "judge": false
+    },
+    {
+      "press": "0:a,600:wait",
+      "shot": "p02",
+      "judge": false
+    },
+    {
+      "press": "0:a,600:wait",
+      "shot": "p03",
+      "judge": false
+    },
+    {
+      "press": "0:a,800:wait",
+      "shot": "p04",
+      "judge": false
+    },
+    {
+      "press": "0:start,1000:wait",
+      "shot": "p05",
+      "judge": false
+    },
+    {
+      "press": "0:a,500:wait",
+      "shot": "p06",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1500",
+      "shot": "p07",
+      "judge": false
+    },
+    {
+      "press": "0:a,300:wait",
+      "shot": "p08",
+      "judge": false
+    },
+    {
+      "press": "0:wait:900",
+      "shot": "p09",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1400",
+      "shot": "p10",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1400",
+      "shot": "p11",
+      "judge": false
+    },
+    {
+      "press": "0:left,1000:wait",
+      "shot": "p12",
+      "judge": false
+    },
+    {
+      "press": "0:a,300:wait",
+      "shot": "p13",
+      "judge": false
+    },
+    {
+      "press": "0:wait:900",
+      "shot": "p14",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1400",
+      "shot": "p15",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1400",
+      "shot": "p16",
+      "judge": false
+    },
+    {
+      "press": "0:a,1500:wait",
+      "shot": "p17",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1500",
+      "shot": "p18",
+      "judge": false
+    },
+    {
+      "press": "0:a,1500:wait",
+      "shot": "p19",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1500",
+      "shot": "p20",
+      "judge": false
+    },
+    {
+      "press": "0:a,1500:wait",
+      "shot": "p21",
+      "judge": false
+    },
+    {
+      "press": "0:wait:1500",
+      "shot": "p22",
+      "judge": false
+    }
+  ]
+}

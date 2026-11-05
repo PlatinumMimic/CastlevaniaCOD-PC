@@ -1,0 +1,113 @@
+{
+  "name": "pcload",
+  "save": "julian",
+  "note": "The load messages that named the Xbox: title, Load Game with Julian's save, a shot at each press.",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ray_tracing": 0
+  },
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l00a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l00b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l01a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l01b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l02a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l02b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l03a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l03b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l04a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l04b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l05a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l05b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l06a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l06b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l07a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l07b",
+      "judge": false
+    },
+    {
+      "press": "0:a,400:wait",
+      "shot": "l08a",
+      "judge": false
+    },
+    {
+      "press": "0:wait:800",
+      "shot": "l08b",
+      "judge": false
+    }
+  ]
+}

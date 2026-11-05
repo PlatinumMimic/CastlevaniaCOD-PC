@@ -1,0 +1,76 @@
+{
+  "name": "linespot",
+  "save": "julian",
+  "note": "5.0's grass path by the purple lamps, where Julian saw two black streaks from Hector's feet with ray tracing on (captures 222818-222835): walked there by the bot, shot at four of his spots",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.0,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 0 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:150f",
+      "shot": "5-0-a",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-1000/-14650/150:20000,40f:wait"
+    },
+    {
+      "press": "0:walk=-3000/-16900/150:20000,40f:wait"
+    },
+    {
+      "press": "0:walk=-8740/-15930/150:20000,40f:wait",
+      "shot": "p1",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-11100/-18600/150:20000,40f:wait",
+      "shot": "p2",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-11025/-20330/150:20000,40f:wait",
+      "shot": "p3",
+      "judge": false
+    },
+    {
+      "press": "0:walk=-11830/-23190/150:20000,40f:wait",
+      "shot": "p4",
+      "judge": false
+    }
+  ]
+}
