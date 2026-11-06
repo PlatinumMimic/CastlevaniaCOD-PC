@@ -57,7 +57,8 @@ uint32_t g_ray_tracing = 0;
 // how strongly ray tracing's bounce lighting shows, percent (gpu::g_rt_lighting_strength): 100 keeps each room as bright
 // as the game made it, its light from where the rays say; 0 none of it
 uint32_t g_rt_lighting = 100;
-// how much ray tracing does a frame (gpu::g_rt_quality): 0 low, 1 medium, 2 high
+// how much ray tracing does a frame (gpu::g_rt_quality): 0 low, 1 medium, 2 high, 3 path traced (High, and the lighting
+// as a path tracer's: two bounces at the frame's full size, the game's own light kept only an artists' share)
 uint32_t g_rt_quality = 2;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern bool g_hd_movies;         // movies.cpp: a movie pack's HD movies drawn
@@ -416,10 +417,10 @@ void GraphicsTab(bool& save) {
             ImGui::TextDisabled("needs ray tracing's Lighting");
         }
     }
-    Row("Ray tracing quality", "How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it.");
+    Row("Ray tracing quality", "How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it. Path traced follows each pixel's light two bounces through the room at the frame's full size, lit by the torches and the sky, and keeps only a share of the game's own flat light: the most dramatic, for a fast card.");
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
-        save |= Choice<uint32_t>("##rtq", g_rt_quality, {0, 1, 2}, {"Low", "Medium", "High"});
+        save |= Choice<uint32_t>("##rtq", g_rt_quality, {0, 1, 2, 3}, {"Low", "Medium", "High", "Path traced"});
         if (!g_ray_tracing) {
             ImGui::SameLine();
             ImGui::TextDisabled("ray tracing is off");
@@ -794,7 +795,7 @@ void MenuToRenderer() {
     gpu::g_ambient_occlusion.store(std::min<uint32_t>(g_ambient_occlusion, 2), std::memory_order_relaxed);
     gpu::g_ray_tracing.store(g_ray_tracing & (gpu::kRtAmbientOcclusion | gpu::kRtLighting), std::memory_order_relaxed);
     gpu::g_rt_lighting_strength.store(float(std::min<uint32_t>(g_rt_lighting, 200)) / 100.0f, std::memory_order_relaxed);
-    gpu::g_rt_quality.store(std::min<uint32_t>(g_rt_quality, 2), std::memory_order_relaxed);
+    gpu::g_rt_quality.store(std::min<uint32_t>(g_rt_quality, 3), std::memory_order_relaxed);
 }
 
 void MenuUi(double fps) {

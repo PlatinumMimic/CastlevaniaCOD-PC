@@ -30701,3 +30701,387 @@ index 0b3c89b..2ebeb1f 100644
 -- 
 2.43.0
 
+From ac201d503a3d81d57b8e7bcf7233acecd19d6710 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Thu, 5 Nov 2026 22:34:53 -0500
+Subject: [PATCH] Ray tracing: the Path traced quality
+
+A quality above High (g_rt_quality 3, RtPathTraced; the passes' quality stays High's): the bounce lighting as a path
+tracer's (rt_gi.hlsl's PathTraced). One path a pixel at 0.71 of the frame's size (XBE_RT_PT_SCALE, XBE_RT_PT_PATHS),
+each followed two bounces: the ray from the surface meets a first vertex, whose light is the lights' there (a light's
+point picked of XBE_RT_PT_TRIES candidates, a shadow ray toward it) and what a second ray from it brings, the sky where
+it leaves the room or the second vertex's picture times the lights' light there and the game's own light there
+(XBE_RT_PT_END of it, 3: the artists' light stands for every bounce after the path's end). The first vertex's own game
+light is not taken (it arrives through the second), so what nothing reaches is dark.
+
+rt_giapply.hlsl applies it outright (gz.w): of the game's own light only an artists' share is kept whatever the rays
+say (1 - XBE_RT_PT_FILL 0.65 x the Lighting strength: 0.35 at 100%), the rest set against the room's average by
+brightness (raised against the average or XBE_RT_GI_MEAN_FLOOR, the more, up to XBE_RT_PT_MOST 3 times, eased from
+XBE_RT_PT_KNEE 2), the light's hue against the average's on what is raised alone (on the whole, a night courtyard was
+tinted purple wherever its brazier's light was most of the little there was; colour by colour against the average,
+a channel the room had little of was raised without end). A character keeps the room's share and is never raised.
+The denoiser's smoothing a pass more at the frame's size (6, the last 32 texels apart).
+
+At 4K DLSS Balanced on an RTX 5080: the ray tracing 4.7 ms a frame against High's 3.5 (at the frame's full size 7.1,
+the look the same); 5.3 in the Mountains against 4.2.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp       |  54 ++++++++++++++-----
+ runtime/gpu/raytrace.h      |   6 ++-
+ runtime/gpu/rt_gi.hlsl      | 100 +++++++++++++++++++++++++++++++++---
+ runtime/gpu/rt_giapply.hlsl |  36 ++++++++++++-
+ 4 files changed, 175 insertions(+), 21 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index 8381d20..c43c22e 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -894,7 +894,8 @@ private:
+     };
+     std::vector<LatePicture> late_pictures_[kFrames];
+     void Lighting(Target& t, uint32_t rw, uint32_t rh);
+-    uint32_t Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t gw, uint32_t gh, uint32_t rw, uint32_t rh);
++    uint32_t Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t gw, uint32_t gh, uint32_t rw, uint32_t rh,
++                     int extra = 0);
+     bool Guides(const Target& t, uint32_t rw, uint32_t rh);
+     void EndRtPass();
+     ID3D12PipelineState* EnsureAoApplyPipeline(DXGI_FORMAT rtv);
+@@ -6260,7 +6261,7 @@ bool D3D12Backend::EnsureOwnDenoiseTargets(uint32_t w, uint32_t h) {
+ // (rt_giatrous.hlsl, XBE_RT_DN_PASSES passes, 5: taps 1, 2, 4, 8 and 16 texels apart). Lighting's SRVs from slot (the
+ // depth, the bounce target, the guides, the motion, then dn_'s); the SRV heap's index of the light to throw back
+ uint32_t D3D12Backend::Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t gw, uint32_t gh, uint32_t rw,
+-                                uint32_t rh) {
++                                uint32_t rh, int extra) {
+     static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
+     auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
+     // (32 frames, 5 passes: 1 to 16 texels apart; at 24 and 4 the bounce lighting's low noise stayed as blotches the
+@@ -6302,7 +6303,8 @@ uint32_t D3D12Backend::Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t
+     dn_frame_ = presents_;
+     // smoothed: the history and its moments first, then each pass's light and variance into the other of 6 and 7
+     uint32_t light = dn + cur;
+-    int passes = int(kPasses);
++    // (extra: passes more, the Path traced quality's at the frame's full size; 6 at most, the last 32 texels apart)
++    int passes = std::min(int(kPasses) + extra, 6);
+     for (int p = 0; p < passes; p++) {
+         uint32_t out = 6 + (p & 1);
+         float sp[16] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
+@@ -6669,10 +6671,21 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // reaching 1500; medium one at half, 2000; high four at half, 2500 (two left blotches crawling on 5.9's floor,
+     // twice the flicker of ambient occlusion alone; four, as little as it)
+     const uint32_t q = RtQuality();
++    // Path traced (RtPathTraced, the quality above High): one path a pixel at 0.71 of the frame's size, half its
++    // pixels (XBE_RT_PT_SCALE; at its full size 5.4 ms against 2.9 at 4K DLSS Balanced on an RTX 5080, the look the
++    // same; XBE_RT_PT_PATHS), each followed a bounce further than the bounce lighting's rays (rt_gi.hlsl's PathTraced), the
++    // game's own light taken where the path ends (XBE_RT_PT_END of it, 3: it arrives through one surface's colour
++    // more than the bounce lighting's does, a third as strong, and at 1 the lights' light outweighed it everywhere and
++    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (4); the
++    // denoiser's smoothing a pass wider (its taps reach as far across the frame as at half size)
++    const bool path = RtPathTraced();
+     static const float kScaleSet = env("XBE_RT_GI_SCALE", 0), kRaysSet = env("XBE_RT_GI_RAYS", 0),
+-                       kReachSet = env("XBE_RT_GI_REACH", 0);
+-    const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
+-    const float kRaysFull = kRaysSet > 0 ? kRaysSet : q == 2 ? 4.0f : 1.0f;
++                       kReachSet = env("XBE_RT_GI_REACH", 0), kPtScale = env("XBE_RT_PT_SCALE", 0.71f),
++                       kPtPaths = env("XBE_RT_PT_PATHS", 1.0f), kPtEnd = env("XBE_RT_PT_END", 3.0f),
++                       kPtTries = env("XBE_RT_PT_TRIES", 4.0f);
++    const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f)
++                         : path ? std::clamp(kPtScale, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
++    const float kRaysFull = kRaysSet > 0 ? kRaysSet : path ? std::max(1.0f, kPtPaths) : q == 2 ? 4.0f : 1.0f;
+     const float kRays = RtBudgetRays(kRaysFull);
+     const float kReach = kReachSet > 0 ? kReachSet : q == 0 ? 1500.0f : q == 1 ? 2000.0f : 2500.0f;
+     // XBE_RT_GI_FADE: the distance the bounce lighting has faded out by, from half of it (10000: a room's far wall
+@@ -6748,6 +6761,7 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+         float rs[4];
+         float pv[16];
+         float gm[4];
++        float pt[4];
+         uint32_t list[kMaxLights][4];
+     } gc{};
+     // the sky's light (SkyLight), outdoors
+@@ -6824,6 +6838,9 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+         TextureSrv(guide_[kGuideHit].Get(), kGuideFmt[kGuideHit], slot + 10 + kDn);
+         gc.gm[2] = float(slot + 10 + kDn);
+     }
++    gc.pt[0] = path ? 1.0f : 0.0f;
++    gc.pt[1] = std::max(0.0f, kPtEnd);
++    gc.pt[2] = std::max(1.0f, kPtTries);
+     rs_gw_ = gw;
+     rs_gh_ = gh;
+     Alloc gcb = Upload(sizeof(GiConstants), 256);
+@@ -6846,7 +6863,8 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     }
+     Transition(gi_.Get(), gi_state_, kRead);
+     // gathered over the frames and smoothed (Denoise), else as the rays found it
+-    uint32_t light = drawn && denoise && kView != 21 && kView != 22 ? Denoise(slot, tw, th, gw, gh, rw, rh) : slot + 1;
++    uint32_t light = drawn && denoise && kView != 21 && kView != 22 ? Denoise(slot, tw, th, gw, gh, rw, rh, path ? 1 : 0)
++                                                                     : slot + 1;
+     // in the place of the game's flat fill (its room average, RoomBounce), unless XBE_RT_GI_NEUTRAL=0 (all of it added,
+     // brightening the room): what falls short of the average takes out up to XBE_RT_GI_FILL of the frame's own
+     // (0.55, by the square of the shortfall: rt_giapply.hlsl), as the strength (the Lighting strength setting) has
+@@ -6877,6 +6895,16 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // room), eased toward from XBE_RT_GI_LIFT_KNEE (0.8) on; cut at 1 before, the walls by the purple lamps doubled to
+     // a flat purple (the easing keeps their carving)
+     static const float kLiftMost = env("XBE_RT_GI_LIFT_MOST", 2.0f), kLiftKnee = env("XBE_RT_GI_LIFT_KNEE", 0.8f);
++    // Path traced (rt_giapply.hlsl): the game's own light kept only an artists' share, 1 - XBE_RT_PT_FILL (0.65) x the
++    // Lighting strength (0.35 at 100%: at 50% two thirds, at 200% none; at 0.25 the floors of 5.8's rampart and bridge
++    // went to a third of the game's and lost their stone), the rest set against the room's average outright, raised up
++    // to XBE_RT_PT_MOST (3) times, eased from XBE_RT_PT_KNEE (2) on
++    static const float kPtFill = env("XBE_RT_PT_FILL", 0.65f), kPtMost = env("XBE_RT_PT_MOST", 3.0f),
++                       kPtKnee = env("XBE_RT_PT_KNEE", 2.0f);
++    if (path) {
++        fill = std::clamp(kPtFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 1.0f);
++        char_fill = std::clamp(kCharFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 1.0f);
++    }
+     // XBE_RT_GI_HUE: how much of the light's own hue a surface it raises takes (1: all; 0: white, the surface's own
+     // colour raised), the raise set by the light's brightness alone
+     static const float kLiftHue = env("XBE_RT_GI_HUE", 1.0f);
+@@ -6893,8 +6921,8 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+                     float(slot), float(light), std::max(1.0f, kStep), float(kView),
+                     float(slot + 2), float(slot + 3), mean, fill,
+                     kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f,
+-                    kLiftMost, kLiftKnee, kFade, kLiftHue,
+-                    kMeanFloor, kHueMean, gc.sky[3], 0};
++                    path ? kPtMost : kLiftMost, path ? kPtKnee : kLiftKnee, kFade, kLiftHue,
++                    kMeanFloor, kHueMean, gc.sky[3], path ? 1.0f : 0.0f};
+     Alloc acb = Upload(256, 256);
+     std::memcpy(acb.cpu, ap, sizeof(ap));
+     Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+@@ -6903,9 +6931,11 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+                                Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), t.view, rtv_inc_), t.fmt, rw, rh);
+     EndRtPass();
+     if (!gi_said_) {
+-        LOGR("ray tracing: bounce lighting %s, %.0f rays a pixel at %ux%u for the 3D at %ux%u, reaching %.0f, strength "
+-             "%.2f", drawn ? "drawn" : "not drawn", double(std::max(1.0f, kRays)), gw, gh, rw, rh, double(kReach),
+-             double(strength));
++        LOGR("ray tracing: %s %s, %.0f %s a pixel at %ux%u for the 3D at %ux%u, reaching %.0f, strength %.2f",
++             path ? "path traced lighting" : "bounce lighting", drawn ? "drawn" : "not drawn",
++             double(std::max(1.0f, kRays)), path ? "paths" : "rays", gw, gh, rw, rh, double(kReach), double(strength));
++        if (path) LOGR("ray tracing: path traced: the artists' share of the game's light %.2f, raised up to %.1f times",
++                       double(1.0f - fill), double(kPtMost));
+         gi_said_ = true;
+     }
+ }
+diff --git a/runtime/gpu/raytrace.h b/runtime/gpu/raytrace.h
+index 3e1ddda..0e6c604 100644
+--- a/runtime/gpu/raytrace.h
++++ b/runtime/gpu/raytrace.h
+@@ -51,9 +51,13 @@ inline std::atomic<float> g_rt_lighting_strength{1.0f};
+ inline std::atomic<float> g_rt_reflection_strength{1.0f};
+ // how much ray tracing does a frame (the setting's), for slower graphics cards (AMD's, Intel's, a handheld's):
+ // 0 low (the bounce lighting's one ray a pixel at a third of the frame's size, a shorter reach, fewer ambient occlusion
+-// rays, reflections on the smoothest surfaces only), 1 medium, 2 high (all of it)
++// rays, reflections on the smoothest surfaces only), 1 medium, 2 high (all of it), 3 path traced (High's, and the
++// lighting as a path tracer's: each pixel's light followed two bounces at the frame's full size, lit by the lights and
++// the sky, the game's own light kept only an artists' share: rt_gi.hlsl's PathTraced, rt_giapply.hlsl). RtQuality is
++// at most High: the passes' quality is the same at Path traced, which RtPathTraced tells
+ inline std::atomic<uint32_t> g_rt_quality{2};
+ inline uint32_t RtQuality() { return std::min<uint32_t>(g_rt_quality.load(std::memory_order_relaxed), 2u); }
++inline bool RtPathTraced() { return g_rt_quality.load(std::memory_order_relaxed) >= 3u; }
+ // the renderer can: DXR 1.1 on the graphics card, in a runtime built with its shaders
+ inline std::atomic<bool> g_ray_tracing_ready{false};
+ 
+diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
+index 8230673..2ce86b9 100644
+--- a/runtime/gpu/rt_gi.hlsl
++++ b/runtime/gpu/rt_gi.hlsl
+@@ -33,6 +33,9 @@ cbuffer P : register(b0) {
+                   // summary's two before it), the slots;
+                   // z: the SRV heap index of the eye's hits (rt_guide.hlsl's EyeHit, -1: none, the ray traced here);
+                   // w: how far a remembered glow's light reaches (XBE_RT_LIGHTS_REACH)
++    float4 pt;    // path traced (x: 1, the Path traced quality): each pixel's light followed a bounce further (PathTraced
++                  // below); y: how much of the game's own light a path takes where it ends (XBE_RT_PT_END); z: the
++                  // candidates a path vertex's light is picked from; w: spare
+     uint4 lights[128];  // each light's draw among the scene's and its triangles
+ };
+ #include "rt_scene.hlsli"
+@@ -99,6 +102,81 @@ struct Out {
+     float4 kept : SV_Target1;   // the lights' point kept here for the frame after (PackKept), 0: none
+ };
+ 
++// a direction over the hemisphere about n, cosine weighted (each counts as much as the light from its way does), from
++// a sample u
++float3 Hemisphere(float3 n, float2 u) {
++    float3 t0 = normalize(abs(n.y) < 0.99f ? cross(n, float3(0, 1, 0)) : cross(n, float3(1, 0, 0)));
++    float3 b0 = cross(n, t0);
++    float r = sqrt(u.x), a = 6.2831853f * u.y;
++    return t0 * (r * cos(a)) + b0 * (r * sin(a)) + n * sqrt(max(0, 1 - u.x));
++}
++// the lights' light at a path's vertex (a point of one of them picked of pt.z candidates, a shadow ray toward it), in
++// the frame's units (lt.y, as the surface's own is), at most lt.w of it
++float3 VertexLight(float3 p, float3 n, uint2 id, uint frame) {
++    if (lt.x <= 0) return 0;
++    float3 l = LightAt(p, n, id, frame, int(pt.z)) * lt.y;
++    float ll = dot(l, float3(0.2126f, 0.7152f, 0.0722f));
++    return ll > lt.w ? l * (lt.w / ll) : l;
++}
++
++// Path traced (the Path traced quality, pt.x): the bounce lighting above takes each ray's first surface as the game
++// lit it, the artists' light there and the lights' (its second bounce). Here a pixel's light is followed a step
++// further, as a path tracer's is: the ray from the surface meets a first vertex, whose light is the lights' there (a
++// light's point picked, a shadow ray) and what a second ray from it brings: the sky where it leaves the room, else the
++// second vertex's picture times the lights' light there and the game's own light there (pt.y of it: the artists'
++// light stands for every bounce after the path's end). The first vertex's own game light is not taken (it arrives
++// through the second), so a corner, under a ledge, behind a pillar is as light as what reaches it, and rt_giapply.hlsl
++// sets each surface's light against the room's average in the fill's place. One path a pixel at the frame's full
++// size (d3d12.cpp's Lighting), the denoiser gathering the frames. The lights' light along the path (ind) is told
++// apart for the room's average, as the surface's own is (the alpha below)
++float3 PathTraced(uint2 id, float3 o, float3 n, float t, float pixel, float3 skyc, bool open, int paths,
++                  inout float3 glow, inout float3 skyl, out float3 ind) {
++    float3 sum = 0;
++    ind = 0;
++    [loop] for (int k = 0; k < paths; k++) {
++        float3 rd = Hemisphere(n, Sample2(id, uint(fr.x), uint(k), uint(max(paths, 1))));
++        uint g2, p2;
++        float2 b2;
++        // the world alone, as the bounce above (a character throws no light and lets the room's through)
++        float t2 = TraceSceneMasked(o, rd, 0, open ? 1e30f : gi.x, 16, 0x01, g2, p2, b2);
++        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true);
++        if (t2 < 0) {
++            if (open) skyl += skyc * saturate(dot(rd, sky.xyz) * 1.5f + 0.25f);
++            continue;
++        }
++        if (t2 >= gi.x) continue;
++        Spot hs = SpotOf(g2, p2, b2);
++        float3 hn = Facing(hs.p[0], hs.p[1], hs.p[2], rd);
++        if (all(hn == 0)) continue;
++        float3 pic = PictureAt(g2, hs, (t + t2) * pixel * 8);
++        float reach = saturate(4 * (1 - t2 / gi.x));
++        float3 hp = o + rd * t2 + hn * (fr.z + fr.w * (t + t2));
++        // the first vertex: the lights' light there
++        float3 l1 = VertexLight(hp, hn, id + uint2(k * 977u, 0), uint(fr.x));
++        // the second ray, from the first vertex, where it brings the sky, or the second vertex's light: the lights'
++        // there and the game's own (the path's end)
++        float3 rd2 = Hemisphere(hn, Sample2(id, uint(fr.x), uint(k), uint(max(paths, 1)), 4u));
++        uint g3, p3;
++        float2 b3;
++        float t3 = TraceSceneMasked(hp, rd2, 0, open ? 1e30f : gi.x, 12, 0x01, g3, p3, b3);
++        float3 l2 = 0, end = 0;
++        if (t3 < 0) {
++            if (open) end = skyc * saturate(dot(rd2, sky.xyz) * 1.5f + 0.25f) * gi.z;
++        } else if (t3 < gi.x) {
++            Spot hs2 = SpotOf(g3, p3, b3);
++            float3 hn2 = Facing(hs2.p[0], hs2.p[1], hs2.p[2], rd2);
++            float reach2 = saturate(4 * (1 - t3 / gi.x));
++            float3 pic2 = PictureAt(g3, hs2, (t + t2 + t3) * pixel * 8);
++            float3 hp2 = hp + rd2 * t3 + hn2 * (fr.z + fr.w * (t + t2 + t3));
++            if (any(hn2 != 0)) l2 = pic2 * VertexLight(hp2, hn2, id + uint2(k * 977u + 331u, 0), uint(fr.x)) * reach2;
++            end = pic2 * saturate(hs2.tint.rgb) * (gi.z * pt.y) * reach2;
++        }
++        sum += pic * (l1 + l2 + end) * reach;
++        ind += pic * (l1 + l2) * reach;
++    }
++    return sum;
++}
++
+ // XBE_RT_VIEW 21: the lights listed, each drawn where its sprite or mesh is on the screen (its first triangles'
+ // corners' box), the frame's depth under it as grey (nearer brighter), and over it a light drawn flat: green where its
+ // own depth is taken (rt_scene.hlsli's FlatPlace), red where it is at the near plane and dropped, blue at the far
+@@ -195,7 +273,9 @@ Out ps(float4 pos : SV_Position) {
+     }
+     bool open = any(skyc > 0);
+     float3 glow = 0, bounced = 0, skyl = 0;
+-    [loop] for (int k = 0; k < rays; k++) {
++    float3 traced = 0, ind = 0;
++    if (pt.x > 0) traced = PathTraced(id, o, n, t, pixel, skyc, open, rays, glow, skyl, ind);
++    [loop] for (int k = 0; k < (pt.x > 0 ? 0 : rays); k++) {
+         // cosine weighted: each ray counts as much as the light from its way does (the rays spread, rt_scene.hlsli's
+         // Sample2: white noise bunched them, and the denoiser left blotches)
+         float2 u = Sample2(id, uint(fr.x), uint(k), uint(max(rays, 1)));
+@@ -230,7 +310,8 @@ Out ps(float4 pos : SV_Position) {
+             bounced += pic * hl * reach;
+         }
+     }
+-    float3 light = sum / float(max(rays, 1)) * gi.z;
++    // (path traced: the paths' light, in the frame's units already)
++    float3 light = pt.x > 0 ? traced / float(max(rays, 1)) : sum / float(max(rays, 1)) * gi.z;
+     // the sky's, which the room's average leaves out as it does the lights' (below): counted in it, a room's average
+     // rose over the twenty seconds after the camera first tilted up to the sky, and every surface that could not see
+     // the sky (the floor of a canyon, under a ledge) dimmed over those seconds; the sky's light is a lift above the
+@@ -252,10 +333,15 @@ Out ps(float4 pos : SV_Position) {
+     float ll = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));
+     if (ll > lt.w) lit *= lt.w / ll;
+     // and their light bounced once more off what is around it, as much as a light's at most
+-    float3 lit2 = bounced / float(max(rays, 1)) * lt.y * gl.z;
++    float3 lit2 = pt.x > 0 ? ind / float(max(rays, 1)) : bounced / float(max(rays, 1)) * lt.y * gl.z;
+     float ll2 = dot(lit2, float3(0.2126f, 0.7152f, 0.0722f));
+-    if (ll2 > lt.w) lit2 *= lt.w / ll2;
+-    lit += lit2;
++    if (ll2 > lt.w) {
++        lit2 *= lt.w / ll2;
++        ll2 = lt.w;
++    }
++    // (path traced: the lights' light along the path is in the paths' light already; its share is told apart for the
++    // room's average, in the alpha, as the bounce's second bounce is)
++    if (pt.x <= 0) lit += lit2;
+     // fading out with distance: the far half of its reach on screen
+     float fade = saturate((gi.w - p.z) / (0.5f * gi.w));
+     if (fr.y == 17) light = skied = 0;  // XBE_RT_VIEW 17: the lights' and glows' light alone (8: all as it arrives)
+@@ -265,7 +351,7 @@ Out ps(float4 pos : SV_Position) {
+     // every surface open to the sky lay above the average and the Abandoned Castle's drawbridge and the Mountains'
+     // canyons were raised to twice their brightness (the planks of 5.0 washed out, looking down)
+     float gll = dot(glowed, float3(0.2126f, 0.7152f, 0.0722f));
+-    res.light = float4((light + lit + glowed + skied) * fade,
+-                       1 + (dot(lit, float3(0.2126f, 0.7152f, 0.0722f)) + gll) * fade);
++    float lits = dot(lit, float3(0.2126f, 0.7152f, 0.0722f)) + (pt.x > 0 ? ll2 : 0);
++    res.light = float4((light + lit + glowed + skied) * fade, 1 + (lits + gll) * fade);
+     return res;
+ }
+diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
+index 1492c4f..ee35e12 100644
+--- a/runtime/gpu/rt_giapply.hlsl
++++ b/runtime/gpu/rt_giapply.hlsl
+@@ -24,7 +24,8 @@ cbuffer P : register(b0) {
+                   // (XBE_RT_GI_HUE)
+     float4 gz;    // the least the room's average is taken as (XBE_RT_GI_MEAN_FLOOR, 0: as it is); 1: a lift's hue
+                   // against the room's average's (XBE_RT_GI_HUE_MEAN), 0: against white; the SRV heap's index of the
+-                  // sky's colour held (rt_gimean.hlsl's, -1 none; XBE_RT_VIEW 19 shows it, 20 the room's average)
++                  // sky's colour held (rt_gimean.hlsl's, -1 none; XBE_RT_VIEW 19 shows it, 20 the room's average);
++                  // w: 1 path traced (the Path traced quality: the light applied outright, below)
+ };
+ #include "rt_scene.hlsli"
+ 
+@@ -110,6 +111,39 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+     if (near <= 0) return kAsIs;
+     light /= max(near, 0.1f);
+     float ll = Luma(light);
++    // Path traced (gz.w, the Path traced quality; rt_gi.hlsl's PathTraced): the fill's place taken outright. Each
++    // surface's light is set against the room's average, colour by colour (what the room's torches and its sky throw,
++    // in their own hue against the room's), and of the game's own light only the artists' share is kept whatever the
++    // rays say (1 - gu.w, the Lighting strength's: a quarter at 100%): a corner nothing reaches keeps that much, a
++    // surface that gets the room's average keeps the game's brightness, a wall by a torch is raised as much as the
++    // light there is over the average, up to gy.x, eased from gy.y on. A character keeps the room's share and is
++    // never raised (the game lights it with lights of its own)
++    if (gz.w > 0) {
++        float keep = 1 - share;
++        float3 gain;
++        if (person) {
++            gain = keep + (1 - keep) * min(ll / lm, 1.0f);
++        } else {
++            float most_ = max(gy.x, 1.0f), knee_ = clamp(gy.y, 0, most_);
++            // by its brightness against the average's, in the light's hue against the average's (gy.w of it, as the
++            // lift above): colour by colour, a channel the room's average has little of was raised without end by what
++            // little of it a lamp threw, and a purple brazier's light lay over a whole courtyard
++            // (raised against the average or gz.x, the more, as the lift above: in 5.9's night courtyard the brazier's
++            // light was many times the dark room's average, and lay purple over the whole floor)
++            float r = ll < lm ? ll / lm : max(ll / lup, 1.0f);
++            float soft = r <= knee_ ? r : knee_ + (most_ - knee_) * (1 - exp(-(r - knee_) / max(most_ - knee_, 1e-3f)));
++            // (the hue on what is raised alone, as the lift above: on the whole, a night courtyard whose game light was
++            // dark grey was tinted purple wherever its brazier's light was most of the little there was)
++            float3 hue = clamp((light / max(ll, 1e-4f)) * lm / max(mean, 1e-4f), 0.25f, 4.0f);
++            gain = keep + (1 - keep) * (min(soft, 1.0f) + max(soft - 1, 0) * lerp(float3(1, 1, 1), hue, saturate(gy.w)));
++        }
++        gain = lerp(1.0f, gain, near);
++        if (gx.w > 0) {
++            float fx = saturate(pictures[NonUniformResourceIndex(uint(gx.w - 1))].Load(int3(px, 0)).r);
++            gain = lerp(gain, 1.0f, fx);
++        }
++        return float4(gain, 0);
++    }
+     // taken out by the square of how far short it falls: a surface at half the average keeps nearly all of the
+     // game's light, one that gets nothing gives up the share (at the share's 0.7 it kept 30%, and a corner or a
+     // cliff the rays brought little to lost its picture's detail in the dark; Julian: "some of the scenes look
+-- 
+2.43.0
+

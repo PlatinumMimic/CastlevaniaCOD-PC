@@ -438,10 +438,19 @@ background first); the size pictures load at applies from the next start.
 
   All of it costs about 3 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms), and
   about 3.7 ms at 4K with DLSS Balanced.
-  **Ray tracing quality** (`ray_tracing_quality`: 0 low, 1 medium, 2 high, the default) is for slower graphics cards
-  (AMD's, Intel's, a handheld's): low lights the room with one ray a pixel at a third of the frame's size, reaches
-  less far, sends fewer ambient occlusion rays at half the frame's size, reflects only the smoothest surfaces and
-  leaves the light shafts out (about 1.1 ms on the RTX 5080 at a handheld's 1920x1200); medium is between.
+  **Ray tracing quality** (`ray_tracing_quality`: 0 low, 1 medium, 2 high, the default, 3 path traced) is for slower
+  graphics cards (AMD's, Intel's, a handheld's) at one end and fast ones at the other: low lights the room with one
+  ray a pixel at a third of the frame's size, reaches less far, sends fewer ambient occlusion rays at half the frame's
+  size, reflects only the smoothest surfaces and leaves the light shafts out (about 1.1 ms on the RTX 5080 at a
+  handheld's 1920x1200); medium is between. **Path traced** does all High does and lights the room as a path tracer
+  would: one path a pixel at 0.71 of the frame's size, each followed two bounces through the room. At each place a
+  path lands it takes the light of one of the room's lights (a torch, a brazier, a glow, picked by how strongly it
+  lights that place, with a ray toward it for its shadow) and of the sky where a ray leaves the room, and where it
+  ends it takes the light the game's artists painted there, standing for every bounce after. The game's own flat
+  light is then kept only an artists' share (0.35 at Lighting strength 100%, less as the strength rises), and the rest
+  of each surface's brightness is what the paths brought set against the room's average, in the light's own hue: the
+  floor by a brazier is lit in its colour, a corner that nothing reaches goes dark, and the light falls off from the
+  lamps as light does. About 4.7 ms a frame at 4K with DLSS Balanced on the RTX 5080 (High's 3.5).
   The frame's scene goes into the acceleration structure as a few merged geometries (the world's solid draws, its
   cut-outs, its glows, the characters', the water), built back to back: a thousand geometries a frame had cost the
   build more than its triangles. `perf-run.bat` beside the game starts it with the SDK's timings on and leaves
