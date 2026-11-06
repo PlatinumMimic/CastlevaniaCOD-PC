@@ -32868,3 +32868,151 @@ index 46d04cc..f940a67 100644
 -- 
 2.43.0
 
+From 2f046e2e5c62e209ec102d1cf3ab612dd03a0120 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Fri, 6 Nov 2026 13:29:00 -0500
+Subject: [PATCH] Ray traced lighting: HDR's highlight rise by a pixel's
+ surroundings; a picture's glows listed by where they are
+
+In HDR the rise above the knee went by each pixel's own brightest channel, and with a peak of 8 over scene white the
+curve's slope is 36 at white: the ray traced lighting's grain on a lit wall, a level's change in one pixel, was a
+flicker of a third of 4000 nits as the camera turned. Now the rise goes by the brightest channel over nine taps two
+pixels apart, so the grain keeps the share of the light it has in SDR.
+
+Which of a picture's many draws are listed as lights and kept in the scene goes by where each is (GlowPlace: the
+first vertex's position, to 32 units), not by the frame's draw order, which the title changes as the camera turns
+(the save room's 800 water sprites). XBE_RT_GLOWS_BY_ORDER=1 keeps the old way.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp | 88 ++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 79 insertions(+), 9 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index f940a67..c863f26 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -293,7 +293,22 @@ float4 scene(O i) : SV_Target {
+     peak = lerp(peak, 1, saturate((a - 0.35) / 0.35));
+     if (opts.x > 0) c = float3(lut.Sample(ps, float2(c.r, 0.5)).r, lut.Sample(ps, float2(c.g, 0.5)).g, lut.Sample(ps, float2(c.b, 0.5)).b);
+     float3 l = Linear(c);
+-    float m = max(max(l.r, l.g), l.b);
++    // the rise above the knee goes by the brightest channel over the pixel's surroundings (nine taps two pixels
++    // apart), not the pixel's own: the curve's slope is 36 at white with a peak of 8, so a level's change in one
++    // pixel, the ray traced lighting's grain on a lit wall, was a flicker of a third of 4000 nits as the camera
++    // turned (the save room's walls and statues); over the surroundings the rise is the wall's, and the grain keeps
++    // the share of the light it has in SDR
++    float2 ts;
++    img.GetDimensions(ts.x, ts.y);
++    float m = 0;
++    [unroll] for (int y = -1; y <= 1; y++)
++        [unroll] for (int x = -1; x <= 1; x++) {
++            float3 s = img.SampleLevel(ls, i.uv + float2(x, y) * 2 / ts, 0).rgb * opts.w;
++            if (opts.x > 0) s = float3(lut.Sample(ps, float2(s.r, 0.5)).r, lut.Sample(ps, float2(s.g, 0.5)).g, lut.Sample(ps, float2(s.b, 0.5)).b);
++            s = Linear(s);
++            m += max(max(s.r, s.g), s.b);
++        }
++    m /= 9;
+     if (m > hdr.z && peak > 1) {
+         float t = (m - hdr.z) / (1 - hdr.z);
+         l *= (m + (peak - 1) * t * t * t) / m;
+@@ -1401,6 +1416,7 @@ private:
+         uint32_t streak = 0, said = 0;
+         uint64_t count_frame = UINT64_MAX;  // its draws as a glow this frame, the frame they were counted in
+         uint32_t count = 0, total_last = 0;  // (and the frame before's, 0 when it was not drawn then)
++        uint32_t listed = 0;                 // of them listed as lights this frame
+     };
+     std::unordered_map<const void*, GlowSeen> glow_seen_;     // by the renderer's copy: the draws a frame
+     std::unordered_map<uint64_t, GlowSeen> glow_steady_;        // by the title's texture data: how steady
+@@ -2307,6 +2323,41 @@ namespace {
+ 
+ constexpr UINT kCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL1;
+ 
++// where a glow's draw is, as a hash: its first vertex's position as the title keeps it (register 0's bytes), to 32
++// units when it is three floats, so a sprite that drifts a little keeps its place. Which of a picture's many draws
++// are listed as lights and kept in the scene goes by it (the save room's water), not by the frame's draw order
++uint32_t GlowPlace(const Assembled& a) {
++    const VertexElement& e = a.elements[0];
++    if (e.buffer >= a.buffer_count) return 0;
++    const VertexBuffer& b = a.buffers[e.buffer];
++    uint32_t first = 0;
++    if (a.index_count && a.index_src)
++        first = a.index16 ? static_cast<const uint16_t*>(a.index_src)[0] : static_cast<const uint32_t*>(a.index_src)[0];
++    const int64_t v = int64_t(a.base_vertex) + first;
++    if (!b.src || !b.stride || v < 0 || uint64_t(v) * b.stride + e.offset + 12 > b.bytes) return 0;
++    const uint8_t* p = b.src + uint64_t(v) * b.stride + e.offset;
++    float f[3];
++    std::memcpy(f, p, sizeof(f));
++    uint32_t h = 2166136261u;
++    if (std::isfinite(f[0]) && std::isfinite(f[1]) && std::isfinite(f[2]) && std::fabs(f[0]) < 1e6f &&
++        std::fabs(f[1]) < 1e6f && std::fabs(f[2]) < 1e6f) {
++        for (float x : f) {
++            const uint32_t q = uint32_t(int32_t(std::floor(x / 32.0f)));
++            h = (h ^ (q & 0xFF)) * 16777619u;
++            h = (h ^ ((q >> 8) & 0xFF)) * 16777619u;
++            h = (h ^ ((q >> 16) & 0xFF)) * 16777619u;
++            h = (h ^ (q >> 24)) * 16777619u;
++        }
++    } else {
++        for (int i = 0; i < 12; i++) h = (h ^ p[i]) * 16777619u;
++    }
++    // (spread again: the low bits are the share taken)
++    h ^= h >> 16;
++    h *= 0x7feb352du;
++    h ^= h >> 15;
++    return h;
++}
++
+ // which mesh a character's draw is (the scene's CharacterMesh check): where its positions and its indices are read
+ // from and how many, the same for a copy of it drawn again the same frame with other bones (an after-image)
+ uint64_t CharacterMesh(const Assembled& a) {
+@@ -4892,18 +4943,37 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+             c.total_last = c.count_frame + 1 == presents_ ? c.count : 0;
+             c.count_frame = presents_;
+             c.count = 0;
++            c.listed = 0;
+         }
+-        glow_listed = kPerPicture == 0 || ++c.count <= kPerPicture;
+         static const uint32_t kGlowsPerPicture = std::getenv("XBE_RT_GLOWS_PER_PICTURE")
+                                                      ? uint32_t(std::atoi(std::getenv("XBE_RT_GLOWS_PER_PICTURE")))
+                                                      : 48u;
+-        if (kPerPicture > 0 && kGlowsPerPicture > kPerPicture && !glow_listed) {
+-            // by the frame before's count of the picture's draws (this frame's is not known until its end)
+-            const uint32_t rest = c.total_last > kPerPicture ? c.total_last - kPerPicture : 0, room = kGlowsPerPicture - kPerPicture;
+-            const uint32_t stride = rest > room ? (rest + room - 1) / room : 1;
+-            if (stride > 1) {
+-                if ((c.count - kPerPicture - 1) % stride != 0) glow_skip = true;
+-                glow_scale = float(stride);
++        // which of a picture's draws are listed and which stay in the scene goes by where each is (GlowPlace), not by
++        // its place in the frame's order: the title sorts the save room's 800 water sprites as the camera turns, so by
++        // the order the 16 listed and the 132 kept were other sprites every frame of a pan, and the walls and statues
++        // the pool lights flickered with the camera's every move (XBE_RT_GLOWS_BY_ORDER=1: by the order, as before)
++        static const bool kByOrder = std::getenv("XBE_RT_GLOWS_BY_ORDER") && std::atoi(std::getenv("XBE_RT_GLOWS_BY_ORDER")) != 0;
++        ++c.count;
++        // by the frame before's count of the picture's draws (this frame's is not known until its end)
++        const uint32_t rest = c.total_last > kPerPicture ? c.total_last - kPerPicture : 0;
++        const uint32_t room = kGlowsPerPicture > kPerPicture ? kGlowsPerPicture - kPerPicture : 0;
++        if (kPerPicture > 0 && c.total_last > kPerPicture && !kByOrder) {
++            // its place's share of 0 to 1: listed while under the listed's share of the picture's draws (and the
++            // list's count still), in the scene while under the scene's, standing for the rest/room of them
++            const float share = float(GlowPlace(a) & 0xFFFFu) / 65536.0f;
++            glow_listed = share * float(c.total_last) < float(kPerPicture) && ++c.listed <= kPerPicture;
++            if (!glow_listed && room > 0 && rest > room) {
++                if (share * float(c.total_last) >= float(kGlowsPerPicture)) glow_skip = true;
++                glow_scale = float(rest) / float(room);
++            }
++        } else {
++            glow_listed = kPerPicture == 0 || c.count <= kPerPicture;
++            if (kPerPicture > 0 && room > 0 && !glow_listed) {
++                const uint32_t stride = rest > room ? (rest + room - 1) / room : 1;
++                if (stride > 1) {
++                    if ((c.count - kPerPicture - 1) % stride != 0) glow_skip = true;
++                    glow_scale = float(stride);
++                }
+             }
+         }
+         const uint32_t kSteady = SteadyFrames();
+-- 
+2.43.0
+

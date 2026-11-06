@@ -1,0 +1,110 @@
+{
+  "name": "saveslow",
+  "save": "julian",
+  "vendor": true,
+  "note": "The save room with the camera panned slowly (a sixth of the stick), eight shots two frames apart: the walls' flicker (Julian, 6 Nov) frame to frame with little motion between.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.27,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 27 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:180f",
+      "shot": "still",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:20f",
+      "shot": "slow-go",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-6",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=0.15/0:2f",
+      "shot": "slow-7",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:30f",
+      "shot": "after",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  }
+}

@@ -859,7 +859,12 @@ Changes this game needed beyond the generated config:
   Castle's save room, the costliest room the ray tracing has met (its hundreds of glow sprites), and `saveflick.json`
   shoots it six times two frames apart for its flicker; `flesh.json` takes the Garibaldi Temple's flesh room and
   two beside it, which the bounce rays find no light in; `f10room.json` and `qualityswap.json` open the settings
-  menu while playing (the latter changes the ray tracing quality in it) and go on to the next rooms.
+  menu while playing (the latter changes the ray tracing quality in it) and go on to the next rooms. The save room
+  in motion: `savemove.json` (Hector walks each way), `savepan.json` (the camera panned left and right on the right
+  stick, eight shots two frames apart each way), `saveslow.json` (panned at a sixth of the stick) and `saveslow1.json`
+  (the same, the shots one frame apart); `cmp\noise\savecells.py`, `savesame.py` (two runs of the same path at the
+  same frames: their difference is the lighting's randomness) and `saveboil.py` (the motion taken out block by block)
+  read them.
 - A step's `"ask"` puts a question about its screenshot to GPT-6 Luna, with named answers an `expect` can check.
   `buttons.json` asks which controller's icons show at the courtyard door and on the controller settings page;
   `--set button_layout=1` runs it with the PS2 layout (`--set` changes any setting for a run).
