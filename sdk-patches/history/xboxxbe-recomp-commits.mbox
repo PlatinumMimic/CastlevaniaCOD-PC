@@ -31126,3 +31126,391 @@ index ee35e12..093a272 100644
 -- 
 2.43.0
 
+From 9038c4f819cfaad7459c513cfe0eb9b5fb7c87c1 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Thu, 5 Nov 2026 23:58:30 -0500
+Subject: [PATCH] Path traced: its gain past the frame target's clamp, the
+ path's end where its second ray leaves the room, the dark side by the square;
+ rooms the rays have nothing to say about left alone
+
+rt_giapply.hlsl: the path traced gain goes out as the lift and the dim do, the part up to 1 in the alpha and the part
+over it in the colour: the frame's target clamps what a pixel shader writes to 1, and a gain written whole in the
+colour could only darken (the castle rooms came out at half the game's brightness, a torch's wall never raised, and
+the purple over a courtyard was the floor's green taken down). Under the average by the square of the shortfall, as
+High's dim; the light's hue against the average's to the power XBE_RT_PT_HUE (2), so a brazier's colour spreads over
+the floor around it. XBE_RT_GI_SAY (0.02): a room whose average is next to nothing (the Garibaldi Temple's flesh room,
+whose walls are skinned meshes, characters to the scene, which the bounce rays pass) is left as the game drew it at
+every quality: High had dimmed it to a quarter of its brightness. XBE_RT_VIEW 23 shows the path traced gain.
+
+rt_gi.hlsl: the path's end is the second vertex's game light, and where the second ray leaves the room or goes past
+the reach, the first vertex's own (a bridge under the night sky, whose rays off the planks all left the room, got next
+to no light and fell to the artists' share); the lights' light along the path capped with the surface's own, its excess
+no longer in the room's average. d3d12.cpp: XBE_RT_PT_FILL 0.55 (the artists' share 0.45 at Lighting strength 100%);
+RoomBounce can average with the lights' light in (rt_gimean.hlsl's 5; XBE_RT_PT_ALL, 0: off).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp       | 59 +++++++++++++++++++++++++------------
+ runtime/gpu/rt_gi.hlsl      | 27 ++++++++++-------
+ runtime/gpu/rt_giapply.hlsl | 50 ++++++++++++++++++++++++-------
+ runtime/gpu/rt_gimean.hlsl  |  5 ++--
+ 4 files changed, 100 insertions(+), 41 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index c43c22e..cc79f9f 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -105,7 +105,8 @@ constexpr uint32_t kRd = 8;
+ // the bounce lighting's room average (Lighting, rt_gimean.hlsl), last: its four levels, each 1/8 of the one before,
+ // and its eased value twice over (this frame's and the frame before's)
+ constexpr uint32_t kMeanRtv = kRdRtv + kRd;
+-constexpr uint32_t kMean = 9;  // the room's average bounce's levels and eased pair; the sky's (SkyLight), held pair
++constexpr uint32_t kMean = 11;  // the room's average bounce's levels and eased pair; the sky's (SkyLight), held pair;
++                                // the average with the lights' light in, eased pair (RoomBounce's all, Path traced)
+ // the light shafts' (Shafts, rt_shafts.hlsl), last: this frame's march, its gathered twice over
+ constexpr uint32_t kShaftRtv = kMeanRtv + kMean;
+ constexpr uint32_t kShafts = 3;
+@@ -1305,9 +1306,9 @@ private:
+     // written last, the frame it was; RoomBounce: this frame's eased average, its SRV slot, -1 when there is none
+     ComPtr<ID3D12Resource> mean_[kMean];
+     D3D12_RESOURCE_STATES mean_state_[kMean] = {};
+-    uint32_t mean_w_[4] = {}, mean_h_[4] = {}, mean_cur_ = 0, mean_for_w_ = 0, mean_for_h_ = 0;
+-    uint64_t mean_frame_ = UINT64_MAX;
+-    float RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th);
++    uint32_t mean_w_[4] = {}, mean_h_[4] = {}, mean_cur_ = 0, mean_all_cur_ = 0, mean_for_w_ = 0, mean_for_h_ = 0;
++    uint64_t mean_frame_ = UINT64_MAX, mean_all_frame_ = UINT64_MAX;
++    float RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th, bool all = false);
+     uint32_t LightList(float lt[4], float sk[4], uint32_t list[][4]);
+     // XBE_RT_LIGHTS_FLAME: the least area a flame drawn flat (a torch's, a candle's sprite) lights as, up to 16 times
+     // its own (rt_lights.hlsli), as a float's bits for the lights' list (8000: 5.8's torch warmed its wall by a third,
+@@ -6498,7 +6499,8 @@ bool D3D12Backend::EnsureMeanTargets(uint32_t tw, uint32_t th) {
+             if (mean_[i]) Release(std::move(mean_[i]));
+             D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+             // the eased pair at full precision: a frame's share of it is as small as a part in a thousand or so
+-            const DXGI_FORMAT mf = i == 4 || i == 5 ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT;
++            const DXGI_FORMAT mf = i == 4 || i == 5 || i >= 9 ? DXGI_FORMAT_R32G32B32A32_FLOAT
++                                                             : DXGI_FORMAT_R16G16B16A16_FLOAT;
+             D3D12_RESOURCE_DESC td = Texture2DDesc(mf, mw, mh);
+             td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+             D3D12_CLEAR_VALUE cv{};
+@@ -6515,6 +6517,7 @@ bool D3D12Backend::EnsureMeanTargets(uint32_t tw, uint32_t th) {
+         mean_for_w_ = tw;
+         mean_for_h_ = th;
+         mean_frame_ = UINT64_MAX;
++        mean_all_frame_ = UINT64_MAX;
+         sky_hold_frame_ = UINT64_MAX;
+     }
+     return true;
+@@ -6589,7 +6592,9 @@ float D3D12Backend::SkyLight(Target& t, uint32_t rw, uint32_t rh, uint32_t tw, u
+ // fell as the camera turned, and the room's light with it), the last XBE_RT_GI_HOLD frames' once there are more
+ // (600, about 10 seconds: at 1200 a turn from a lit wall to a dark corner, or down to a floor, left the whole view
+ // dimmed or raised for twenty seconds). The held value's SRV slot, -1 when it could not be made
+-float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th) {
++// (all: the lights' light counted in, the Path traced quality's second average, held in its own pair: what a room's
++// surfaces get in all, which a room lit everywhere by its glows, the Garibaldi Temple's flesh room, is lit by)
++float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th, bool all) {
+     auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
+     static const float kEase = 1.0f / std::clamp(env("XBE_RT_GI_HOLD", 600.0f), 1.0f, 100000.0f);
+     auto down = [](uint32_t v) { return std::max(1u, (v + 7) / 8); };
+@@ -6599,12 +6604,12 @@ float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, u
+     const DXGI_FORMAT f16 = DXGI_FORMAT_R16G16B16A16_FLOAT;
+     uint32_t slot = AllocSrvSlots(kMean);
+     const DXGI_FORMAT f32 = DXGI_FORMAT_R32G32B32A32_FLOAT;
+-    for (uint32_t i = 0; i < kMean; i++) TextureSrv(mean_[i].Get(), i == 4 || i == 5 ? f32 : f16, slot + i);
++    for (uint32_t i = 0; i < kMean; i++) TextureSrv(mean_[i].Get(), i == 4 || i == 5 || i >= 9 ? f32 : f16, slot + i);
+     uint32_t sw = gw, sh = gh;
+     bool drawn = true;
+     for (uint32_t i = 0; i < 4 && drawn; i++) {
+         uint32_t dw = down(sw), dh = down(sh);
+-        float p[8] = {float(i == 0 ? bounce_slot : slot + i - 1), float(sw), float(sh), i == 0 ? 0.0f : 1.0f};
++        float p[8] = {float(i == 0 ? bounce_slot : slot + i - 1), float(sw), float(sh), i == 0 ? (all ? 5.0f : 0.0f) : 1.0f};
+         Alloc cb = Upload(256, 256);
+         std::memcpy(cb.cpu, p, sizeof(p));
+         Transition(mean_[i].Get(), mean_state_[i], D3D12_RESOURCE_STATE_RENDER_TARGET);
+@@ -6614,10 +6619,13 @@ float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, u
+         sw = dw;
+         sh = dh;
+     }
+-    uint32_t cur = 4 + (mean_cur_ ^ 1), prev = 4 + mean_cur_;
++    uint32_t& mcur = all ? mean_all_cur_ : mean_cur_;
++    uint64_t& mframe = all ? mean_all_frame_ : mean_frame_;
++    const uint32_t base = all ? 9 : 4;
++    uint32_t cur = base + (mcur ^ 1), prev = base + mcur;
+     // afresh after a cut or a time without a view (a loading, a room's change); not after a frame without bounce
+     // lighting alone (a menu over the room, the bounce off a while): the room's held as it was
+-    bool reset = rt_reset_ || mean_frame_ == UINT64_MAX;
++    bool reset = rt_reset_ || mframe == UINT64_MAX;
+     float e[8] = {float(slot + 3), 1, 1, 2, float(slot + prev), kEase, reset ? 1.0f : 0.0f, 0};
+     Alloc ecb = Upload(256, 256);
+     std::memcpy(ecb.cpu, e, sizeof(e));
+@@ -6627,8 +6635,8 @@ float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, u
+                                Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kMeanRtv + cur, rtv_inc_), f32, 1, 1);
+     Transition(mean_[cur].Get(), mean_state_[cur], kRead);
+     if (!drawn) return -1;
+-    mean_cur_ ^= 1;
+-    mean_frame_ = presents_;
++    mcur ^= 1;
++    mframe = presents_;
+     return float(slot + cur);
+ }
+ 
+@@ -6881,6 +6889,17 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+                        kBoost = env("XBE_RT_GI_BOOST", 1.5f), kCharFill = env("XBE_RT_GI_CHAR_FILL", 0.6f),
+                        kCharBoost = env("XBE_RT_GI_CHAR_BOOST", 0.0f);
+     float mean = drawn && kNeutral != 0 ? RoomBounce(slot + 1, gw, gh, tw, th) : -1.0f;
++    // (path traced: the room's average with the lights' light in too, rt_giapply.hlsl's gz.w; XBE_RT_PT_ALL (0.85):
++    // a surface is raised against this much of it at least, so a room lit everywhere by its glows is not raised whole)
++    // (0: not taken; the flesh room's whole raise turned out to be High's dim of it, below, not the paths')
++    // XBE_RT_GI_SAY (0.02): the room's average under which the rays have little to say, and the frame is left as the
++    // game drew it rather than dimmed whole (rt_giapply.hlsl: the flesh room's walls are skinned, characters to the
++    // scene, which the bounce rays pass, so no light arrived anywhere and the room went to a quarter of its brightness)
++    // XBE_RT_PT_HUE (2): the power the light's hue against the room's average's is taken to in the path traced apply
++    // (rt_giapply.hlsl): a brazier's colour spread over the floor around it
++    static const float kPtAll = env("XBE_RT_PT_ALL", 0.0f), kSay = env("XBE_RT_GI_SAY", 0.02f),
++                       kPtHue = env("XBE_RT_PT_HUE", 2.0f);
++    float mean_all = path && kPtAll > 0 && mean >= 0 ? RoomBounce(slot + 1, gw, gh, tw, th, true) : -1.0f;
+     float fill = std::clamp(kFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 0.9f);
+     float char_fill = std::clamp(kCharFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 0.9f);
+     // the frame's effects (the anti-aliasing's reactive mask: glows, beams, fire drawn into the frame before it), left
+@@ -6895,11 +6914,12 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // room), eased toward from XBE_RT_GI_LIFT_KNEE (0.8) on; cut at 1 before, the walls by the purple lamps doubled to
+     // a flat purple (the easing keeps their carving)
+     static const float kLiftMost = env("XBE_RT_GI_LIFT_MOST", 2.0f), kLiftKnee = env("XBE_RT_GI_LIFT_KNEE", 0.8f);
+-    // Path traced (rt_giapply.hlsl): the game's own light kept only an artists' share, 1 - XBE_RT_PT_FILL (0.65) x the
+-    // Lighting strength (0.35 at 100%: at 50% two thirds, at 200% none; at 0.25 the floors of 5.8's rampart and bridge
+-    // went to a third of the game's and lost their stone), the rest set against the room's average outright, raised up
+-    // to XBE_RT_PT_MOST (3) times, eased from XBE_RT_PT_KNEE (2) on
+-    static const float kPtFill = env("XBE_RT_PT_FILL", 0.65f), kPtMost = env("XBE_RT_PT_MOST", 3.0f),
++    // Path traced (rt_giapply.hlsl): the game's own light kept only an artists' share, 1 - XBE_RT_PT_FILL (0.55) x the
++    // Lighting strength (0.45 at 100%: at 50% three quarters, at 200% a tenth; at 0.25 the floors of 5.8's rampart and
++    // bridge went to a third of the game's and lost their stone, at 0.35 the courtyards after a fight sat at 55%), the
++    // rest set against the room's average outright, raised up to XBE_RT_PT_MOST (3) times, eased from XBE_RT_PT_KNEE
++    // (2) on
++    static const float kPtFill = env("XBE_RT_PT_FILL", 0.55f), kPtMost = env("XBE_RT_PT_MOST", 3.0f),
+                        kPtKnee = env("XBE_RT_PT_KNEE", 2.0f);
+     if (path) {
+         fill = std::clamp(kPtFill * g_rt_lighting_strength.load(std::memory_order_relaxed), 0.0f, 1.0f);
+@@ -6916,13 +6936,14 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // room's own colour is in its fill already, and a surface that gets more of the room's light is raised in white
+     // (rt_giapply.hlsl)
+     static const float kHueMean = env("XBE_RT_GI_HUE_MEAN", 1.0f);
+-    float ap[28] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
++    float ap[32] = {ao_view_.near_w, ao_view_.far_w, tan_y * float(rw) / float(rh), tan_y,
+                     float(rw), float(rh), float(gw), float(gh),
+                     float(slot), float(light), std::max(1.0f, kStep), float(kView),
+                     float(slot + 2), float(slot + 3), mean, fill,
+                     kBoost, char_fill, kCharBoost, effects ? float(slot + 9 + kDn + 1) : 0.0f,
+                     path ? kPtMost : kLiftMost, path ? kPtKnee : kLiftKnee, kFade, kLiftHue,
+-                    kMeanFloor, kHueMean, gc.sky[3], path ? 1.0f : 0.0f};
++                    kMeanFloor, kHueMean, gc.sky[3], path ? 1.0f : 0.0f,
++                    mean_all, kPtAll, kSay, kPtHue};
+     Alloc acb = Upload(256, 256);
+     std::memcpy(acb.cpu, ap, sizeof(ap));
+     Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
+index 2ce86b9..65e74b7 100644
+--- a/runtime/gpu/rt_gi.hlsl
++++ b/runtime/gpu/rt_gi.hlsl
+@@ -160,17 +160,22 @@ float3 PathTraced(uint2 id, float3 o, float3 n, float t, float pixel, float3 sky
+         float2 b3;
+         float t3 = TraceSceneMasked(hp, rd2, 0, open ? 1e30f : gi.x, 12, 0x01, g3, p3, b3);
+         float3 l2 = 0, end = 0;
+-        if (t3 < 0) {
+-            if (open) end = skyc * saturate(dot(rd2, sky.xyz) * 1.5f + 0.25f) * gi.z;
+-        } else if (t3 < gi.x) {
++        // the path's end: the second vertex's game light; where the second ray leaves the room (the sky's light,
++        // outdoors) or goes past the reach, the first vertex's own (the bounce lighting's end: without it, a bridge
++        // under the night sky, whose rays off the planks and railings all left the room, got next to no light, and
++        // the room's average, with the castle wall's lamps in it, put the whole bridge at the artists' share)
++        float reach2 = 0;
++        if (t3 >= 0 && t3 < gi.x) {
+             Spot hs2 = SpotOf(g3, p3, b3);
+             float3 hn2 = Facing(hs2.p[0], hs2.p[1], hs2.p[2], rd2);
+-            float reach2 = saturate(4 * (1 - t3 / gi.x));
++            reach2 = saturate(4 * (1 - t3 / gi.x));
+             float3 pic2 = PictureAt(g3, hs2, (t + t2 + t3) * pixel * 8);
+             float3 hp2 = hp + rd2 * t3 + hn2 * (fr.z + fr.w * (t + t2 + t3));
+             if (any(hn2 != 0)) l2 = pic2 * VertexLight(hp2, hn2, id + uint2(k * 977u + 331u, 0), uint(fr.x)) * reach2;
+             end = pic2 * saturate(hs2.tint.rgb) * (gi.z * pt.y) * reach2;
+         }
++        if (t3 < 0 && open) end += skyc * saturate(dot(rd2, sky.xyz) * 1.5f + 0.25f) * gi.z;
++        end += saturate(hs.tint.rgb) * (gi.z * pt.y) * (1 - reach2);
+         sum += pic * (l1 + l2 + end) * reach;
+         ind += pic * (l1 + l2) * reach;
+     }
+@@ -310,8 +315,9 @@ Out ps(float4 pos : SV_Position) {
+             bounced += pic * hl * reach;
+         }
+     }
+-    // (path traced: the paths' light, in the frame's units already)
+-    float3 light = pt.x > 0 ? traced / float(max(rays, 1)) : sum / float(max(rays, 1)) * gi.z;
++    // (path traced: the paths' light, in the frame's units already, without the lights' light along them, which goes
++    // in with the surface's own, capped, below)
++    float3 light = pt.x > 0 ? (traced - ind) / float(max(rays, 1)) : sum / float(max(rays, 1)) * gi.z;
+     // the sky's, which the room's average leaves out as it does the lights' (below): counted in it, a room's average
+     // rose over the twenty seconds after the camera first tilted up to the sky, and every surface that could not see
+     // the sky (the floor of a canyon, under a ledge) dimmed over those seconds; the sky's light is a lift above the
+@@ -339,9 +345,10 @@ Out ps(float4 pos : SV_Position) {
+         lit2 *= lt.w / ll2;
+         ll2 = lt.w;
+     }
+-    // (path traced: the lights' light along the path is in the paths' light already; its share is told apart for the
+-    // room's average, in the alpha, as the bounce's second bounce is)
+-    if (pt.x <= 0) lit += lit2;
++    // (path traced: the lights' light along the path, capped as the surface's own is: at first its excess over the cap
++    // stayed in the paths' light, and the brightest texels by a lamp raised the room's average over what most of the
++    // room got, which then fell to the artists' share)
++    lit += lit2;
+     // fading out with distance: the far half of its reach on screen
+     float fade = saturate((gi.w - p.z) / (0.5f * gi.w));
+     if (fr.y == 17) light = skied = 0;  // XBE_RT_VIEW 17: the lights' and glows' light alone (8: all as it arrives)
+@@ -351,7 +358,7 @@ Out ps(float4 pos : SV_Position) {
+     // every surface open to the sky lay above the average and the Abandoned Castle's drawbridge and the Mountains'
+     // canyons were raised to twice their brightness (the planks of 5.0 washed out, looking down)
+     float gll = dot(glowed, float3(0.2126f, 0.7152f, 0.0722f));
+-    float lits = dot(lit, float3(0.2126f, 0.7152f, 0.0722f)) + (pt.x > 0 ? ll2 : 0);
++    float lits = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));
+     res.light = float4((light + lit + glowed + skied) * fade, 1 + (lits + gll) * fade);
+     return res;
+ }
+diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
+index 093a272..9bf0857 100644
+--- a/runtime/gpu/rt_giapply.hlsl
++++ b/runtime/gpu/rt_giapply.hlsl
+@@ -26,6 +26,10 @@ cbuffer P : register(b0) {
+                   // against the room's average's (XBE_RT_GI_HUE_MEAN), 0: against white; the SRV heap's index of the
+                   // sky's colour held (rt_gimean.hlsl's, -1 none; XBE_RT_VIEW 19 shows it, 20 the room's average);
+                   // w: 1 path traced (the Path traced quality: the light applied outright, below)
++    float4 gw;    // path traced: the SRV heap's index of the room's average with the lights' light in (-1: none), and
++                  // how much of it a surface is raised against at least (XBE_RT_PT_ALL); z: the room's average under
++                  // which the rays have little to say and the frame is left more as the game drew it (XBE_RT_GI_SAY);
++                  // w: the power the light's hue against the average's is taken to (XBE_RT_PT_HUE)
+ };
+ #include "rt_scene.hlsli"
+ 
+@@ -59,6 +63,8 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+         return float4(bounce.Load(int3(q, 0)).rgb, 1);
+     }
+     // the frame as it is: a gain of 1, or with a debug view (BounceApplyView: the frame x (1 - alpha) + colour) none
++    // (XBE_RT_VIEW 23: the path traced gain, a half grey at 1, with its parts: the room's average's brightness in red
++    // where the gain is not drawn)
+     const float4 kAsIs = ap.w != 0 ? float4(0, 0, 0, 0) : float4(0, 0, 0, 1);
+     if (a.a == 0) return kAsIs;  // not the scene's surface: as the game drew it
+     float zc = ViewZ(depth.Load(int3(px, 0)).r);
+@@ -87,17 +93,21 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+     // lights' alone, rt_gi.hlsl), 9: thrown back (in the frame's place)
+     if (ap.w == 8 || ap.w == 10 || ap.w == 17) return float4(light, 1);
+     if (ap.w == 9) return float4(light * a.rgb, 1);
+-    if (ap.w != 0 || gu.z < 0) return kAsIs;  // another debug view's; no room average (XBE_RT_GI_NEUTRAL=0)
++    if ((ap.w != 0 && ap.w != 23) || gu.z < 0) return kAsIs;  // another debug view's; no room average (XBE_RT_GI_NEUTRAL=0)
+     // in the fill's place: a share of the frame's own light taken out as it falls short of the room's average, and
+     // given as it gets more, colour by colour (the alpha the part of the gain up to 1, the colour the part over 1)
+     float3 mean = pictures[NonUniformResourceIndex(uint(gu.z))].Load(int3(0, 0, 0)).rgb;
+     float lm = Luma(mean);
+-    if (lm <= 1e-5f) return kAsIs;
++    if (lm <= 1e-5f) return ap.w == 23 ? float4(1, 0, 1, 1) : kAsIs;
+     // what raises a surface is set against the room's average or gz.x, the more: a room lit dim all round (5.9's
+     // rampart at night) has an average so low that a small glow's light (an item's sparkle on the floor), and the
+     // rays' noise, were many times it, and lit pools of white and yellow on the floor with nothing there to throw
+     // them. What dims one, against the average as it is, so the room keeps its brightness
+     float lup = max(lm, gz.x);
++    // how much the rays have to say: a room whose average is next to nothing (the Garibaldi Temple's flesh room, whose
++    // walls are skinned meshes, characters to the scene, which the bounce rays pass: no light arrives anywhere) is
++    // left as the game drew it rather than dimmed whole (it went to a quarter of its brightness)
++    float say = saturate(lm / max(gw.z, 1e-6f));
+     // a character (the guides' albedo alpha a half) by its own share: the game lights Hector and the enemies apart from
+     // the room, as brightly in its darkest corner as by its torches, so they stood out lit up against their
+     // surroundings; with the larger share they take the room's light as the stone beside them does
+@@ -108,7 +118,7 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+     // last of its noise in colours (5.9's sky, a green and orange smear). Set against the average as it was before the
+     // fade, so what is half faded is not taken for dark, then given as much of its gain as it has of its light
+     float near = gy.z > 0 ? saturate((gy.z - zc) / (0.5f * gy.z)) : 1;
+-    if (near <= 0) return kAsIs;
++    if (near <= 0) return ap.w == 23 ? float4(0, 1, 1, 1) : kAsIs;
+     light /= max(near, 0.1f);
+     float ll = Luma(light);
+     // Path traced (gz.w, the Path traced quality; rt_gi.hlsl's PathTraced): the fill's place taken outright. Each
+@@ -129,29 +139,49 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+             // lift above): colour by colour, a channel the room's average has little of was raised without end by what
+             // little of it a lamp threw, and a purple brazier's light lay over a whole courtyard
+             // (raised against the average or gz.x, the more, as the lift above: in 5.9's night courtyard the brazier's
+-            // light was many times the dark room's average, and lay purple over the whole floor)
+-            float r = ll < lm ? ll / lm : max(ll / lup, 1.0f);
+-            float soft = r <= knee_ ? r : knee_ + (most_ - knee_) * (1 - exp(-(r - knee_) / max(most_ - knee_, 1e-3f)));
++            // light was many times the dark room's average, and lay purple over the whole floor; and against gw.y of
++            // the average with the lights' light in: a room lit everywhere by its glows, the Garibaldi Temple's flesh
++            // room, had an average without them a fraction of what its surfaces got, and was raised whole to twice
++            // the game's brightness)
++            float up = lup;
++            if (gw.x >= 0) up = max(up, gw.y * Luma(pictures[NonUniformResourceIndex(uint(gw.x))].Load(int3(0, 0, 0)).rgb));
++            float r = ll < lm ? ll / lm : max(ll / up, 1.0f);
++            // (under the average by the square of the shortfall, as the dim above: a surface at half the average
++            // keeps most of the game's light, one that gets nothing the artists' share; by the shortfall itself the
++            // courtyards' floors and the bridge, most of whose paths bring back little against the lit walls in the
++            // average, sat at half the game's brightness, the loss of detail Julian had asked to be rid of)
++            float soft = r < 1 ? 1 - (1 - r) * (1 - r)
++                       : r <= knee_ ? r : knee_ + (most_ - knee_) * (1 - exp(-(r - knee_) / max(most_ - knee_, 1e-3f)));
+             // the hue on the whole of the paths' share, not on what is raised alone as the lift above has it: a
+             // brazier's purple spreads over the courtyard floor around it and fades with the distance, as a lamp's
+             // light does (Julian: "I kinda like the purple glow of the flame to be spread on the floor like an actual
+             // light"; on the raise alone the floor stayed grey but for the pool right by it)
+-            float3 hue = clamp((light / max(ll, 1e-4f)) * lm / max(mean, 1e-4f), 0.25f, 4.0f);
++            // (the hue to the power gw.w, XBE_RT_PT_HUE: a brazier's purple a little way off is a small part of the
++            // light there once the paths bring the room's own light back with them, and at 1 the courtyard floor was
++            // barely tinted; at 2 its colour spreads over the floor and fades with the distance, as Julian likes it)
++            float3 hue = clamp(pow(clamp((light / max(ll, 1e-4f)) * lm / max(mean, 1e-4f), 0.25f, 4.0f), max(gw.w, 0.0f)),
++                               0.25f, 4.0f);
+             gain = keep + (1 - keep) * soft * lerp(float3(1, 1, 1), hue, saturate(gy.w));
+         }
+-        gain = lerp(1.0f, gain, near);
++        gain = lerp(1.0f, gain, near * say);
+         if (gx.w > 0) {
+             float fx = saturate(pictures[NonUniformResourceIndex(uint(gx.w - 1))].Load(int3(px, 0)).r);
+             gain = lerp(gain, 1.0f, fx);
+         }
+-        return float4(gain, 0);
++        // as the lift and the dim go out (the part of the gain up to 1 in the alpha, the part over it in the colour):
++        // the frame's target clamps what a pixel shader writes to 1, and a gain written whole in the colour could only
++        // darken (the castle rooms came out at half the game's brightness, a torch's wall never raised)
++        if (ap.w == 23) return float4(gain * 0.5f, 1);
++        float base = min(min(gain.r, gain.g), min(gain.b, 1.0f));
++        return float4(gain - base, base);
+     }
++    if (ap.w == 23) return float4(lm * 4, say, ll / max(lm, 1e-4f) * 0.25f, 1);
+     // taken out by the square of how far short it falls: a surface at half the average keeps nearly all of the
+     // game's light, one that gets nothing gives up the share (at the share's 0.7 it kept 30%, and a corner or a
+     // cliff the rays brought little to lost its picture's detail in the dark; Julian: "some of the scenes look
+     // really dark with ray tracing on, like there's a loss of detail in the textures")
+     float short_ = saturate(1 - ll / lm);
+-    float dim = share * short_ * short_;
++    float dim = share * short_ * short_ * say;
+     // and a character gains none (XBE_RT_GI_CHAR_BOOST, 0) of what it gets above the average: the game's own lights
+     // light it already, and added to theirs it stood out brighter than the floor beside it
+     float x = (person ? gx.z : gx.x) * share * max(ll / lup - 1, 0);
+diff --git a/runtime/gpu/rt_gimean.hlsl b/runtime/gpu/rt_gimean.hlsl
+index 19d45d6..1bb840b 100644
+--- a/runtime/gpu/rt_gimean.hlsl
++++ b/runtime/gpu/rt_gimean.hlsl
+@@ -8,7 +8,8 @@
+ cbuffer P : register(b0) {
+     float4 src;   // the SRV heap's index of what is averaged, its size drawn (w, h), 0: the bounce target (its alpha
+                   // whether a texel had any, 1 and over, and the light the scene's lights threw on it over 1, which the
+-                  // room's average leaves out: theirs is light above the room's), 1: a level before, 3: the sky's colour
++                  // room's average leaves out: theirs is light above the room's; 5: the bounce target with the lights'
++                  // light left in, the Path traced quality's second average), 1: a level before, 3: the sky's colour
+                   // (the frame's, where it drew nothing: ease holds the depth's SRV index and the view's depth at the
+                   // buffer's 0 and 1), and the share of the frame it covers (rgb the mean, alpha the share that had any), 2: hold
+                   // the room's mean over the frames, the last level's this frame's
+@@ -70,7 +71,7 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+     for (int y = lo.y; y < hi.y; y++)
+         for (int x = lo.x; x < hi.x; x++) {
+             float4 t = Tex(src.x).Load(int3(x, y, 0));
+-            float k = src.w == 0 ? (t.a > 0 ? 1 : 0) : t.a;
++            float k = src.w == 0 || src.w == 5 ? (t.a > 0 ? 1 : 0) : t.a;
+             if (src.w == 0 && t.a > 1) {
+                 float l = dot(t.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+                 t.rgb *= l > 1e-5f ? saturate(1 - (t.a - 1) / l) : 0;
+-- 
+2.43.0
+
