@@ -12958,10 +12958,10 @@ index 0000000..2ce86b9
 +}
 diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
 new file mode 100644
-index 0000000..ee35e12
+index 0000000..093a272
 --- /dev/null
 +++ b/runtime/gpu/rt_giapply.hlsl
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,184 @@
 +// Ray traced bounce lighting's second step (rt_gi.hlsl): the light arriving at each surface, gathered by a few rays a
 +// pixel at a part of the frame's size, smoothed across a 5x5 of its texels that lie on the same surface as the pixel
 +// (by their depth and their normal, rt_guide.hlsl's), then put into the frame's 3D at its full size as a gain on the
@@ -13096,10 +13096,12 @@ index 0000000..ee35e12
 +            // light was many times the dark room's average, and lay purple over the whole floor)
 +            float r = ll < lm ? ll / lm : max(ll / lup, 1.0f);
 +            float soft = r <= knee_ ? r : knee_ + (most_ - knee_) * (1 - exp(-(r - knee_) / max(most_ - knee_, 1e-3f)));
-+            // (the hue on what is raised alone, as the lift above: on the whole, a night courtyard whose game light was
-+            // dark grey was tinted purple wherever its brazier's light was most of the little there was)
++            // the hue on the whole of the paths' share, not on what is raised alone as the lift above has it: a
++            // brazier's purple spreads over the courtyard floor around it and fades with the distance, as a lamp's
++            // light does (Julian: "I kinda like the purple glow of the flame to be spread on the floor like an actual
++            // light"; on the raise alone the floor stayed grey but for the pool right by it)
 +            float3 hue = clamp((light / max(ll, 1e-4f)) * lm / max(mean, 1e-4f), 0.25f, 4.0f);
-+            gain = keep + (1 - keep) * (min(soft, 1.0f) + max(soft - 1, 0) * lerp(float3(1, 1, 1), hue, saturate(gy.w)));
++            gain = keep + (1 - keep) * soft * lerp(float3(1, 1, 1), hue, saturate(gy.w));
 +        }
 +        gain = lerp(1.0f, gain, near);
 +        if (gx.w > 0) {

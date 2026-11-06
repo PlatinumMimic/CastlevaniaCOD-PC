@@ -448,9 +448,9 @@ background first); the size pictures load at applies from the next start.
   lights that place, with a ray toward it for its shadow) and of the sky where a ray leaves the room, and where it
   ends it takes the light the game's artists painted there, standing for every bounce after. The game's own flat
   light is then kept only an artists' share (0.35 at Lighting strength 100%, less as the strength rises), and the rest
-  of each surface's brightness is what the paths brought set against the room's average, in the light's own hue: the
-  floor by a brazier is lit in its colour, a corner that nothing reaches goes dark, and the light falls off from the
-  lamps as light does. About 4.7 ms a frame at 4K with DLSS Balanced on the RTX 5080 (High's 3.5).
+  of each surface's brightness is what the paths brought set against the room's average, in the light's own hue: a
+  brazier's purple spreads over the floor around it and fades with the distance, a corner that nothing reaches goes
+  dark, and the light falls off from the lamps as light does. About 4.7 ms a frame at 4K with DLSS Balanced on the RTX 5080 (High's 3.5).
   The frame's scene goes into the acceleration structure as a few merged geometries (the world's solid draws, its
   cut-outs, its glows, the characters', the water), built back to back: a thousand geometries a frame had cost the
   build more than its triangles. `perf-run.bat` beside the game starts it with the SDK's timings on and leaves

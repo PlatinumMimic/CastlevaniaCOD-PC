@@ -31085,3 +31085,44 @@ index 1492c4f..ee35e12 100644
 -- 
 2.43.0
 
+From 1947c091ade0472a111d7ff757799f9447ce83da Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Thu, 5 Nov 2026 22:43:39 -0500
+Subject: [PATCH] Path traced: the lamps' hue over the whole of the paths'
+ share
+
+rt_giapply.hlsl: the light's hue against the room's average goes on the whole of what the paths bring, not on what
+is raised alone: a brazier's purple spreads over the courtyard floor around it and fades with the distance, as a lamp's
+light does (Julian: "I kinda like the purple glow of the flame to be spread on the floor like an actual light"; on the
+raise alone the floor stayed grey but for the pool right by it). Flicker (rtnoise) at Path traced is a little under
+High's: 996 against 1117 at 1080p, 798 against 913 at 4K.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/rt_giapply.hlsl | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/runtime/gpu/rt_giapply.hlsl b/runtime/gpu/rt_giapply.hlsl
+index ee35e12..093a272 100644
+--- a/runtime/gpu/rt_giapply.hlsl
++++ b/runtime/gpu/rt_giapply.hlsl
+@@ -132,10 +132,12 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
+             // light was many times the dark room's average, and lay purple over the whole floor)
+             float r = ll < lm ? ll / lm : max(ll / lup, 1.0f);
+             float soft = r <= knee_ ? r : knee_ + (most_ - knee_) * (1 - exp(-(r - knee_) / max(most_ - knee_, 1e-3f)));
+-            // (the hue on what is raised alone, as the lift above: on the whole, a night courtyard whose game light was
+-            // dark grey was tinted purple wherever its brazier's light was most of the little there was)
++            // the hue on the whole of the paths' share, not on what is raised alone as the lift above has it: a
++            // brazier's purple spreads over the courtyard floor around it and fades with the distance, as a lamp's
++            // light does (Julian: "I kinda like the purple glow of the flame to be spread on the floor like an actual
++            // light"; on the raise alone the floor stayed grey but for the pool right by it)
+             float3 hue = clamp((light / max(ll, 1e-4f)) * lm / max(mean, 1e-4f), 0.25f, 4.0f);
+-            gain = keep + (1 - keep) * (min(soft, 1.0f) + max(soft - 1, 0) * lerp(float3(1, 1, 1), hue, saturate(gy.w)));
++            gain = keep + (1 - keep) * soft * lerp(float3(1, 1, 1), hue, saturate(gy.w));
+         }
+         gain = lerp(1.0f, gain, near);
+         if (gx.w > 0) {
+-- 
+2.43.0
+
