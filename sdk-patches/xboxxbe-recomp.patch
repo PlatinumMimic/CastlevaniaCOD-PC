@@ -2038,7 +2038,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..a222cfe 100644
+index fe65837..472173d 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,25 +15,43 @@
@@ -5807,7 +5807,7 @@ index fe65837..a222cfe 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3149,102 +5829,3127 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3149,102 +5829,3132 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      }
  }
  
@@ -7957,9 +7957,14 @@ index fe65837..a222cfe 100644
 +                  Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kAoRtv, rtv_inc_), DXGI_FORMAT_R8_UNORM, aw,
 +                  ah);
 +        EndRtPass();
-+        // gathered over the frames by the port's own denoiser when no vendor's takes the frame: the blur and multiply
-+        // after it then take the history (its view in the ambient occlusion's place: nothing before reads that)
-+        if (OwnDenoiser() && Guides(t, rw, rh)) {
++        // gathered over the frames by the port's own denoiser: the blur and multiply after it then take the history
++        // (its view in the ambient occlusion's place: nothing before reads that). With Ray Reconstruction too
++        // (XBE_RT_AO_GATHER=0: as before, only when no vendor's denoiser takes the frame): the shade of a frame's 8
++        // rays at half size, multiplied into the frame, was left to it to settle, and in the save room, where every
++        // ray meets a statue's facet or the throne, the walls' grain changed with the camera's every turn (Julian:
++        // the textures flicker); gathered over 16 frames first, the frame it takes is steady
++        static const bool kAoGather = !(std::getenv("XBE_RT_AO_GATHER") && std::atoi(std::getenv("XBE_RT_AO_GATHER")) == 0);
++        if ((OwnDenoiser() || kAoGather) && Guides(t, rw, rh)) {
 +            if (ID3D12Resource* h = GatherAmbientOcclusion(rw, rh, aw, ah)) TextureSrv(h, DXGI_FORMAT_R16G16_FLOAT, slot + 1);
 +        }
 +        // its debug views shown as they are, unblurred (aoapply's XBE_AO_VIEW 3)
@@ -9013,7 +9018,7 @@ index fe65837..a222cfe 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +8958,308 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +8963,308 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -9323,7 +9328,7 @@ index fe65837..a222cfe 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +9269,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +9274,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -9334,7 +9339,7 @@ index fe65837..a222cfe 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +9289,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +9294,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -9355,7 +9360,7 @@ index fe65837..a222cfe 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +9313,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +9318,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -9388,7 +9393,7 @@ index fe65837..a222cfe 100644
      }
  }
  
-@@ -3312,17 +9346,45 @@ void LogPerf() {
+@@ -3312,17 +9351,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -9438,7 +9443,7 @@ index fe65837..a222cfe 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +9393,185 @@ void LogPerf() {
+@@ -3331,25 +9398,185 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -9629,7 +9634,7 @@ index fe65837..a222cfe 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +9582,47 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +9587,47 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -9678,7 +9683,7 @@ index fe65837..a222cfe 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +9630,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +9635,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -9686,7 +9691,7 @@ index fe65837..a222cfe 100644
      ApplySettings();
  }
  
-@@ -3386,13 +9642,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +9647,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -9743,7 +9748,7 @@ index fe65837..a222cfe 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +9697,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +9702,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -9751,7 +9756,7 @@ index fe65837..a222cfe 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +9987,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +9992,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  

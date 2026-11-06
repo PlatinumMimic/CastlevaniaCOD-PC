@@ -428,8 +428,11 @@ background first); the size pictures load at applies from the next start.
     It needs Streamline's DLSS-RR files (`sl.dlss_d.dll`, `nvngx_dlssd.dll`), which the launcher's DLSS download now
     brings with the rest (a download from before asks to be made again).
     With AMD FSR (any card), or DLSS without those files, the port's own denoiser takes all three before the
-    anti-aliasing. The bounce lighting goes through the port's own with Ray Reconstruction too: the lights' samples
-    left to it alone flickered on the walls they lit. Each surface's light is gathered over the frames, followed to where the frame's motion says it was
+    anti-aliasing. The bounce lighting and the ambient occlusion go through the port's own with Ray Reconstruction
+    too: the lights' samples left to it alone flickered on the walls they lit, and the ambient occlusion's grain (8
+    rays a pixel at half size) changed with the camera's every turn in the Abandoned Castle's save room, where every
+    ray meets a statue or the throne (`XBE_RT_AO_GATHER=0` leaves it to Ray Reconstruction, as before). Each
+    surface's light is gathered over the frames, followed to where the frame's motion says it was
     a frame before (taken only from the same surface: what a character or the camera uncovers starts afresh, so
     nothing trails behind them):
     - the bounce lighting over up to 24 frames, then smoothed across its neighbours on the same surface by how much

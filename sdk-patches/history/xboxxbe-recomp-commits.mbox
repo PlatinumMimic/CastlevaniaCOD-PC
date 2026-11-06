@@ -33016,3 +33016,45 @@ index f940a67..c863f26 100644
 -- 
 2.43.0
 
+From 0a84624416bcb177955c44bb8e63124d35b6a3a0 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Fri, 6 Nov 2026 13:43:50 -0500
+Subject: [PATCH] Ray traced ambient occlusion: gathered over the frames with
+ Ray Reconstruction too
+
+The shade of a frame's 8 rays at half size, multiplied into the frame, was left to Ray Reconstruction to settle, and in
+the Abandoned Castle's save room, where every ray meets a statue's facet or the throne, the walls' grain changed with
+the camera's every turn (Julian: the textures flicker). The port's own gather over 16 frames (rt_aotemporal.hlsl)
+now runs before the blur and multiply whatever denoiser takes the frame; XBE_RT_AO_GATHER=0 is the old way.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index c863f26..70477a5 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -7720,9 +7720,14 @@ void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const F
+                   Gpu(srv_heap_.Get(), 0, srv_inc_), Cpu(rtv_heap_.Get(), kAoRtv, rtv_inc_), DXGI_FORMAT_R8_UNORM, aw,
+                   ah);
+         EndRtPass();
+-        // gathered over the frames by the port's own denoiser when no vendor's takes the frame: the blur and multiply
+-        // after it then take the history (its view in the ambient occlusion's place: nothing before reads that)
+-        if (OwnDenoiser() && Guides(t, rw, rh)) {
++        // gathered over the frames by the port's own denoiser: the blur and multiply after it then take the history
++        // (its view in the ambient occlusion's place: nothing before reads that). With Ray Reconstruction too
++        // (XBE_RT_AO_GATHER=0: as before, only when no vendor's denoiser takes the frame): the shade of a frame's 8
++        // rays at half size, multiplied into the frame, was left to it to settle, and in the save room, where every
++        // ray meets a statue's facet or the throne, the walls' grain changed with the camera's every turn (Julian:
++        // the textures flicker); gathered over 16 frames first, the frame it takes is steady
++        static const bool kAoGather = !(std::getenv("XBE_RT_AO_GATHER") && std::atoi(std::getenv("XBE_RT_AO_GATHER")) == 0);
++        if ((OwnDenoiser() || kAoGather) && Guides(t, rw, rh)) {
+             if (ID3D12Resource* h = GatherAmbientOcclusion(rw, rh, aw, ah)) TextureSrv(h, DXGI_FORMAT_R16G16_FLOAT, slot + 1);
+         }
+         // its debug views shown as they are, unblurred (aoapply's XBE_AO_VIEW 3)
+-- 
+2.43.0
+
