@@ -1,0 +1,205 @@
+{
+  "name": "savemove",
+  "save": "julian",
+  "vendor": true,
+  "note": "The Abandoned Castle's save room (5.27) with Hector walking each way for half a second and the camera following, six shots two frames apart in each (Julian, 6 Nov: the lighting flickers and the floor around the throne is noisy when the camera moves), cmp\\noise\\savemove.py.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.27,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 27 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:180f",
+      "shot": "still",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:30f",
+      "shot": "left-go",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:2f",
+      "shot": "left-0",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:2f",
+      "shot": "left-1",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:2f",
+      "shot": "left-2",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:2f",
+      "shot": "left-3",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:2f",
+      "shot": "left-4",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=-1/0:2f",
+      "shot": "left-5",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:30f",
+      "shot": "up-go",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:2f",
+      "shot": "up-0",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:2f",
+      "shot": "up-1",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:2f",
+      "shot": "up-2",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:2f",
+      "shot": "up-3",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:2f",
+      "shot": "up-4",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/-1:2f",
+      "shot": "up-5",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:30f",
+      "shot": "right-go",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:2f",
+      "shot": "right-0",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:2f",
+      "shot": "right-1",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:2f",
+      "shot": "right-2",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:2f",
+      "shot": "right-3",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:2f",
+      "shot": "right-4",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=1/0:2f",
+      "shot": "right-5",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:30f",
+      "shot": "down-go",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:2f",
+      "shot": "down-0",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:2f",
+      "shot": "down-1",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:2f",
+      "shot": "down-2",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:2f",
+      "shot": "down-3",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:2f",
+      "shot": "down-4",
+      "judge": false
+    },
+    {
+      "press": "0f:ls=0/1:2f",
+      "shot": "down-5",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "after",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  }
+}

@@ -2,7 +2,7 @@
   "name": "qualityswap",
   "save": "julian3",
   "vendor": true,
-  "note": "The ray tracing quality changed from High to Path traced in the settings menu while playing, then the room after: Julian (6 Nov) saw the lighting off in the room after the menu until the setting was toggled off and on.",
+  "note": "The ray tracing quality changed from High to Path traced in the settings menu while playing, then the room after: Julian (6 Nov) saw the lighting off in the room after the menu until the setting was toggled off and on. (Since the Ray tracing quality control went from the settings, 6 Nov afternoon, this scenario's clicks on it find nothing: kept for the record.)",
   "steps": [
     {
       "press": "0:wait:11000",

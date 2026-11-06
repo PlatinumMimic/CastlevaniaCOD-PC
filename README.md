@@ -342,8 +342,9 @@ background first); the size pictures load at applies from the next start.
   touch the floor (`ambient_occlusion`: 0 off, 1 low, 2 high). It is worked out from the 3D's depth before the
   anti-aliasing smooths it, so it needs anti-aliasing on.
 - **Ray Tracing** - On a graphics card with DirectX ray tracing (DXR 1.1: NVIDIA GeForce RTX, AMD Radeon RX 6000 or
-  newer, Intel Arc), rays through the room itself (`ray_tracing`: 0 off, 1 ambient occlusion, 5 lighting; bits 1 and
-  4; launcher Graphics page or the in-game menu; anti-aliasing on). Reflections (bit 2) are no longer offered: an
+  newer, Intel Arc), rays through the room itself (`ray_tracing`: 0 off, 1 ambient occlusion, 5 ray tracing, the
+  path traced lighting below; bits 1 and 4; launcher Graphics page or the in-game menu; anti-aliasing on).
+  Reflections (bit 2) are no longer offered: an
   older setting of 7, lighting and reflections, is read as 5. Each frame, the vertices the game's own draws put on
   the screen are gathered into an acceleration structure (the world as drawn, characters posed as they are), with
   each draw's picture and texture pack material. Cut-outs (railings, leaves, grates) are seen through where their
@@ -452,11 +453,12 @@ background first); the size pictures load at applies from the next start.
 
   All of it costs about 3 ms a frame at 1080p on a GeForce RTX 5080 (the screen space ambient occlusion 0.4 ms), and
   about 3.7 ms at 4K with DLSS Balanced.
-  **Ray tracing quality** (`ray_tracing_quality`: 0 low, 1 medium, 2 high, the default, 3 path traced) is for slower
-  graphics cards (AMD's, Intel's, a handheld's) at one end and fast ones at the other: low lights the room with one
-  ray a pixel at a third of the frame's size, reaches less far, sends fewer ambient occlusion rays at half the frame's
-  size, reflects only the smoothest surfaces and leaves the light shafts out (about 1.1 ms on the RTX 5080 at a
-  handheld's 1920x1200); medium is between. **Path traced** does all High does and lights the room as a path tracer
+  The settings' **Ray tracing** choice is the path traced lighting (`ray_tracing_quality` 3, the default). The key
+  in `castlevania.toml` alone, not a control, also takes 0 low, 1 medium and 2 high, for slower graphics cards
+  (AMD's, Intel's, a handheld's): low lights the room with one ray a pixel at a third of the frame's size, reaches
+  less far, sends fewer ambient occlusion rays at half the frame's size, reflects only the smoothest surfaces and
+  leaves the light shafts out (about 1.1 ms on the RTX 5080 at a handheld's 1920x1200); medium is between; high is
+  the bounce lighting above, one bounce. **Path traced** does all High does and lights the room as a path tracer
   would: one path a pixel at 0.71 of the frame's size, each followed two bounces through the room. At each place a
   path lands it takes the light of one of the room's lights (a torch, a brazier, a glow, picked by how strongly it
   lights that place, with a ray toward it for its shadow) and of the sky where a ray leaves the room, and where it

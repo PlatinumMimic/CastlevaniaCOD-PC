@@ -59,7 +59,7 @@ uint32_t g_ray_tracing = 0;
 uint32_t g_rt_lighting = 100;
 // how much ray tracing does a frame (gpu::g_rt_quality): 0 low, 1 medium, 2 high, 3 path traced (High, and the lighting
 // as a path tracer's: two bounces at the frame's full size, the game's own light kept only an artists' share)
-uint32_t g_rt_quality = 2;
+uint32_t g_rt_quality = 3;
 extern bool g_menu_spread;       // widescreen.cpp: the pause menu's columns toward the screen's sides
 extern bool g_hd_movies;         // movies.cpp: a movie pack's HD movies drawn
 extern uint32_t g_movie_view;    // movies.cpp: 0 the game's 4:3, 1 the picture whole as large as it goes, 2 filled
@@ -385,12 +385,13 @@ void GraphicsTab(bool& save) {
     Row("Ray tracing", "On a graphics card with ray tracing (DXR 1.1: NVIDIA RTX, AMD Radeon RX 6000 and later), rays "
                        "through the room's own 3D. Ambient occlusion: traced rather than worked out from the screen, "
                        "so what is off screen or behind something shades too, and characters cast soft shadows "
-                       "(needs ambient occlusion on). Lighting: with it, the light the room's surfaces throw onto each "
-                       "other, water's on the stone beside it, a torch's on its wall, the sky's outdoors, and the light "
-                       "the air catches. Needs anti-aliasing on.");
+                       "(needs ambient occlusion on). Ray tracing: with it, the room lit as a path tracer would, each "
+                       "pixel's light followed through the room, lit by the torches, the braziers and the sky: "
+                       "water's glow on the stone beside it, a torch's on its wall, the sky's outdoors, and the light "
+                       "the air catches. Needs anti-aliasing on, and a fast card.");
     {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
-        save |= Choice<uint32_t>("##rt", g_ray_tracing, {0, 1, 5}, {"Off", "Ambient occlusion", "Lighting"});
+        save |= Choice<uint32_t>("##rt", g_ray_tracing, {0, 1, 5}, {"Off", "Ambient occlusion", "Ray tracing"});
         if (g_ray_tracing && !gpu::g_ray_tracing_ready.load(std::memory_order_relaxed)) {
             ImGui::SameLine();
             ImGui::TextDisabled("not on this graphics card");
@@ -414,18 +415,11 @@ void GraphicsTab(bool& save) {
         }
         if (!(g_ray_tracing & 4)) {
             ImGui::SameLine();
-            ImGui::TextDisabled("needs ray tracing's Lighting");
+            ImGui::TextDisabled("needs Ray tracing");
         }
     }
-    Row("Ray tracing quality", "How much ray tracing does each frame, for slower graphics cards (AMD's, Intel's, a handheld's). Low lights the room with fewer rays at a smaller size, reaches less far and reflects only the smoothest surfaces; High does all of it. Path traced follows each pixel's light two bounces through the room at the frame's full size, lit by the torches and the sky, and keeps only a share of the game's own flat light: the most dramatic, for a fast card.");
-    {
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
-        save |= Choice<uint32_t>("##rtq", g_rt_quality, {0, 1, 2, 3}, {"Low", "Medium", "High", "Path traced"});
-        if (!g_ray_tracing) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("ray tracing is off");
-        }
-    }
+    // (ray_tracing_quality, g_rt_quality, is castlevania.toml's alone: Ray tracing is the path traced lighting, 3; a
+    // handheld sets the key to 0, Low, by hand)
     Row("Anisotropic filtering", "Sharper textures at an angle.");
     save |= Choice<uint32_t>("##aniso", s.aniso, {0, 2, 4, 8, 16}, {"Off", "2x", "4x", "8x", "16x"});
     Row("Render scale", "Of the output height. Above 100% supersamples for a sharper, smoother picture.");
@@ -673,7 +667,7 @@ void Defaults() {
     g_ambient_occlusion = 1;
     g_ray_tracing = 0;
     g_rt_lighting = 100;
-    g_rt_quality = 2;
+    g_rt_quality = 3;
     app::ApplyDisplay();
 }
 
