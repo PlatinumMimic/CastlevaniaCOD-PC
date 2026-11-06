@@ -1,0 +1,97 @@
+{
+  "name": "f10room",
+  "save": "julian3",
+  "vendor": true,
+  "note": "The settings menu (F10 / both sticks) opened and closed in a room, then two room changes: Julian (6 Nov) saw the lighting stay off in the room after opening the menu until the setting was toggled. Shots before, with the menu, after, and in the next rooms.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.1,10f:wait:20f"
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "before",
+      "judge": false
+    },
+    {
+      "press": "0f:l3+r3:5f,10f:wait:60f",
+      "shot": "menu",
+      "judge": false
+    },
+    {
+      "press": "0f:l3+r3:5f,10f:wait:60f",
+      "shot": "closed",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:90f",
+      "shot": "after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.4,10f:wait:20f",
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 60,
+      "poll": "0:a,60f:wait",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "next",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "next2",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.1,10f:wait:20f",
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 60,
+      "poll": "0:a,60f:wait",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "next3",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "upscaling": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  }
+}

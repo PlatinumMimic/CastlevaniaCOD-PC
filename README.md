@@ -373,13 +373,18 @@ background first); the size pictures load at applies from the next start.
       light grows in over about half a second once it has been there a third of one, so a sword's swing, a hit's
       sparks and a spell's burst throw none while a torch, a lamp and a lava golem's glow throw all of theirs; the
       point a pixel settled on follows its light as others come and go; and a light that leaves the screen goes on
-      lighting what is in view for twenty seconds, so a torch just out of view still lights the wall beside it.
+      lighting what is in view for twenty seconds, so a torch just out of view still lights the wall beside it (the
+      twelve brightest of those remembered: every pixel weighs each of them, and a save room's hundreds of sparkles
+      drifting out of view had filled all 128 and made the lights most of the lighting's cost there).
       Flames and glows the game draws as flat sprites are put back into the room at their own depth (the game depth
       tests them against the room, so that is where they are: a flame at its bracket, a brazier's fire on its stand),
       four fifths as bright as the room's own (an effect more than a lamp: a cloud of motes tints the wall behind it);
       a haze over the whole view is no light, and the glow a character is drawn with (the embroidery on Hector's coat)
       is its look, not a lamp. Their light is light above the room's own, so the room's average leaves it out: a torch
-      brightens its wall without the rest of the room dimming to make up for it.
+      brightens its wall without the rest of the room dimming to make up for it. Which light each of a pixel's
+      candidates is on is picked for a tile of 8 x 8 pixels together, the point on it for the pixel (each pixel keeps
+      its own choice from frame to frame): a wave of pixels then reads one light's vertices and picture rather than
+      one each, which in the save room, 94 lights listed, was half of the lighting's cost.
     - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
       arch or a ledge shades what lies under it. It is the open air's light over the whole room, so it counts in the
@@ -404,7 +409,9 @@ background first); the size pictures load at applies from the next start.
   - *Character shadows*: Hector, the enemies and the Innocent Devils cast soft shadows on the floor and the walls
     around them (the game drew none), from a light above and a little to one side, the same way in every room, which
     only the characters block, so the ceiling does not shade the room. They come with the ray traced ambient
-    occlusion.
+    occlusion. A character to the rays is a draw by a skinned program, and Hector's sash and the tails of his coat
+    besides, cloth the game moves itself and draws as plain meshes: as meshes of the room's they threw red light on
+    the floor under him and trailed it as he walked.
   - *Denoising*: with anti-aliasing on NVIDIA DLSS (any GeForce RTX), DLSS Ray Reconstruction takes over from it and
     cleans the rays' grain as it anti-aliases. Each frame it is given what every pixel's surface is, traced through
     the room at the 3D's full size: its picture's colour, its normal (bent by a texture pack's normal map), roughness
@@ -457,7 +464,11 @@ background first); the size pictures load at applies from the next start.
   The frame's scene goes into the acceleration structure as a few merged geometries (the world's solid draws, its
   cut-outs, its glows, the characters', the water), built back to back: a thousand geometries a frame had cost the
   build more than its triangles. `perf-run.bat` beside the game starts it with the SDK's timings on and leaves
-  `logs\perf-report.log` when it is quit: how long each part of a frame takes on that machine.
+  `logs\perf-report.log` when it is quit: how long each part of a frame takes on that machine, the frames the
+  ray tracing's scene was built for, and the room's average the bounce lighting holds. That average is eased from
+  frame to frame, so one pixel of one frame that came out not a number would have held it there, and the lighting
+  off, until the ray tracing was turned off and on: the passes keep such pixels out, and the average is read back
+  each frame and the lighting started over should it ever go bad (said in the log).
   The shaders are compiled to DXIL by the Windows SDK's `dxc` when the port is built; a build without it, or a card
   without DXR 1.1, keeps the screen space ambient occlusion.
 - **Field of View** - 100% (the game's, which each room's camera sets) to 200%, a wider view as the number goes up;
@@ -833,7 +844,11 @@ Changes this game needed beyond the generated config:
 - `perf.json` stands 5 s in the heaviest rooms with the SDK's timings (`XBE_PERF`) and ends its report with them:
   the frame rate, the renderer's milliseconds a frame, the game thread's in D3D calls and waiting on the renderer,
   the draws. A scenario's `"perf": true` times any run; `"shader_cache": "<name>"` keeps its compiled shaders for
-  the next run with that name (a test starts cold otherwise).
+  the next run with that name (a test starts cold otherwise). `saveroom.json` stands ten seconds in the Abandoned
+  Castle's save room, the costliest room the ray tracing has met (its hundreds of glow sprites), and `saveflick.json`
+  shoots it six times two frames apart for its flicker; `flesh.json` takes the Garibaldi Temple's flesh room and
+  two beside it, which the bounce rays find no light in; `f10room.json` and `qualityswap.json` open the settings
+  menu while playing (the latter changes the ray tracing quality in it) and go on to the next rooms.
 - A step's `"ask"` puts a question about its screenshot to GPT-6 Luna, with named answers an `expect` can check.
   `buttons.json` asks which controller's icons show at the courtyard door and on the controller settings page;
   `--set button_layout=1` runs it with the PS2 layout (`--set` changes any setting for a run).

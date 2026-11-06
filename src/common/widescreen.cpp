@@ -167,6 +167,10 @@ constexpr uint64_t kCardFx[] = {0xe8728269d4380016ull};
 // coordinates stretched with it, so past the 4:3 middle they reach out of the picture: the misty castle behind the
 // title's logo, a panorama the game scrolls (wrapping, it goes on), and the Konami logo, on white to its edges
 constexpr uint64_t kSides[] = {0x538892ce4eebc65cull, 0x5aa1017e3e7eb511ull};
+// Hector's cloth, which the game moves itself and draws through the world matrix rather than by his skinned
+// program: his sash (the texture pack's 161bdbe2e3dc5cf4-82307fa6d17c2ea5-00000013) and the tails of his coat
+// (9c7d10af2fbc22c9-dca294ba43969116-00000013): a character's to the ray tracing (Character)
+constexpr uint64_t kCloth[] = {0x083d44c227569dc8ull, 0xc26555aa0ffd586dull};
 
 struct Program {
     bool camera = false;  // projects with the game's camera
@@ -426,8 +430,18 @@ public:
     }
 
     // ray tracing's characters (the SDK's Character): a 3D draw by a skinned program (Program::skinned), Hector, the
-    // enemies and the Innocent Devils, whose shadows it casts and whose armour and blades it lets shine
-    bool Character() override { return d_.world && d_.skinned; }
+    // enemies and the Innocent Devils, whose shadows it casts and whose armour and blades it lets shine; and Hector's
+    // cloth (kCloth), drawn through the world matrix as the things set about a room are: as a mesh of the room's, his
+    // sash threw red light on the floor under him and trailed it as he walked (the path traced lighting). Not every
+    // draw through the world matrix: the game places parts of its rooms by it too, the Abandoned Castle's rampart
+    // walls among them, and as characters to the rays they let the sky in and the rampart's floor went a third
+    // brighter and lost its brazier's purple
+    bool Character() override {
+        if (!d_.world) return false;
+        if (d_.skinned) return true;
+        return d_.matrix == kCameraWorld && d_.name &&
+               std::find(std::begin(kCloth), std::end(kCloth), d_.name) != std::end(kCloth);
+    }
 
     // ray tracing's water (the SDK's Water): a 3D draw of the pools, fountains and moats, by its texture's name (kWater,
     // and CV_WATER's: names in hex by commas, to try others), which ray tracing reflects the room in
@@ -640,14 +654,17 @@ public:
         // XBE_FG_TRACE=2: each 3D program once (what it reads, its first draw), and every 3D draw of the three
         // frames after one whose world draws had several cameras
         static const int trace_lvl = std::getenv("XBE_FG_TRACE") ? std::atoi(std::getenv("XBE_FG_TRACE")) : 0;
+        // (XBE_FG_TRACE_FRAME=<n>: every 3D draw of frames n to n + 2 listed, whatever the cameras)
+        static const uint64_t trace_frame = std::getenv("XBE_FG_TRACE_FRAME") ? std::strtoull(std::getenv("XBE_FG_TRACE_FRAME"), nullptr, 10) : 0;
         if (trace_lvl >= 2 && back_buffer_ && d_.world && vsc) {
             bool fresh = programs_told_.insert(d_.program).second;
-            if (fresh || frame_ <= trace_draws_until_)
-                LOGR("wide: %s %llu: program %016llx%s%s%s n %u tex %016llx, c68 [%g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g %g] "
+            if (fresh || frame_ <= trace_draws_until_ || (trace_frame && frame_ >= trace_frame && frame_ < trace_frame + 3))
+                LOGR("wide: %s %llu: program %016llx%s%s%s n %u tex %016llx (%s), c68 [%g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g %g] "
                      "c85 row 3 [%g %g %g %g] c94 %g %g %g c95 %g %g %g",
                      fresh ? "3D program, frame" : "3D draw, frame", (unsigned long long)frame_,
                      (unsigned long long)d_.program, d_.matrix == kCameraWorld ? " world" : d_.program ? " camera" : " fixed",
                      d_.skinned ? " skinned" : "", d_.mesh ? " mesh" : "", d_.count, (unsigned long long)d_.name,
+                     d_.ntex ? TexturePackName(d_.texs[0]).c_str() : "",
                      vsc[kCamera][0], vsc[kCamera][1], vsc[kCamera][2], vsc[kCamera][3], vsc[kCamera + 1][0],
                      vsc[kCamera + 1][1], vsc[kCamera + 1][2], vsc[kCamera + 1][3], vsc[kCamera + 2][0],
                      vsc[kCamera + 2][1], vsc[kCamera + 2][2], vsc[kCamera + 2][3], vsc[kCamera + 3][0],

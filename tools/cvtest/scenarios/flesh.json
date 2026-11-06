@@ -1,0 +1,51 @@
+{
+  "name": "flesh",
+  "save": "julian",
+  "vendor": true,
+  "note": "The Garibaldi Temple flesh room (2.20) and the torch hall (2.28), the glowing fountain (2.30): rooms lit by their glows, for the Path traced quality against High and ambient occlusion alone (Nov 2026).",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "sweep": {
+        "rooms": [
+          "2.20",
+          "2.28",
+          "2.30"
+        ],
+        "hold": 90,
+        "timeout": 40,
+        "skip_inactive": true
+      }
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "upscaling": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5
+  }
+}

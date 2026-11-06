@@ -1,0 +1,108 @@
+{
+  "name": "qualityswap",
+  "save": "julian3",
+  "vendor": true,
+  "note": "The ray tracing quality changed from High to Path traced in the settings menu while playing, then the room after: Julian (6 Nov) saw the lighting off in the room after the menu until the setting was toggled off and on.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.1,10f:wait:20f"
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "before",
+      "judge": false
+    },
+    {
+      "press": "0f:l3+r3:5f,10f:wait:30f",
+      "shot": "menu",
+      "expect": [
+        "settings_menu"
+      ],
+      "judge": false
+    },
+    {
+      "click": "tab.Graphics",
+      "press": "0f:wait:10f",
+      "expect": [
+        "'rtq' in menu_controls"
+      ],
+      "judge": false
+    },
+    {
+      "click": "rtq",
+      "press": "0f:wait:10f",
+      "shot": "list",
+      "judge": false
+    },
+    {
+      "click": "rtq.Path traced",
+      "press": "0f:wait:10f",
+      "expect": [
+        "saved.ray_tracing_quality == 3"
+      ],
+      "judge": false
+    },
+    {
+      "press": "0f:l3+r3:5f,10f:wait:60f",
+      "shot": "closed",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "after",
+      "judge": false
+    },
+    {
+      "press": "0:warp=13.4,10f:wait:20f",
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 60,
+      "poll": "0:a,60f:wait",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "next",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:120f",
+      "shot": "next2",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "upscaling": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 5,
+    "ray_tracing_quality": 2
+  }
+}
