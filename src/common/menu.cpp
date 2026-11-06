@@ -68,6 +68,7 @@ extern uint32_t g_sprint;           // keyboard.cpp: Hector's sprint, percent of
 extern bool g_texture_pack;         // texpack.cpp: an HD texture pack's pictures drawn
 bool ViewFov(double& game, double& drawn);  // game/view.cpp: the field of view in degrees, the game's and as drawn
 extern std::atomic<bool> g_wide_trace_frame;  // widescreen.cpp: log the next frame's draws
+extern std::atomic<bool> g_save_room;         // widescreen.cpp: the frame is a save room's (its ambient occlusion off)
 
 namespace {
 
@@ -786,7 +787,9 @@ void MenuToRenderer() {
     gpu::g_antialias.store(std::min<uint32_t>(g_antialias, 2), std::memory_order_relaxed);
     gpu::g_upscale.store(std::min<uint32_t>(g_upscale, 3), std::memory_order_relaxed);
     gpu::g_aa_sharpness.store(std::min<uint32_t>(g_sharpening, 100), std::memory_order_relaxed);
-    gpu::g_ambient_occlusion.store(std::min<uint32_t>(g_ambient_occlusion, 2), std::memory_order_relaxed);
+    // (off in a save room whatever the setting: widescreen.cpp's g_save_room)
+    gpu::g_ambient_occlusion.store(g_save_room.load(std::memory_order_relaxed) ? 0u : std::min<uint32_t>(g_ambient_occlusion, 2),
+                                   std::memory_order_relaxed);
     gpu::g_ray_tracing.store(g_ray_tracing & (gpu::kRtAmbientOcclusion | gpu::kRtLighting), std::memory_order_relaxed);
     gpu::g_rt_lighting_strength.store(float(std::min<uint32_t>(g_rt_lighting, 200)) / 100.0f, std::memory_order_relaxed);
     gpu::g_rt_quality.store(std::min<uint32_t>(g_rt_quality, 3), std::memory_order_relaxed);

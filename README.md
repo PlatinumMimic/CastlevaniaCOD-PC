@@ -351,7 +351,9 @@ background first); the size pictures load at applies from the next start.
   pictures are.
   - *Ambient occlusion* is traced instead of guessed from the screen: each pixel sends rays over its surface, so what
     is off screen or behind something still shades, and an edge's shadow does not end where the screen's view of it
-    does.
+    does. It is off in the save rooms whatever the setting (the port tells one by its pool's glowing water): every
+    pixel's rays there meet the statues' facets or the throne, and their grain changed with the camera's every turn on
+    the walls and the statues, which no gathering of it over the frames settled.
   - *Lighting*: the light the room's surfaces throw onto each other. Each pixel, at half the 3D's size, sends two
     rays over its surface, takes on the colour of what they meet as the game drew and lit it, and throws it back in
     its own colour: the courtyard's water lights the carved wall and gargoyle above it in blue, a torchlit wall warms
