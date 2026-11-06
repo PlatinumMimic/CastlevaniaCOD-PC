@@ -32764,3 +32764,107 @@ index 44a6f90..a84815e 100644
 -- 
 2.43.0
 
+From 7288b32f5c3dba448967b1bf5c0b318eb2a5c4f2 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Fri, 6 Nov 2026 12:29:51 -0500
+Subject: [PATCH] Ray traced lighting: the kept lights and the denoiser's
+ history held through a camera pan
+
+The depth tests that keep a pixel's kept light (XBE_RT_LIGHTS_REUSE_DEPTH, 0.15 from 0.05) and the denoiser's history
+(XBE_RT_DN_DEPTH, 0.1 from 0.05) to the same surface were too strict for a wall at a grazing angle sliding across the
+screen: the save room's walls, thin facets lit by distant sparkles, started over from a few fresh samples as the camera
+panned and flickered. Path traced's candidates 8 for the pixel's light and 4 at a path's vertices again (the 4 and 2
+of the morning made a fresh frame noisier; 0.6 ms in the save room, 12.0 ms a frame at 4K DLSS Balanced).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp | 25 +++++++++++++------------
+ 1 file changed, 13 insertions(+), 12 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index 46d04cc..f940a67 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -6317,7 +6317,7 @@ uint32_t D3D12Backend::Denoise(uint32_t slot, uint32_t tw, uint32_t th, uint32_t
+     // size of a floor tile, which the stronger lighting showed)
+     static const float kFrames = std::clamp(env("XBE_RT_DN_FRAMES", 32), 1.0f, 255.0f),
+                        kPasses = std::clamp(env("XBE_RT_DN_PASSES", 5), 0.0f, 6.0f),
+-                       kSigma = env("XBE_RT_DN_SIGMA", 4), kDepth = env("XBE_RT_DN_DEPTH", 0.05f),
++                       kSigma = env("XBE_RT_DN_SIGMA", 4), kDepth = env("XBE_RT_DN_DEPTH", 0.1f),
+                        kNormal = env("XBE_RT_DN_NORMAL", 0.8f), kSmoothDepth = env("XBE_RT_DN_SMOOTH_DEPTH", 0.02f),
+                        kSmoothNormal = env("XBE_RT_DN_SMOOTH_NORMAL", 64);
+     const D3D12_RESOURCE_STATES kRead =
+@@ -6802,10 +6802,10 @@ uint32_t D3D12Backend::LightList(float lt[4], float sk[4], uint32_t list[][4]) {
+     const uint32_t lights = uint32_t(std::min<size_t>(em.size() / 2, kMaxLights));
+     lt[0] = float(lights);
+     lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
+-    // (the candidates a pixel's light is picked from: 4 at Low, 6 at Medium, 8 at High; 4 at Path traced, whose
+-    // pixels keep their choice frame to frame as High's do and whose paths pick two more at each vertex: 8 cost the
+-    // save room 0.3 ms more at 4K for no less flicker)
+-    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : RtPathTraced() ? 4.0f : float(4 + 2 * RtQuality()));
++    // (the candidates a pixel's light is picked from: 4 at Low, 6 at Medium, 8 at High and Path traced: 4 at Path
++    // traced saved the save room 0.3 ms at 4K, but its walls, thin facets lit by distant sparkles, flickered as the
++    // camera panned: a pixel whose kept light is lost to the move starts over from its candidates)
++    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * RtQuality()));
+     lt[3] = kLightMost;
+     sk[2] = kFlat;
+     sk[3] = kLightArea;
+@@ -6836,13 +6836,13 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // same; XBE_RT_PT_PATHS), each followed a bounce further than the bounce lighting's rays (rt_gi.hlsl's PathTraced), the
+     // game's own light taken where the path ends (XBE_RT_PT_END of it, 3: it arrives through one surface's colour
+     // more than the bounce lighting's does, a third as strong, and at 1 the lights' light outweighed it everywhere and
+-    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (2); the
++    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (4); the
+     // denoiser's smoothing a pass wider (its taps reach as far across the frame as at half size)
+     const bool path = RtPathTraced();
+     static const float kScaleSet = env("XBE_RT_GI_SCALE", 0), kRaysSet = env("XBE_RT_GI_RAYS", 0),
+                        kReachSet = env("XBE_RT_GI_REACH", 0), kPtScale = env("XBE_RT_PT_SCALE", 0.71f),
+                        kPtPaths = env("XBE_RT_PT_PATHS", 1.0f), kPtEnd = env("XBE_RT_PT_END", 3.0f),
+-                       kPtTries = env("XBE_RT_PT_TRIES", 2.0f);
++                       kPtTries = env("XBE_RT_PT_TRIES", 4.0f);
+     const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f)
+                          : path ? std::clamp(kPtScale, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
+     const float kRaysFull = kRaysSet > 0 ? kRaysSet : path ? std::max(1.0f, kPtPaths) : q == 2 ? 4.0f : 1.0f;
+@@ -6954,8 +6954,9 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // kept point's 6 bits hold with High's 8 candidates; 0: each frame's afresh). A torch found once is kept while it
+     // is strong there: the grain of its light on a wall settles rather than crawls, as if it were picked of several
+     // times the candidates
+-    // XBE_RT_LIGHTS_REUSE_DEPTH: kept only where the surface was as deep as this one was, within this part (0.05)
+-    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 6.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++    // XBE_RT_LIGHTS_REUSE_DEPTH: kept only where the surface was as deep as this one was, within this part (0.15;
++    // at 0.05 a wall at a grazing angle lost its kept lights as the camera panned, and the save room's walls flickered)
++    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 6.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.15f);
+     const uint32_t rs_cur = uint32_t(presents_ & 1), rs_prev = rs_cur ^ 1;
+     const bool kept = EnsureReservoirs(tw, th);
+     const bool reuse = kept && kReuse > 0 && !rt_reset_ && rs_frame_ != UINT64_MAX && rs_frame_ + 1 == presents_;
+@@ -7197,7 +7198,7 @@ bool D3D12Backend::DenoisedReflections(Target& t, uint32_t rw, uint32_t rh, D3D1
+     auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
+     static const float kFrames = std::clamp(env("XBE_RT_DN_REFL_FRAMES", 12), 1.0f, 255.0f),
+                        kSpan = env("XBE_RT_DN_REFL_SPAN", 1.0f), kSpread = env("XBE_RT_DN_REFL_SPREAD", 1.5f),
+-                       kDepth = env("XBE_RT_DN_DEPTH", 0.05f), kNormal = env("XBE_RT_DN_NORMAL", 0.8f),
++                       kDepth = env("XBE_RT_DN_DEPTH", 0.1f), kNormal = env("XBE_RT_DN_NORMAL", 0.8f),
+                        kSmoothDepth = env("XBE_RT_DN_SMOOTH_DEPTH", 0.02f),
+                        kSmoothNormal = env("XBE_RT_DN_SMOOTH_NORMAL", 64);
+     const D3D12_RESOURCE_STATES kRead =
+@@ -7449,7 +7450,7 @@ ID3D12Resource* D3D12Backend::GatherAmbientOcclusion(uint32_t rw, uint32_t rh, u
+     static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
+     auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
+     static const float kFrames = std::clamp(env("XBE_RT_DN_AO_FRAMES", 16), 1.0f, 255.0f),
+-                       kSpan = env("XBE_RT_DN_AO_SPAN", 1.5f), kDepth = env("XBE_RT_DN_DEPTH", 0.05f),
++                       kSpan = env("XBE_RT_DN_AO_SPAN", 1.5f), kDepth = env("XBE_RT_DN_DEPTH", 0.1f),
+                        kNormal = env("XBE_RT_DN_NORMAL", 0.8f);
+     const D3D12_RESOURCE_STATES kRead =
+         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+@@ -7627,7 +7628,7 @@ void D3D12Backend::AmbientOcclusion(Target& t, uint32_t rw, uint32_t rh, const F
+                 ac.rs[0] = float(slot + 5);
+                 ac.rs[1] = float(rs_gw_);
+                 ac.rs[2] = float(rs_gh_);
+-                ac.rs[3] = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++                ac.rs[3] = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.15f);
+             }
+         }
+         std::memcpy(ac.pv, rt_clip_to_prev_, sizeof(ac.pv));
+-- 
+2.43.0
+

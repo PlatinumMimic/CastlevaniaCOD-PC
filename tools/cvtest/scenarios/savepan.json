@@ -1,0 +1,155 @@
+{
+  "name": "savepan",
+  "save": "julian",
+  "vendor": true,
+  "note": "The Abandoned Castle's save room (5.27) with the camera panned left and right on the right stick, eight shots two frames apart each way (Julian, 6 Nov: the walls and statues flicker as the camera moves), cmp\\noise\\savepan.py.",
+  "steps": [
+    {
+      "press": "0:wait:11000",
+      "shot": "title",
+      "expect": [
+        "not player.active"
+      ],
+      "judge": false
+    },
+    {
+      "until": "player.active and not cutscene and not loading and not menu",
+      "timeout": 90,
+      "poll": "0:a,90f:wait",
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ]
+      ],
+      "shot": "loaded",
+      "judge": false
+    },
+    {
+      "press": "0:warp=5.27,10f:wait:20f"
+    },
+    {
+      "until": "map == 5 and room == 27 and player.active and not loading",
+      "timeout": 40,
+      "poll_by": [
+        [
+          "cutscene",
+          "0:start,45f:wait"
+        ],
+        [
+          "menu",
+          "0:b,30f:wait"
+        ]
+      ]
+    },
+    {
+      "press": "0f:wait:180f",
+      "shot": "still",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:30f",
+      "shot": "pan-go",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-6",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=1/0:2f",
+      "shot": "pan-7",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:30f",
+      "shot": "back-go",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-0",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-1",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-2",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-3",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-4",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-5",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-6",
+      "judge": false
+    },
+    {
+      "press": "0f:rs=-1/0:2f",
+      "shot": "back-7",
+      "judge": false
+    },
+    {
+      "press": "0f:wait:60f",
+      "shot": "after",
+      "judge": false
+    }
+  ],
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "hdr": false,
+    "frame_generation": 0,
+    "antialiasing": 2,
+    "ambient_occlusion": 2,
+    "ray_tracing": 7
+  }
+}

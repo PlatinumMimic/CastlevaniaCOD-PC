@@ -2038,7 +2038,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..7229880 100644
+index fe65837..074254b 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,25 +15,43 @@
@@ -5747,7 +5747,7 @@ index fe65837..7229880 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3149,102 +5759,3126 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3149,102 +5759,3127 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      }
  }
  
@@ -6563,7 +6563,7 @@ index fe65837..7229880 100644
 +    // size of a floor tile, which the stronger lighting showed)
 +    static const float kFrames = std::clamp(env("XBE_RT_DN_FRAMES", 32), 1.0f, 255.0f),
 +                       kPasses = std::clamp(env("XBE_RT_DN_PASSES", 5), 0.0f, 6.0f),
-+                       kSigma = env("XBE_RT_DN_SIGMA", 4), kDepth = env("XBE_RT_DN_DEPTH", 0.05f),
++                       kSigma = env("XBE_RT_DN_SIGMA", 4), kDepth = env("XBE_RT_DN_DEPTH", 0.1f),
 +                       kNormal = env("XBE_RT_DN_NORMAL", 0.8f), kSmoothDepth = env("XBE_RT_DN_SMOOTH_DEPTH", 0.02f),
 +                       kSmoothNormal = env("XBE_RT_DN_SMOOTH_NORMAL", 64);
 +    const D3D12_RESOURCE_STATES kRead =
@@ -7048,10 +7048,10 @@ index fe65837..7229880 100644
 +    const uint32_t lights = uint32_t(std::min<size_t>(em.size() / 2, kMaxLights));
 +    lt[0] = float(lights);
 +    lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
-+    // (the candidates a pixel's light is picked from: 4 at Low, 6 at Medium, 8 at High; 4 at Path traced, whose
-+    // pixels keep their choice frame to frame as High's do and whose paths pick two more at each vertex: 8 cost the
-+    // save room 0.3 ms more at 4K for no less flicker)
-+    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : RtPathTraced() ? 4.0f : float(4 + 2 * RtQuality()));
++    // (the candidates a pixel's light is picked from: 4 at Low, 6 at Medium, 8 at High and Path traced: 4 at Path
++    // traced saved the save room 0.3 ms at 4K, but its walls, thin facets lit by distant sparkles, flickered as the
++    // camera panned: a pixel whose kept light is lost to the move starts over from its candidates)
++    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * RtQuality()));
 +    lt[3] = kLightMost;
 +    sk[2] = kFlat;
 +    sk[3] = kLightArea;
@@ -7082,13 +7082,13 @@ index fe65837..7229880 100644
 +    // same; XBE_RT_PT_PATHS), each followed a bounce further than the bounce lighting's rays (rt_gi.hlsl's PathTraced), the
 +    // game's own light taken where the path ends (XBE_RT_PT_END of it, 3: it arrives through one surface's colour
 +    // more than the bounce lighting's does, a third as strong, and at 1 the lights' light outweighed it everywhere and
-+    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (2); the
++    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (4); the
 +    // denoiser's smoothing a pass wider (its taps reach as far across the frame as at half size)
 +    const bool path = RtPathTraced();
 +    static const float kScaleSet = env("XBE_RT_GI_SCALE", 0), kRaysSet = env("XBE_RT_GI_RAYS", 0),
 +                       kReachSet = env("XBE_RT_GI_REACH", 0), kPtScale = env("XBE_RT_PT_SCALE", 0.71f),
 +                       kPtPaths = env("XBE_RT_PT_PATHS", 1.0f), kPtEnd = env("XBE_RT_PT_END", 3.0f),
-+                       kPtTries = env("XBE_RT_PT_TRIES", 2.0f);
++                       kPtTries = env("XBE_RT_PT_TRIES", 4.0f);
 +    const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f)
 +                         : path ? std::clamp(kPtScale, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
 +    const float kRaysFull = kRaysSet > 0 ? kRaysSet : path ? std::max(1.0f, kPtPaths) : q == 2 ? 4.0f : 1.0f;
@@ -7200,8 +7200,9 @@ index fe65837..7229880 100644
 +    // kept point's 6 bits hold with High's 8 candidates; 0: each frame's afresh). A torch found once is kept while it
 +    // is strong there: the grain of its light on a wall settles rather than crawls, as if it were picked of several
 +    // times the candidates
-+    // XBE_RT_LIGHTS_REUSE_DEPTH: kept only where the surface was as deep as this one was, within this part (0.05)
-+    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 6.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++    // XBE_RT_LIGHTS_REUSE_DEPTH: kept only where the surface was as deep as this one was, within this part (0.15;
++    // at 0.05 a wall at a grazing angle lost its kept lights as the camera panned, and the save room's walls flickered)
++    static const float kReuse = env("XBE_RT_LIGHTS_REUSE", 6.0f), kReuseDepth = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.15f);
 +    const uint32_t rs_cur = uint32_t(presents_ & 1), rs_prev = rs_cur ^ 1;
 +    const bool kept = EnsureReservoirs(tw, th);
 +    const bool reuse = kept && kReuse > 0 && !rt_reset_ && rs_frame_ != UINT64_MAX && rs_frame_ + 1 == presents_;
@@ -7443,7 +7444,7 @@ index fe65837..7229880 100644
 +    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
 +    static const float kFrames = std::clamp(env("XBE_RT_DN_REFL_FRAMES", 12), 1.0f, 255.0f),
 +                       kSpan = env("XBE_RT_DN_REFL_SPAN", 1.0f), kSpread = env("XBE_RT_DN_REFL_SPREAD", 1.5f),
-+                       kDepth = env("XBE_RT_DN_DEPTH", 0.05f), kNormal = env("XBE_RT_DN_NORMAL", 0.8f),
++                       kDepth = env("XBE_RT_DN_DEPTH", 0.1f), kNormal = env("XBE_RT_DN_NORMAL", 0.8f),
 +                       kSmoothDepth = env("XBE_RT_DN_SMOOTH_DEPTH", 0.02f),
 +                       kSmoothNormal = env("XBE_RT_DN_SMOOTH_NORMAL", 64);
 +    const D3D12_RESOURCE_STATES kRead =
@@ -7695,7 +7696,7 @@ index fe65837..7229880 100644
 +    static const int kView = std::getenv("XBE_RT_VIEW") ? std::atoi(std::getenv("XBE_RT_VIEW")) : 0;
 +    auto env = [](const char* n, float d) { const char* e = std::getenv(n); return e ? float(std::atof(e)) : d; };
 +    static const float kFrames = std::clamp(env("XBE_RT_DN_AO_FRAMES", 16), 1.0f, 255.0f),
-+                       kSpan = env("XBE_RT_DN_AO_SPAN", 1.5f), kDepth = env("XBE_RT_DN_DEPTH", 0.05f),
++                       kSpan = env("XBE_RT_DN_AO_SPAN", 1.5f), kDepth = env("XBE_RT_DN_DEPTH", 0.1f),
 +                       kNormal = env("XBE_RT_DN_NORMAL", 0.8f);
 +    const D3D12_RESOURCE_STATES kRead =
 +        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -7874,7 +7875,7 @@ index fe65837..7229880 100644
 +                ac.rs[0] = float(slot + 5);
 +                ac.rs[1] = float(rs_gw_);
 +                ac.rs[2] = float(rs_gh_);
-+                ac.rs[3] = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.05f);
++                ac.rs[3] = env("XBE_RT_LIGHTS_REUSE_DEPTH", 0.15f);
 +            }
 +        }
 +        std::memcpy(ac.pv, rt_clip_to_prev_, sizeof(ac.pv));
@@ -8952,7 +8953,7 @@ index fe65837..7229880 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +8887,308 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +8888,308 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -9262,7 +9263,7 @@ index fe65837..7229880 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +9198,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +9199,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -9273,7 +9274,7 @@ index fe65837..7229880 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +9218,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +9219,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -9294,7 +9295,7 @@ index fe65837..7229880 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +9242,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +9243,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -9327,7 +9328,7 @@ index fe65837..7229880 100644
      }
  }
  
-@@ -3312,17 +9275,45 @@ void LogPerf() {
+@@ -3312,17 +9276,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -9377,7 +9378,7 @@ index fe65837..7229880 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +9322,185 @@ void LogPerf() {
+@@ -3331,25 +9323,185 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -9568,7 +9569,7 @@ index fe65837..7229880 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +9511,47 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +9512,47 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -9617,7 +9618,7 @@ index fe65837..7229880 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +9559,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +9560,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -9625,7 +9626,7 @@ index fe65837..7229880 100644
      ApplySettings();
  }
  
-@@ -3386,13 +9571,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +9572,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -9682,7 +9683,7 @@ index fe65837..7229880 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +9626,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +9627,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -9690,7 +9691,7 @@ index fe65837..7229880 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +9916,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +9917,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
