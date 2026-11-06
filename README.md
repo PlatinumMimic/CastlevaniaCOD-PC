@@ -360,8 +360,9 @@ background first); the size pictures load at applies from the next start.
     gets the light it gets above the room's average (the room's over the frames since it came in, so a turn of the
     camera does not pump it), raised in the light's own hue against the room's (a surface that gets more of the room's own
     light is raised in white: the room's colour is in its fill already), and gives up a share of the game's own as it
-    gets less, so a room keeps the brightness the game gave it while its light comes from where the rays say: the
-    glow by the water, the shade in a corner. **Lighting
+    gets less (by the square of how far short it falls, so what the rays reach little, a corner or a cliff, keeps its
+    picture's detail rather than going to black), so a room keeps the brightness the game gave it while its light
+    comes from where the rays say: the glow by the water, the shade in a corner. **Lighting
     strength** (`ray_tracing_lighting`, 0% to 200%, 100% by default) sets how strongly it shows. Reflections take the
     place of the share of a surface's own colour they stand for (its Fresnel share: little head on, most at a glancing
     angle) rather than adding to it, too.
@@ -381,8 +382,9 @@ background first); the size pictures load at applies from the next start.
       brightens its wall without the rest of the room dimming to make up for it.
     - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
-      arch or a ledge shades what lies under it. It is light above the room's own too, left out of the room's average
-      as the lights' is.
+      arch or a ledge shades what lies under it. It is the open air's light over the whole room, so it counts in the
+      room's average (left out, every surface open to the sky lay above the average and a drawbridge or a canyon
+      was raised to twice its brightness).
     - *Light shafts*: the air catches the lights' light on its way to the eye: a torch's glow in the air, cut by the
       bars before it. Only lights drawn in 3D light the air (a fountain's spray, motes and a glow's sprite drawn flat
       filled whole rooms with a grainy, sparkling haze). Marched at a quarter of the frame's size, smoothed, gathered
@@ -438,8 +440,12 @@ background first); the size pictures load at applies from the next start.
   about 3.7 ms at 4K with DLSS Balanced.
   **Ray tracing quality** (`ray_tracing_quality`: 0 low, 1 medium, 2 high, the default) is for slower graphics cards
   (AMD's, Intel's, a handheld's): low lights the room with one ray a pixel at a third of the frame's size, reaches
-  less far, sends fewer ambient occlusion rays, reflects only the smoothest surfaces and leaves the light shafts out
-  (about 2 ms on the RTX 5080); medium is between.
+  less far, sends fewer ambient occlusion rays at half the frame's size, reflects only the smoothest surfaces and
+  leaves the light shafts out (about 1.1 ms on the RTX 5080 at a handheld's 1920x1200); medium is between.
+  The frame's scene goes into the acceleration structure as a few merged geometries (the world's solid draws, its
+  cut-outs, its glows, the characters', the water), built back to back: a thousand geometries a frame had cost the
+  build more than its triangles. `perf-run.bat` beside the game starts it with the SDK's timings on and leaves
+  `logs\perf-report.log` when it is quit: how long each part of a frame takes on that machine.
   The shaders are compiled to DXIL by the Windows SDK's `dxc` when the port is built; a build without it, or a card
   without DXR 1.1, keeps the screen space ambient occlusion.
 - **Field of View** - 100% (the game's, which each room's camera sets) to 200%, a wider view as the number goes up;
