@@ -2038,7 +2038,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..17edb5c 100644
+index fe65837..7229880 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,25 +15,43 @@
@@ -2201,7 +2201,7 @@ index fe65837..17edb5c 100644
 +uint32_t g_rt_asked = 0, g_rt_built = 0, g_rt_no_view = 0, g_rt_no_draws = 0;
 +// XBE_PERF: the room's average as the bounce lighting last read it back (RoomBounce; its colour, and the frames it
 +// holds), and the frames it read back not a number since the last perf line
-+float g_rt_mean[4] = {};
++float g_rt_mean[4] = {}, g_rt_sky[4] = {};  // (and the sky held: its colour, the share of the frame it is)
 +uint32_t g_rt_mean_frames = 0, g_rt_mean_bad = 0;
 +// Draw's time to the next step, into g_perf.lap[i]
 +struct DrawLap {
@@ -2861,8 +2861,8 @@ index fe65837..17edb5c 100644
 +    // and the lighting stayed off, the frame left as the game drew it, until the ray tracing was turned off and on)
 +    ComPtr<ID3D12Resource> mean_rb_;
 +    float* mean_rb_map_ = nullptr;
-+    uint64_t mean_rb_frame_[kFrames] = {}, mean_restart_at_ = 0;  // (the frame the last start over was asked)
-+    bool mean_rb_failed_ = false, rt_restart_ = false;
++    uint64_t mean_rb_frame_[kFrames] = {}, sky_rb_frame_[kFrames] = {}, mean_restart_at_ = 0;  // (the frame the last start over was asked)
++    bool mean_rb_failed_ = false, rt_restart_ = false, rt_restarted_ = false;
 +    float RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th, bool all = false);
 +    void ReadMean(uint32_t cur);
 +    uint32_t LightList(float lt[4], float sk[4], uint32_t list[][4]);
@@ -2934,7 +2934,7 @@ index fe65837..17edb5c 100644
 +    D3D12_RESOURCE_STATES dn_state_[kDn] = {};
 +    uint32_t dn_w_ = 0, dn_h_ = 0, dn_cur_ = 0;
 +    uint64_t dn_frame_ = UINT64_MAX;
-+    bool dn_said_ = false, rt_reset_ = true;
++    bool dn_said_ = false, rt_reset_ = true, rt_room_reset_ = true;
 +    // each picture drawn as a glow: the frame it was last, and how many frames in a row (a light only when steady)
 +    struct GlowSeen {
 +        uint64_t frame = UINT64_MAX - 1;
@@ -5747,7 +5747,7 @@ index fe65837..17edb5c 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3149,102 +5759,3077 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3149,102 +5759,3126 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      }
  }
  
@@ -6841,7 +6841,14 @@ index fe65837..17edb5c 100644
 +    TextureSrv(mean_[kSkyMean].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, slot + 2);
 +    TextureSrv(mean_[kSkyHeld].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, slot + 3);
 +    TextureSrv(mean_[kSkyHeld + 1].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, slot + 4);
-+    float p[8] = {float(slot), float(rw), float(rh), 3, float(slot + 1), ao_view_.near_w, ao_view_.far_w, 0};
++    // XBE_RT_SKY_DEPTH (12000): the frame's pixels this deep and deeper are the sky too, not only those at the far
++    // plane: this title's skies are painted cards 15,000 to 45,000 units out, and by the far plane alone the bridge
++    // before the courtyard had no sky in view looking along it (its planks dark) until the camera tilted up to the open
++    // sky past the cards (then bright, and bright looking down after: the share does not fall)
++    // (0: off. The bridge's planks are lit alike looking along the bridge, up and down with the sky held through a
++    // room's change, below, which this was tried for first)
++    static const float kSkyDepth = env("XBE_RT_SKY_DEPTH", 0.0f);
++    float p[8] = {float(slot), float(rw), float(rh), 3, float(slot + 1), ao_view_.near_w, ao_view_.far_w, kSkyDepth};
 +    Alloc cb = Upload(256, 256);
 +    std::memcpy(cb.cpu, p, sizeof(p));
 +    Transition(t.res.Get(), t.state, kRead);
@@ -6854,7 +6861,7 @@ index fe65837..17edb5c 100644
 +        LOGR("ray tracing: the sky's light %s, strength %.2f", drawn ? "measured" : "not measured", double(kSky));
 +        sky_said_ = true;
 +    }
-+    // held over the frames since the cut (rt_gimean.hlsl, 4): the sky as the frame showed it rose and fell as the
++    // held over the frames since the view was lost (rt_gimean.hlsl, 4; rt_room_reset_): the sky as the frame showed it rose and fell as the
 +    // camera tilted (more of it in view looking up, none looking down at Hector), and the whole outdoors' light with
 +    // it. Its share of the frame rises toward the most seen (over a third of a second) and does not fall, and a
 +    // twentieth of the frame (XBE_RT_SKY_SHARE) is the whole sky's light: on the bridge before the courtyard the light
@@ -6863,9 +6870,14 @@ index fe65837..17edb5c 100644
 +    if (drawn) {
 +        static const float kRise = 1.0f / std::max(1.0f, env("XBE_RT_SKY_RISE", 20.0f)),
 +                           kHue = 1.0f / std::max(1.0f, env("XBE_RT_SKY_EASE", 120.0f));
-+        bool reset = rt_reset_ || sky_hold_frame_ == UINT64_MAX || sky_hold_frame_ + 30 < presents_;
++        // (held through a room's change too: the bridge before the courtyard, entered from the courtyard, starts with
++        // the courtyard's sky rather than none until the camera happens to tilt up past the sky cards; its share then
++        // falls over XBE_RT_SKY_FALL frames (3600) while no sky is in view, so a hall entered from the open air loses
++        // it in a minute, and only rays that leave the room's reach take it meanwhile)
++        static const float kFall = 1.0f / std::max(1.0f, env("XBE_RT_SKY_FALL", 3600.0f));
++        bool reset = rt_restarted_ || sky_hold_frame_ == UINT64_MAX;
 +        uint32_t cur = kSkyHeld + (sky_cur_ ^ 1), prev = kSkyHeld + sky_cur_;
-+        float h[8] = {float(slot + 2), 1, 1, 4, float(slot + 3 + (prev - kSkyHeld)), kHue, reset ? 1.0f : 0.0f, kRise};
++        float h[8] = {float(slot + 2), kFall, 1, 4, float(slot + 3 + (prev - kSkyHeld)), kHue, reset ? 1.0f : 0.0f, kRise};
 +        Alloc hcb = Upload(256, 256);
 +        std::memcpy(hcb.cpu, h, sizeof(h));
 +        Transition(mean_[prev].Get(), mean_state_[prev], kRead);
@@ -6890,7 +6902,9 @@ index fe65837..17edb5c 100644
 +// frame's since the cut (the room's, whichever way the camera looked: eased toward this frame's alone, it rose and
 +// fell as the camera turned, and the room's light with it), the last XBE_RT_GI_HOLD frames' once there are more
 +// (600, about 10 seconds: at 1200 a turn from a lit wall to a dark corner, or down to a floor, left the whole view
-+// dimmed or raised for twenty seconds). The held value's SRV slot, -1 when it could not be made
++// dimmed or raised for twenty seconds; at 3600, tried for the bridge before the courtyard, whose average followed
++// the camera from 0.17 to 0.32 as it tilted up, the night courtyard 5.9 lost its brazier's purple to a blue floor).
++// The held value's SRV slot, -1 when it could not be made
 +// (all: the lights' light counted in, the Path traced quality's second average, held in its own pair: what a room's
 +// surfaces get in all, which a room lit everywhere by its glows, the Garibaldi Temple's flesh room, is lit by)
 +float D3D12Backend::RoomBounce(uint32_t bounce_slot, uint32_t gw, uint32_t gh, uint32_t tw, uint32_t th, bool all) {
@@ -6922,9 +6936,10 @@ index fe65837..17edb5c 100644
 +    uint64_t& mframe = all ? mean_all_frame_ : mean_frame_;
 +    const uint32_t base = all ? 9 : 4;
 +    uint32_t cur = base + (mcur ^ 1), prev = base + mcur;
-+    // afresh after a cut or a time without a view (a loading, a room's change); not after a frame without bounce
-+    // lighting alone (a menu over the room, the bounce off a while): the room's held as it was
-+    bool reset = rt_reset_ || mframe == UINT64_MAX;
++    // afresh after a time without a view (a loading, a room's change; rt_room_reset_), not at a camera cut within the
++    // room nor after a frame without bounce lighting alone (a menu over the room, the bounce off a while): the room's
++    // held as it was
++    bool reset = rt_room_reset_ || mframe == UINT64_MAX;
 +    float e[8] = {float(slot + 3), 1, 1, 2, float(slot + prev), kEase, reset ? 1.0f : 0.0f, 0};
 +    Alloc ecb = Upload(256, 256);
 +    std::memcpy(ecb.cpu, e, sizeof(e));
@@ -6950,7 +6965,7 @@ index fe65837..17edb5c 100644
 +    if (mean_rb_failed_) return;
 +    if (!mean_rb_) {
 +        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
-+        D3D12_RESOURCE_DESC bd = BufferDesc(uint64_t(kFrames) * D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
++        D3D12_RESOURCE_DESC bd = BufferDesc(uint64_t(2 * kFrames) * D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
 +        void* p = nullptr;
 +        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST,
 +                                                 nullptr, IID_PPV_ARGS(&mean_rb_))) ||
@@ -6970,6 +6985,20 @@ index fe65837..17edb5c 100644
 +        if (finite) {
 +            std::copy(m, m + 4, g_rt_mean);
 +            g_rt_mean_frames++;
++            // (the sky held, half floats, after the slots of the room's: its colour and the share of the frame it is)
++            const uint16_t* h = reinterpret_cast<const uint16_t*>(mean_rb_map_ + at) +
++                                kFrames * (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT / sizeof(uint16_t));
++            auto half = [](uint16_t v) {
++                uint32_t sign = (v & 0x8000u) << 16, e = (v >> 10) & 0x1F, f = v & 0x3FF, bits;
++                if (e == 0) bits = sign;  // (a denormal as 0)
++                else if (e == 31) bits = sign | 0x7F800000u | (f << 13);
++                else bits = sign | ((e + 112) << 23) | (f << 13);
++                float r;
++                std::memcpy(&r, &bits, 4);
++                return r;
++            };
++            if (sky_rb_frame_[slot] == mean_rb_frame_[slot])
++                for (int i = 0; i < 4; i++) g_rt_sky[i] = half(h[i]);
 +        } else {
 +            g_rt_mean_bad++;
 +            // (once for the frames read back from before the start over: they are not a number still)
@@ -6982,15 +7011,28 @@ index fe65837..17edb5c 100644
 +            }
 +        }
 +    }
++    const D3D12_RESOURCE_STATES kRead =
++        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 +    D3D12_TEXTURE_COPY_LOCATION dl{mean_rb_.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
 +    dl.PlacedFootprint.Offset = uint64_t(slot) * D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
 +    dl.PlacedFootprint.Footprint = {DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1, 1, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT};
 +    D3D12_TEXTURE_COPY_LOCATION sl{mean_[cur].Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
 +    Transition(mean_[cur].Get(), mean_state_[cur], D3D12_RESOURCE_STATE_COPY_SOURCE);
 +    cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
-+    Transition(mean_[cur].Get(), mean_state_[cur],
-+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++    Transition(mean_[cur].Get(), mean_state_[cur], kRead);
 +    mean_rb_frame_[slot] = presents_;
++    // and the sky held this frame (SkyLight's, before this), when there is one
++    if (sky_hold_frame_ == presents_) {
++        const uint32_t sky = 7 + sky_cur_;  // kSkyHeld + sky_cur_: the pair's latest
++        D3D12_TEXTURE_COPY_LOCATION ds{mean_rb_.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
++        ds.PlacedFootprint.Offset = uint64_t(kFrames + slot) * D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
++        ds.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 1, 1, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT};
++        D3D12_TEXTURE_COPY_LOCATION ss{mean_[sky].Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
++        Transition(mean_[sky].Get(), mean_state_[sky], D3D12_RESOURCE_STATE_COPY_SOURCE);
++        cl_->CopyTextureRegion(&ds, 0, 0, 0, &ss, nullptr);
++        Transition(mean_[sky].Get(), mean_state_[sky], kRead);
++        sky_rb_frame_[slot] = presents_;
++    }
 +}
 +
 +// The scene's lights as a pass that samples them takes them (rt_lights.hlsli): lt (the lights listed, their brightness,
@@ -7207,12 +7249,13 @@ index fe65837..17edb5c 100644
 +    gc.pt[2] = std::max(1.0f, kPtTries);
 +    // (XBE_RT_LIGHTS_SHADOW=0: no ray toward a light's point for its shadow, to time the lights' shadows alone)
 +    static const bool kNoShadows = std::getenv("XBE_RT_LIGHTS_SHADOW") && std::atoi(std::getenv("XBE_RT_LIGHTS_SHADOW")) == 0;
-+    // (XBE_RT_LIGHTS_TILE=1: each pixel's candidates' lights its own, as before, rather than a tile of 8's together)
-+    static const bool kNoTile = std::getenv("XBE_RT_LIGHTS_TILE") && std::atoi(std::getenv("XBE_RT_LIGHTS_TILE")) <= 1;
++    // XBE_RT_LIGHTS_TILE (8): the pixels across a tile that picks its candidates' lights together (rt_lights.hlsli's
++    // PickLightKept; 1: each pixel its own, as before)
++    static const uint32_t kTile = uint32_t(std::clamp(env("XBE_RT_LIGHTS_TILE", 8.0f), 1.0f, 63.0f));
 +    // XBE_RT_GLOW_BUDGET: the glows a bounce ray takes along its way at most (12; each a candidate of the ray's loop
 +    // with its picture read: the save room's 800 sprites over its water)
 +    static const uint32_t kGlowBudget = uint32_t(std::clamp(env("XBE_RT_GLOW_BUDGET", 12.0f), 1.0f, 255.0f));
-+    gc.pt[3] = float((kNoShadows ? 1u : 0u) | (kNoTile ? 2u : 0u) | (kGlowBudget << 8));
++    gc.pt[3] = float((kNoShadows ? 1u : 0u) | (kTile << 1) | (kGlowBudget << 8));
 +    rs_gw_ = gw;
 +    rs_gh_ = gh;
 +    Alloc gcb = Upload(sizeof(GiConstants), 256);
@@ -7971,6 +8014,12 @@ index fe65837..17edb5c 100644
 +    GpuMark(kGpuRtGuides);
 +    // the bounce lighting's own denoiser: whether there is anything to gather from, and the camera's move
 +    rt_reset_ = !aa_had_view_ || !have || view.cut || rt_restart_;
++    // the room's (the room's average, the sky's hold): afresh when the view was lost (a door's fade, a loading), not at
++    // a camera cut within the room, which this title makes every few steps: started over at each, the "room's"
++    // average was that camera angle's and the sky's light only counted once the sky had been in view since the cut,
++    // and the bridge's planks were dark looking along it and bright once the camera had looked up
++    rt_room_reset_ = !aa_had_view_ || !have || rt_restart_;
++    rt_restarted_ = rt_restart_;  // (this frame's, for the sky's hold, which a room's change keeps)
 +    rt_restart_ = false;
 +    std::copy(view.clip_to_prev, view.clip_to_prev + 16, rt_clip_to_prev_);
 +    AmbientOcclusion(t, rw, rh, view.valid ? view : FrameView{}, rx);
@@ -8903,7 +8952,7 @@ index fe65837..17edb5c 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +8838,308 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +8887,308 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -9213,7 +9262,7 @@ index fe65837..17edb5c 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +9149,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +9198,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -9224,7 +9273,7 @@ index fe65837..17edb5c 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +9169,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +9218,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -9245,7 +9294,7 @@ index fe65837..17edb5c 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +9193,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +9242,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -9278,7 +9327,7 @@ index fe65837..17edb5c 100644
      }
  }
  
-@@ -3312,17 +9226,45 @@ void LogPerf() {
+@@ -3312,17 +9275,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -9328,7 +9377,7 @@ index fe65837..17edb5c 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +9273,183 @@ void LogPerf() {
+@@ -3331,25 +9322,185 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -9372,8 +9421,10 @@ index fe65837..17edb5c 100644
 +                     g_rt_scene[6], g_rt_scene[7]);
 +            if (g_rt_mean_frames || g_rt_mean_bad)
 +                LOGR("perf: the room's average %.4f (%.4f %.4f %.4f) held over %.0f frames, read back %u frames (%u not "
-+                     "a number)", 0.2126f * g_rt_mean[0] + 0.7152f * g_rt_mean[1] + 0.0722f * g_rt_mean[2],
-+                     g_rt_mean[0], g_rt_mean[1], g_rt_mean[2], g_rt_mean[3], g_rt_mean_frames, g_rt_mean_bad);
++                     "a number); the sky held %.4f %.4f %.4f, %.3f of the frame",
++                     0.2126f * g_rt_mean[0] + 0.7152f * g_rt_mean[1] + 0.0722f * g_rt_mean[2], g_rt_mean[0],
++                     g_rt_mean[1], g_rt_mean[2], g_rt_mean[3], g_rt_mean_frames, g_rt_mean_bad, g_rt_sky[0],
++                     g_rt_sky[1], g_rt_sky[2], g_rt_sky[3]);
 +            g_rt_mean_frames = g_rt_mean_bad = 0;
 +        }
          g_perf = Perf{};
@@ -9517,7 +9568,7 @@ index fe65837..17edb5c 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +9460,47 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +9511,47 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -9566,7 +9617,7 @@ index fe65837..17edb5c 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +9508,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +9559,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -9574,7 +9625,7 @@ index fe65837..17edb5c 100644
      ApplySettings();
  }
  
-@@ -3386,13 +9520,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +9571,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -9631,7 +9682,7 @@ index fe65837..17edb5c 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +9575,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +9626,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -9639,7 +9690,7 @@ index fe65837..17edb5c 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +9865,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +9916,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
@@ -12792,7 +12843,7 @@ index 0000000..06d0649
 +}
 diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
 new file mode 100644
-index 0000000..031d413
+index 0000000..3a3361e
 --- /dev/null
 +++ b/runtime/gpu/rt_gi.hlsl
 @@ -0,0 +1,385 @@
@@ -12834,7 +12885,7 @@ index 0000000..031d413
 +    float4 pt;    // path traced (x: 1, the Path traced quality): each pixel's light followed a bounce further (PathTraced
 +                  // below); y: how much of the game's own light a path takes where it ends (XBE_RT_PT_END); z: the
 +                  // candidates a path vertex's light is picked from; w: bits, 1 no shadow rays toward the lights
-+                  // (XBE_RT_LIGHTS_SHADOW=0), 2 each pixel's candidates' lights its own (XBE_RT_LIGHTS_TILE=1): timings;
++                  // (XBE_RT_LIGHTS_SHADOW=0), the next six the tile's pixels across (XBE_RT_LIGHTS_TILE, 8);
 +                  // from the 8th the glows taken along a ray at most (XBE_RT_GLOW_BUDGET, 12)
 +    uint4 lights[128];  // each light's draw among the scene's and its triangles
 +};
@@ -12875,10 +12926,10 @@ index 0000000..031d413
 +    float4 v = pictures[NonUniformResourceIndex(uint(gm.x) - 2)].Load(int3(li, 3, 0));
 +    return uint4(uint(v.x), uint(v.y), asuint(v.z), asuint(v.w));
 +}
-+// (pt.w's bits: 1 no shadow rays toward the lights, XBE_RT_LIGHTS_SHADOW=0; 2 each pixel's candidates' lights its own,
-+// XBE_RT_LIGHTS_TILE=1: timings)
++// (pt.w's bits: 1 no shadow rays toward the lights, XBE_RT_LIGHTS_SHADOW=0; the next six the pixels across a tile that
++// picks its candidates' lights together, XBE_RT_LIGHTS_TILE, 1 each pixel its own)
 +bool LightShadows() { return (uint(pt.w) & 1u) == 0; }
-+uint LightTile() { return (uint(pt.w) & 2u) ? 1u : 8u; }
++uint LightTile() { uint t = (uint(pt.w) >> 1) & 0x3Fu; return t ? t : 8u; }
 +// the glows taken along a ray at most (GlowsAlong's budget: XBE_RT_GLOW_BUDGET, pt.w's bits from the 8th; 12)
 +int GlowBudget() { uint b = uint(pt.w) >> 8; return b ? int(b) : 12; }
 +#define RT_GLOW_MEMORY
@@ -13481,10 +13532,10 @@ index 0000000..bb07375
 +}
 diff --git a/runtime/gpu/rt_gimean.hlsl b/runtime/gpu/rt_gimean.hlsl
 new file mode 100644
-index 0000000..44a6f90
+index 0000000..a84815e
 --- /dev/null
 +++ b/runtime/gpu/rt_gimean.hlsl
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,94 @@
 +// Ray traced bounce lighting's room average (d3d12.cpp's Lighting): the light the bounce pass found (rt_gi.hlsl),
 +// averaged over every texel that had any, a few passes each a block of the one before (the bounce target, then 1/8 of
 +// it each time down to one texel), then held over the frames since the cut (a turn of the camera does not pump the
@@ -13497,12 +13548,12 @@ index 0000000..44a6f90
 +                  // whether a texel had any, 1 and over, and the light the scene's lights threw on it over 1, which the
 +                  // room's average leaves out: theirs is light above the room's; 5: the bounce target with the lights'
 +                  // light left in, the Path traced quality's second average), 1: a level before, 3: the sky's colour
-+                  // (the frame's, where it drew nothing: ease holds the depth's SRV index and the view's depth at the
-+                  // buffer's 0 and 1), and the share of the frame it covers (rgb the mean, alpha the share that had any), 2: hold
++                  // (the frame's, where it drew nothing, or past ease.w: ease holds the depth's SRV index and the view's
++                  // depth at the buffer's 0 and 1), and the share of the frame it covers (rgb the mean, alpha the share that had any), 2: hold
 +                  // the room's mean over the frames, the last level's this frame's
 +    float4 ease;  // the SRV heap's index of the held mean before, the least share of it this frame's is (1 over the
 +                  // frames it holds), 1: start over; 4 (the sky held): the held before, its colour's ease, start over,
-+                  // its share's rise
++                  // its share's rise (and src.y its share's fall a frame while none is in view)
 +};
 +static const float4 cam = float4(0, 0, 0, 0);  // rt_scene.hlsli's view and size, which nothing here traces
 +static const float4 part = float4(1, 1, 1, 1);  // through
@@ -13516,7 +13567,9 @@ index 0000000..44a6f90
 +        // a grid over the frame: the sky is what lies at the far plane
 +        Texture2D<float4> frame = Tex(src.x);
 +        Texture2D<float4> depth = Tex(ease.x);
++        // (the far plane, or ease.w and deeper: this title's skies are painted cards far out, XBE_RT_SKY_DEPTH)
 +        float far = 0.999f * max(ease.y, ease.z);
++        if (ease.w > 0) far = min(far, ease.w);
 +        float3 sum = 0;
 +        float n = 0;
 +        for (int y = 0; y < 36; y++)
@@ -13539,7 +13592,8 @@ index 0000000..44a6f90
 +        if (!all(isfinite(now))) now = 0;
 +        if (!all(isfinite(before))) before = 0;
 +        if (ease.z != 0 || before.a <= 0) return now;
-+        if (now.a <= 0) return before;
++        // (none in view: its share falls by src.y of what is left a frame, held through a room's change otherwise)
++        if (now.a <= 0) return float4(before.rgb, before.a * (1 - src.y));
 +        return float4(lerp(before.rgb, now.rgb, ease.y), now.a > before.a ? lerp(before.a, now.a, ease.w) : before.a);
 +    }
 +    if (src.w == 2) {

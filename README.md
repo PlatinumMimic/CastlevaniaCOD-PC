@@ -391,9 +391,12 @@ background first); the size pictures load at applies from the next start.
       visited most of their acceleration structure).
     - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
-      arch or a ledge shades what lies under it. It is the open air's light over the whole room, so it counts in the
-      room's average (left out, every surface open to the sky lay above the average and a drawbridge or a canyon
-      was raised to twice its brightness).
+      arch or a ledge shades what lies under it. The sky as the frame last showed it is held through a room's
+      change and fades out over a minute while none is in view (the bridge before the courtyard, entered from the
+      courtyard, has its sky from the first frame: measured afresh in each room, its planks were dark looking along
+      the bridge and bright once the camera had tilted up past the sky cards to the open sky). It is the open air's
+      light over the whole room, so it counts in the room's average (left out, every surface open to the sky lay
+      above the average and a drawbridge or a canyon was raised to twice its brightness).
     - *Light shafts*: the air catches the lights' light on its way to the eye: a torch's glow in the air, cut by the
       bars before it. Only lights drawn in 3D light the air (a fountain's spray, motes and a glow's sprite drawn flat
       filled whole rooms with a grainy, sparkling haze). Marched at a quarter of the frame's size, smoothed, gathered
