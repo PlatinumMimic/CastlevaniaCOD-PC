@@ -384,7 +384,11 @@ background first); the size pictures load at applies from the next start.
       brightens its wall without the rest of the room dimming to make up for it. Which light each of a pixel's
       candidates is on is picked for a tile of 8 x 8 pixels together, the point on it for the pixel (each pixel keeps
       its own choice from frame to frame): a wave of pixels then reads one light's vertices and picture rather than
-      one each, which in the save room, 94 lights listed, was half of the lighting's cost.
+      one each, which in the save room, 94 lights listed, was half of the lighting's cost. The bounce rays gather
+      the light of the glows they pass through on their way (the save room's water glowing on the stone around its
+      pools); of a picture drawn as hundreds of sprites the scene holds 48, the listed and then every so many-th of
+      the rest, each standing for those between (the 800 sprites overlapped over the pools, and a ray through them
+      visited most of their acceleration structure).
     - *Sky*: outdoors, a ray that leaves the room upward brings the sky's colour as the frame shows it (the more the
       higher it heads, as much as the frame shows sky: none indoors), so the open air lights what faces it and an
       arch or a ledge shades what lies under it. It is the open air's light over the whole room, so it counts in the
@@ -458,9 +462,11 @@ background first); the size pictures load at applies from the next start.
   artists' share (0.45 at Lighting strength 100%, less as the strength rises), and the rest of each surface's
   brightness is what the paths brought set against the room's average, in the light's own hue: a brazier's purple
   spreads over the floor around it and fades with the distance, a corner that nothing reaches goes dark, and the
-  light falls off from the lamps as light does. About 4.7 ms a frame at 4K with DLSS Balanced on the RTX 5080
-  (High's 3.5). A room the rays find no light in at all (one whose walls are skinned meshes, which the bounce rays
-  pass) is left as the game drew it, at every quality.
+  light falls off from the lamps as light does. About 4 ms a frame at 4K with DLSS Balanced on the RTX 5080 in the
+  castle's rooms (High's 3.5), 6.5 in the Abandoned Castle's save room, the costliest room (a 4K frame there 11 ms;
+  it was 19.5 before the lights' sample picked per tile and the glows' sprites were thinned, above). A room the
+  rays find no light in at all (one whose walls are skinned meshes, which the bounce rays pass) is left as the game
+  drew it, at every quality.
   The frame's scene goes into the acceleration structure as a few merged geometries (the world's solid draws, its
   cut-outs, its glows, the characters', the water), built back to back: a thousand geometries a frame had cost the
   build more than its triangles. `perf-run.bat` beside the game starts it with the SDK's timings on and leaves

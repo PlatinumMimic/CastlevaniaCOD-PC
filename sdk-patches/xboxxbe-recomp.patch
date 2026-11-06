@@ -2038,7 +2038,7 @@ index c82ae36..3e8f743 100644
  
  }  // namespace gpu
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index fe65837..963b24b 100644
+index fe65837..17edb5c 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -15,25 +15,43 @@
@@ -2940,7 +2940,7 @@ index fe65837..963b24b 100644
 +        uint64_t frame = UINT64_MAX - 1;
 +        uint32_t streak = 0, said = 0;
 +        uint64_t count_frame = UINT64_MAX;  // its draws as a glow this frame, the frame they were counted in
-+        uint32_t count = 0;
++        uint32_t count = 0, total_last = 0;  // (and the frame before's, 0 when it was not drawn then)
 +    };
 +    std::unordered_map<const void*, GlowSeen> glow_seen_;     // by the renderer's copy: the draws a frame
 +    std::unordered_map<uint64_t, GlowSeen> glow_steady_;        // by the title's texture data: how steady
@@ -5085,7 +5085,7 @@ index fe65837..963b24b 100644
  
      if (cap_) {
          CaptureDraw(s, prim, count, k, c, stages);
-@@ -2860,27 +4971,478 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2860,27 +4971,499 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // texture views and samplers, viewport and scissor, blend factor and stencil reference
      SetTextureViewsAndSamplers(s, a, stages);
@@ -5155,6 +5155,13 @@ index fe65837..963b24b 100644
 +    // list of 128 before the candles got in, and which of them did changed as the camera turned. The rest stay in the
 +    // scene, their light gathered by the bounce lighting's rays that pass through them
 +    bool glow_listed = true;
++    // and the scene holds XBE_RT_GLOWS_PER_PICTURE (48) draws of a picture at most a frame: the listed, then every
++    // stride-th of the rest, each standing for stride of them in the bounce rays' gather of the glows they pass
++    // (GlowsAlong's weight, Look::rough_bias): the save room's 800 water sprites overlap over its pools, and every ray
++    // through them visited most of their acceleration structure, 2 ms of the lighting's 6 at 4K (at 48, 132 of the
++    // 800 and 1.5 ms less; at 96, 233 and 1.1 less); 0: all of them
++    bool glow_skip = false;
++    float glow_scale = 1;
 +    // A glow steady by the title's own texture (the data it draws from), not the renderer's copy of it: a torch's or a
 +    // candle's flame is animated by its palette, each of whose colours is a copy of its own, and by its copy no flame
 +    // was ever drawn two frames in a row (none was steady, none a light). Counted by its copy, as it was
@@ -5167,10 +5174,23 @@ index fe65837..963b24b 100644
 +        GlowSeen& c = glow_seen_[stages.res[0] ? static_cast<const void*>(stages.res[0]) : nullptr];
 +        c.frame = presents_;
 +        if (c.count_frame != presents_) {
++            c.total_last = c.count_frame + 1 == presents_ ? c.count : 0;
 +            c.count_frame = presents_;
 +            c.count = 0;
 +        }
 +        glow_listed = kPerPicture == 0 || ++c.count <= kPerPicture;
++        static const uint32_t kGlowsPerPicture = std::getenv("XBE_RT_GLOWS_PER_PICTURE")
++                                                     ? uint32_t(std::atoi(std::getenv("XBE_RT_GLOWS_PER_PICTURE")))
++                                                     : 48u;
++        if (kPerPicture > 0 && kGlowsPerPicture > kPerPicture && !glow_listed) {
++            // by the frame before's count of the picture's draws (this frame's is not known until its end)
++            const uint32_t rest = c.total_last > kPerPicture ? c.total_last - kPerPicture : 0, room = kGlowsPerPicture - kPerPicture;
++            const uint32_t stride = rest > room ? (rest + room - 1) / room : 1;
++            if (stride > 1) {
++                if ((c.count - kPerPicture - 1) % stride != 0) glow_skip = true;
++                glow_scale = float(stride);
++            }
++        }
 +        const uint32_t kSteady = SteadyFrames();
 +        if (kSteady > 0) {
 +            GlowSeen& g = glow_steady_[glow_key];
@@ -5387,11 +5407,12 @@ index fe65837..963b24b 100644
 +            constexpr uint32_t kSrcAlpha = 0x302;  // D3DBLEND_SRCALPHA (the XDK's)
 +            look.emissive = SimpleState(s, kMSrcBlend) == kSrcAlpha ? 1 : 2;
 +            look.alpha = 0;  // its picture's alpha weighs its light, it is no cut-out
++            look.rough_bias = glow_scale;  // (the draws of its picture it stands for in the rays' gather)
 +        }
 +        // (a character's own glow is not in the scene at all: not a light, above, and not among the glows the bounce
 +        // rays gather on their way either, where the red of Hector's sash lit the floor round him red; XBE_RT_LIGHTS_CHAR=1
 +        // keeps them as they were)
-+        if (!glow_char) rt_.AddDraw(rt_rebased, a.index_count, false, a.strip, a.draw_count, rt_first, rt_slots, look);
++        if (!glow_char && !glow_skip) rt_.AddDraw(rt_rebased, a.index_count, false, a.strip, a.draw_count, rt_first, rt_slots, look);
 +    }
 +    lap(5);
 +}
@@ -5584,7 +5605,7 @@ index fe65837..963b24b 100644
              int32_t r[4];
              std::memcpy(r, c.rects + size_t(i) * sizeof(r), sizeof(r));
              rs.push_back(ScaledRect(t, r[0], r[1], r[2], r[3]));
-@@ -2889,6 +5451,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2889,6 +5472,15 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          const auto& v = s.viewport;
          rs.push_back(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
      }
@@ -5600,7 +5621,7 @@ index fe65837..963b24b 100644
      if (t.depth) {
          Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
          D3D12_CLEAR_FLAGS cf = D3D12_CLEAR_FLAGS(((c.flags & kClearZ) ? D3D12_CLEAR_FLAG_DEPTH : 0) |
-@@ -2912,6 +5483,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
+@@ -2912,6 +5504,7 @@ void D3D12Backend::ClearTarget(Target& t, const State& s, const ClearArgs& c, st
          }
      }
      t.drawn = true;
@@ -5608,7 +5629,7 @@ index fe65837..963b24b 100644
  }
  
  // ClearChannels' pipeline for the target format and channel mask, kept in blit_psos_; null when it can't be made
-@@ -2925,7 +5497,7 @@ ID3D12PipelineState* D3D12Backend::EnsureClearPipeline(DXGI_FORMAT rtv, uint8_t
+@@ -2925,7 +5518,7 @@ ID3D12PipelineState* D3D12Backend::EnsureClearPipeline(DXGI_FORMAT rtv, uint8_t
      if (!vs || !ps) return nullptr;
      D3D12_GRAPHICS_PIPELINE_STATE_DESC d = FullScreenPipelineDesc(vs, ps, rtv);
      d.BlendState.RenderTarget[0].RenderTargetWriteMask = mask;
@@ -5617,7 +5638,7 @@ index fe65837..963b24b 100644
      return pso.Get();
  }
  
-@@ -2961,7 +5533,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
+@@ -2961,7 +5554,9 @@ void D3D12Backend::Clear(const State& s, uint32_t count, const uint8_t* rects, u
      uint32_t gh;
      SurfaceSize(rt ? s.rt : s.zs, gw, gh);
      std::vector<D3D12_RECT> rs;
@@ -5628,7 +5649,7 @@ index fe65837..963b24b 100644
      for (Target* t : {rt, ds}) {
          if (t) ClearTarget(*t, s, c, rs);
      }
-@@ -3043,13 +5617,16 @@ constexpr float kTapsSlack = 1e-3f;
+@@ -3043,13 +5638,16 @@ constexpr float kTapsSlack = 1e-3f;
  
  // one Blit per rect: for formats that differ
  void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D12_RESOURCE_STATES& src_state,
@@ -5648,7 +5669,7 @@ index fe65837..963b24b 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3058,7 +5635,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3058,7 +5656,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -5657,7 +5678,7 @@ index fe65837..963b24b 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3067,13 +5644,15 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3067,13 +5665,15 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetViewports(1, &vp);
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
@@ -5674,7 +5695,7 @@ index fe65837..963b24b 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -3084,7 +5663,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3084,7 +5684,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -5683,7 +5704,7 @@ index fe65837..963b24b 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3094,15 +5673,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3094,15 +5694,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -5702,7 +5723,7 @@ index fe65837..963b24b 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3111,6 +5690,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3111,6 +5711,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          cl_->CopyTextureRegion(&dl, dx, dy, 0, &sl, &b);
      }
      dst_t.drawn = true;
@@ -5710,7 +5731,7 @@ index fe65837..963b24b 100644
      bound_rt_ = bound_ds_ = nullptr;
  }
  
-@@ -3136,6 +5716,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3136,6 +5737,15 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      Target* dst_t = EnsureTarget(dst, false);
      if (!dst_t || src_t == dst_t) return;
      CopyList l{.count = count, .src_rects = src_rects, .dst_points = dst_points};
@@ -5726,7 +5747,7 @@ index fe65837..963b24b 100644
      if (src_t->fmt != dst_t->fmt) {
          // formats differ: drawn across
          CopyByDraw(*src_t, src_t->res.Get(), src_t->state, *dst_t, l);
-@@ -3149,102 +5738,3071 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
+@@ -3149,102 +5759,3077 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count,
      }
  }
  
@@ -6985,7 +7006,10 @@ index fe65837..963b24b 100644
 +    const uint32_t lights = uint32_t(std::min<size_t>(em.size() / 2, kMaxLights));
 +    lt[0] = float(lights);
 +    lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
-+    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * RtQuality()));
++    // (the candidates a pixel's light is picked from: 4 at Low, 6 at Medium, 8 at High; 4 at Path traced, whose
++    // pixels keep their choice frame to frame as High's do and whose paths pick two more at each vertex: 8 cost the
++    // save room 0.3 ms more at 4K for no less flicker)
++    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : RtPathTraced() ? 4.0f : float(4 + 2 * RtQuality()));
 +    lt[3] = kLightMost;
 +    sk[2] = kFlat;
 +    sk[3] = kLightArea;
@@ -7016,13 +7040,13 @@ index fe65837..963b24b 100644
 +    // same; XBE_RT_PT_PATHS), each followed a bounce further than the bounce lighting's rays (rt_gi.hlsl's PathTraced), the
 +    // game's own light taken where the path ends (XBE_RT_PT_END of it, 3: it arrives through one surface's colour
 +    // more than the bounce lighting's does, a third as strong, and at 1 the lights' light outweighed it everywhere and
-+    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (4); the
++    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (2); the
 +    // denoiser's smoothing a pass wider (its taps reach as far across the frame as at half size)
 +    const bool path = RtPathTraced();
 +    static const float kScaleSet = env("XBE_RT_GI_SCALE", 0), kRaysSet = env("XBE_RT_GI_RAYS", 0),
 +                       kReachSet = env("XBE_RT_GI_REACH", 0), kPtScale = env("XBE_RT_PT_SCALE", 0.71f),
 +                       kPtPaths = env("XBE_RT_PT_PATHS", 1.0f), kPtEnd = env("XBE_RT_PT_END", 3.0f),
-+                       kPtTries = env("XBE_RT_PT_TRIES", 4.0f);
++                       kPtTries = env("XBE_RT_PT_TRIES", 2.0f);
 +    const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f)
 +                         : path ? std::clamp(kPtScale, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
 +    const float kRaysFull = kRaysSet > 0 ? kRaysSet : path ? std::max(1.0f, kPtPaths) : q == 2 ? 4.0f : 1.0f;
@@ -7185,7 +7209,10 @@ index fe65837..963b24b 100644
 +    static const bool kNoShadows = std::getenv("XBE_RT_LIGHTS_SHADOW") && std::atoi(std::getenv("XBE_RT_LIGHTS_SHADOW")) == 0;
 +    // (XBE_RT_LIGHTS_TILE=1: each pixel's candidates' lights its own, as before, rather than a tile of 8's together)
 +    static const bool kNoTile = std::getenv("XBE_RT_LIGHTS_TILE") && std::atoi(std::getenv("XBE_RT_LIGHTS_TILE")) <= 1;
-+    gc.pt[3] = float((kNoShadows ? 1u : 0u) | (kNoTile ? 2u : 0u));
++    // XBE_RT_GLOW_BUDGET: the glows a bounce ray takes along its way at most (12; each a candidate of the ray's loop
++    // with its picture read: the save room's 800 sprites over its water)
++    static const uint32_t kGlowBudget = uint32_t(std::clamp(env("XBE_RT_GLOW_BUDGET", 12.0f), 1.0f, 255.0f));
++    gc.pt[3] = float((kNoShadows ? 1u : 0u) | (kNoTile ? 2u : 0u) | (kGlowBudget << 8));
 +    rs_gw_ = gw;
 +    rs_gh_ = gh;
 +    Alloc gcb = Upload(sizeof(GiConstants), 256);
@@ -8876,7 +8903,7 @@ index fe65837..963b24b 100644
      ImGui::NewFrame();
      if (app::kGame.ui) app::kGame.ui(fps_);
      ImGui::Render();
-@@ -3253,19 +8811,308 @@ void D3D12Backend::RenderUi() {
+@@ -3253,19 +8838,308 @@ void D3D12Backend::RenderUi() {
      ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
  }
  
@@ -9186,7 +9213,7 @@ index fe65837..963b24b 100644
  void D3D12Backend::ReleaseOldTextures() {
      constexpr uint64_t kSweepEvery = 60;    // presents between sweeps
      constexpr size_t kTexturesKept = 2048;  // no sweep below this many
-@@ -3275,6 +9122,10 @@ void D3D12Backend::ReleaseOldTextures() {
+@@ -3275,6 +9149,10 @@ void D3D12Backend::ReleaseOldTextures() {
      for (auto it = textures_.begin(); it != textures_.end();) {
          if (it->second.frame + kIdleFrames < presents_) {
              CurrentFrame().garbage.push_back(it->second.res);
@@ -9197,7 +9224,7 @@ index fe65837..963b24b 100644
              it = textures_.erase(it);
          } else {
              ++it;
-@@ -3291,10 +9142,20 @@ void D3D12Backend::ResetFrame() {
+@@ -3291,10 +9169,20 @@ void D3D12Backend::ResetFrame() {
      }
      f.alloc->Reset();
      f.garbage.clear();
@@ -9218,7 +9245,7 @@ index fe65837..963b24b 100644
  }
  
  void D3D12Backend::CountFps() {
-@@ -3305,6 +9166,32 @@ void D3D12Backend::CountFps() {
+@@ -3305,6 +9193,32 @@ void D3D12Backend::CountFps() {
          fps_ = fps_n_ / el;
          fps_n_ = 0;
          fps_t_ = now;
@@ -9251,7 +9278,7 @@ index fe65837..963b24b 100644
      }
  }
  
-@@ -3312,17 +9199,45 @@ void LogPerf() {
+@@ -3312,17 +9226,45 @@ void LogPerf() {
      static PerfClock::time_point perf_start = PerfClock::now();
      static uint64_t perf_frames = 0;
      perf_frames++;
@@ -9301,7 +9328,7 @@ index fe65837..963b24b 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3331,25 +9246,183 @@ void LogPerf() {
+@@ -3331,25 +9273,183 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -9490,7 +9517,7 @@ index fe65837..963b24b 100644
      }
      ResizeSwap();
      Target* t = EnsureTarget(front, false);
-@@ -3360,14 +9433,47 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3360,14 +9460,47 @@ void D3D12Backend::Present(const Surface& front) {
  
      uint32_t bi = swap_->GetCurrentBackBufferIndex();
      DrawFrame(t, bi);
@@ -9539,7 +9566,7 @@ index fe65837..963b24b 100644
      presents_++;
      presents_seen_.store(presents_);
      frame_++;
-@@ -3375,6 +9481,7 @@ void D3D12Backend::Present(const Surface& front) {
+@@ -3375,6 +9508,7 @@ void D3D12Backend::Present(const Surface& front) {
      ResetFrame();
      CountFps();
      if (diag::Perf()) LogPerf();
@@ -9547,7 +9574,7 @@ index fe65837..963b24b 100644
      ApplySettings();
  }
  
-@@ -3386,13 +9493,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3386,13 +9520,54 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
@@ -9604,7 +9631,7 @@ index fe65837..963b24b 100644
          if (ext_) ext_->Reset(*this);
          bound_rt_ = bound_ds_ = nullptr;
      }
-@@ -3400,6 +9548,7 @@ void D3D12Backend::ApplySettings() {
+@@ -3400,6 +9575,7 @@ void D3D12Backend::ApplySettings() {
  
  // the target resolved, then shrunk with o when it is not guest sized BGRA; res null on failure
  D3D12Backend::CopySource D3D12Backend::PrepareCopySource(Target& t, const ShrinkOptions& o) {
@@ -9612,7 +9639,7 @@ index fe65837..963b24b 100644
      Resolve(t);
      CopySource out{t.res.Get(), nullptr};
      if (t.w != t.gw || t.h != t.gh || t.fmt != kBgra) {
-@@ -3689,6 +9838,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
+@@ -3689,6 +9865,19 @@ void D3D12Backend::SetGamma(const uint8_t* ramp) {
  
  }  // namespace
  
@@ -12765,10 +12792,10 @@ index 0000000..06d0649
 +}
 diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
 new file mode 100644
-index 0000000..283c1e1
+index 0000000..031d413
 --- /dev/null
 +++ b/runtime/gpu/rt_gi.hlsl
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,385 @@
 +// Ray traced bounce lighting (raytrace.cpp, DXR 1.1 inline ray queries, compiled to DXIL when the runtime is built):
 +// the light the room's own surfaces throw onto each other. Each pixel of the frame's 3D, at a part of its size, finds
 +// its surface in the frame's scene (as ambient occlusion does, rt_ao.hlsl) and sends a few rays over the hemisphere
@@ -12807,7 +12834,8 @@ index 0000000..283c1e1
 +    float4 pt;    // path traced (x: 1, the Path traced quality): each pixel's light followed a bounce further (PathTraced
 +                  // below); y: how much of the game's own light a path takes where it ends (XBE_RT_PT_END); z: the
 +                  // candidates a path vertex's light is picked from; w: bits, 1 no shadow rays toward the lights
-+                  // (XBE_RT_LIGHTS_SHADOW=0), 2 each pixel's candidates' lights its own (XBE_RT_LIGHTS_TILE=1): timings
++                  // (XBE_RT_LIGHTS_SHADOW=0), 2 each pixel's candidates' lights its own (XBE_RT_LIGHTS_TILE=1): timings;
++                  // from the 8th the glows taken along a ray at most (XBE_RT_GLOW_BUDGET, 12)
 +    uint4 lights[128];  // each light's draw among the scene's and its triangles
 +};
 +#include "rt_scene.hlsli"
@@ -12851,6 +12879,8 @@ index 0000000..283c1e1
 +// XBE_RT_LIGHTS_TILE=1: timings)
 +bool LightShadows() { return (uint(pt.w) & 1u) == 0; }
 +uint LightTile() { return (uint(pt.w) & 2u) ? 1u : 8u; }
++// the glows taken along a ray at most (GlowsAlong's budget: XBE_RT_GLOW_BUDGET, pt.w's bits from the 8th; 12)
++int GlowBudget() { uint b = uint(pt.w) >> 8; return b ? int(b) : 12; }
 +#define RT_GLOW_MEMORY
 +#include "rt_lights.hlsli"
 +
@@ -12923,7 +12953,7 @@ index 0000000..283c1e1
 +        float2 b2;
 +        // the world alone, as the bounce above (a character throws no light and lets the room's through)
 +        float t2 = TraceSceneMasked(o, rd, 0, open ? 1e30f : gi.x, 16, 0x01, g2, p2, b2);
-+        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true);
++        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true, GlowBudget());
 +        if (t2 < 0) {
 +            if (open) skyl += skyc * saturate(dot(rd, sky.xyz) * 1.5f + 0.25f);
 +            continue;
@@ -13076,7 +13106,7 @@ index 0000000..283c1e1
 +        // room's through (its own shadow is ambient occlusion's)
 +        float t2 = TraceSceneMasked(o, rd, 0, open ? 1e30f : gi.x, 16, 0x01, g2, p2, b2);
 +        // (not the glows laid on the surface itself, a marker on the floor: its own look, not light thrown on it)
-+        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true);
++        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true, GlowBudget());
 +        if (t2 < 0) {
 +            if (open) skyl += skyc * saturate(dot(rd, sky.xyz) * 1.5f + 0.25f);  // the open sky
 +            continue;
@@ -14706,10 +14736,10 @@ index 0000000..aa89638
 +}
 diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
 new file mode 100644
-index 0000000..398b21c
+index 0000000..f21283a
 --- /dev/null
 +++ b/runtime/gpu/rt_scene.hlsli
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,419 @@
 +// The frame's scene for ray tracing's passes (raytrace.h, rt_*.hlsl): its acceleration structure and what a hit is.
 +// A pass declares its constants first, cam among them: the view's depth at the buffer's 0 and its 1, tan of half the
 +// view across, down (cam.zw put a captured vertex back into view space, as the scene's instance does).
@@ -15104,7 +15134,9 @@ index 0000000..398b21c
 +        float4 c = s.tint;
 +        uint pic = geo[cg].a.z;
 +        if (pic != kNone) c *= pictures[NonUniformResourceIndex(pic)].SampleLevel(wrap, s.at, 2);
-+        sum += c.rgb * (kind < 1.5f ? c.a : 1.0f);  // by its alpha (1) or as it is (2)
++        // by its alpha (1) or as it is (2), and for the draws of its picture it stands for (d3d12.cpp's
++        // XBE_RT_GLOWS_PER_PICTURE: every stride-th of a picture's many sprites is in the scene, Look::rough_bias)
++        sum += c.rgb * (kind < 1.5f ? c.a : 1.0f) * max(asfloat(geo[cg].b.z), 1.0f);
 +    }
 +    return sum;
 +}

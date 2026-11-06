@@ -32281,3 +32281,189 @@ index 2ebeb1f..398b21c 100644
 -- 
 2.43.0
 
+From 3100e6cfa70105a55e2c98f149df29e1dbc99932 Mon Sep 17 00:00:00 2001
+From: PlatinumMimic <julianharmon100@gmail.com>
+Date: Fri, 6 Nov 2026 10:03:34 -0500
+Subject: [PATCH] Ray traced lighting: the glows' sprites thinned in the scene,
+ the Path traced quality's candidates fewer
+
+The scene holds XBE_RT_GLOWS_PER_PICTURE (48) draws of a glow's picture at most a frame: the listed, then every
+stride-th of the rest, each standing for stride of them in the bounce rays' gather of the glows they pass (GlowsAlong's
+weight, Look::rough_bias for a glow): the save room's 800 water sprites overlapped over its pools and a ray through them
+visited most of their acceleration structure (its lighting 5.6 ms at 4K DLSS Balanced to 4.1, the frame 13 to 11.4).
+The lights' candidates at Path traced 4 for the pixel's light (High's 8) and XBE_RT_PT_TRIES 2 at a path's vertices
+(4): each pixel keeps its choice frame to frame, and the extra ones cost 0.3 ms for no less flicker. XBE_RT_GLOW_BUDGET
+(12), the glows taken along a ray at most, a knob.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P39J2XTW6h6BAjQxxWwA47
+---
+ runtime/gpu/d3d12.cpp      | 39 ++++++++++++++++++++++++++++++++------
+ runtime/gpu/rt_gi.hlsl     |  9 ++++++---
+ runtime/gpu/rt_scene.hlsli |  4 +++-
+ 3 files changed, 42 insertions(+), 10 deletions(-)
+
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index 40bcc81..ab711ab 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -1400,7 +1400,7 @@ private:
+         uint64_t frame = UINT64_MAX - 1;
+         uint32_t streak = 0, said = 0;
+         uint64_t count_frame = UINT64_MAX;  // its draws as a glow this frame, the frame they were counted in
+-        uint32_t count = 0;
++        uint32_t count = 0, total_last = 0;  // (and the frame before's, 0 when it was not drawn then)
+     };
+     std::unordered_map<const void*, GlowSeen> glow_seen_;     // by the renderer's copy: the draws a frame
+     std::unordered_map<uint64_t, GlowSeen> glow_steady_;        // by the title's texture data: how steady
+@@ -4870,6 +4870,13 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+     // list of 128 before the candles got in, and which of them did changed as the camera turned. The rest stay in the
+     // scene, their light gathered by the bounce lighting's rays that pass through them
+     bool glow_listed = true;
++    // and the scene holds XBE_RT_GLOWS_PER_PICTURE (48) draws of a picture at most a frame: the listed, then every
++    // stride-th of the rest, each standing for stride of them in the bounce rays' gather of the glows they pass
++    // (GlowsAlong's weight, Look::rough_bias): the save room's 800 water sprites overlap over its pools, and every ray
++    // through them visited most of their acceleration structure, 2 ms of the lighting's 6 at 4K (at 48, 132 of the
++    // 800 and 1.5 ms less; at 96, 233 and 1.1 less); 0: all of them
++    bool glow_skip = false;
++    float glow_scale = 1;
+     // A glow steady by the title's own texture (the data it draws from), not the renderer's copy of it: a torch's or a
+     // candle's flame is animated by its palette, each of whose colours is a copy of its own, and by its copy no flame
+     // was ever drawn two frames in a row (none was steady, none a light). Counted by its copy, as it was
+@@ -4882,10 +4889,23 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+         GlowSeen& c = glow_seen_[stages.res[0] ? static_cast<const void*>(stages.res[0]) : nullptr];
+         c.frame = presents_;
+         if (c.count_frame != presents_) {
++            c.total_last = c.count_frame + 1 == presents_ ? c.count : 0;
+             c.count_frame = presents_;
+             c.count = 0;
+         }
+         glow_listed = kPerPicture == 0 || ++c.count <= kPerPicture;
++        static const uint32_t kGlowsPerPicture = std::getenv("XBE_RT_GLOWS_PER_PICTURE")
++                                                     ? uint32_t(std::atoi(std::getenv("XBE_RT_GLOWS_PER_PICTURE")))
++                                                     : 48u;
++        if (kPerPicture > 0 && kGlowsPerPicture > kPerPicture && !glow_listed) {
++            // by the frame before's count of the picture's draws (this frame's is not known until its end)
++            const uint32_t rest = c.total_last > kPerPicture ? c.total_last - kPerPicture : 0, room = kGlowsPerPicture - kPerPicture;
++            const uint32_t stride = rest > room ? (rest + room - 1) / room : 1;
++            if (stride > 1) {
++                if ((c.count - kPerPicture - 1) % stride != 0) glow_skip = true;
++                glow_scale = float(stride);
++            }
++        }
+         const uint32_t kSteady = SteadyFrames();
+         if (kSteady > 0) {
+             GlowSeen& g = glow_steady_[glow_key];
+@@ -5102,11 +5122,12 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+             constexpr uint32_t kSrcAlpha = 0x302;  // D3DBLEND_SRCALPHA (the XDK's)
+             look.emissive = SimpleState(s, kMSrcBlend) == kSrcAlpha ? 1 : 2;
+             look.alpha = 0;  // its picture's alpha weighs its light, it is no cut-out
++            look.rough_bias = glow_scale;  // (the draws of its picture it stands for in the rays' gather)
+         }
+         // (a character's own glow is not in the scene at all: not a light, above, and not among the glows the bounce
+         // rays gather on their way either, where the red of Hector's sash lit the floor round him red; XBE_RT_LIGHTS_CHAR=1
+         // keeps them as they were)
+-        if (!glow_char) rt_.AddDraw(rt_rebased, a.index_count, false, a.strip, a.draw_count, rt_first, rt_slots, look);
++        if (!glow_char && !glow_skip) rt_.AddDraw(rt_rebased, a.index_count, false, a.strip, a.draw_count, rt_first, rt_slots, look);
+     }
+     lap(5);
+ }
+@@ -6739,7 +6760,10 @@ uint32_t D3D12Backend::LightList(float lt[4], float sk[4], uint32_t list[][4]) {
+     const uint32_t lights = uint32_t(std::min<size_t>(em.size() / 2, kMaxLights));
+     lt[0] = float(lights);
+     lt[1] = kLightGain * g_rt_lighting_strength.load(std::memory_order_relaxed);
+-    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : float(4 + 2 * RtQuality()));
++    // (the candidates a pixel's light is picked from: 4 at Low, 6 at Medium, 8 at High; 4 at Path traced, whose
++    // pixels keep their choice frame to frame as High's do and whose paths pick two more at each vertex: 8 cost the
++    // save room 0.3 ms more at 4K for no less flicker)
++    lt[2] = std::max(1.0f, kLightTriesSet > 0 ? kLightTriesSet : RtPathTraced() ? 4.0f : float(4 + 2 * RtQuality()));
+     lt[3] = kLightMost;
+     sk[2] = kFlat;
+     sk[3] = kLightArea;
+@@ -6770,13 +6794,13 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     // same; XBE_RT_PT_PATHS), each followed a bounce further than the bounce lighting's rays (rt_gi.hlsl's PathTraced), the
+     // game's own light taken where the path ends (XBE_RT_PT_END of it, 3: it arrives through one surface's colour
+     // more than the bounce lighting's does, a third as strong, and at 1 the lights' light outweighed it everywhere and
+-    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (4); the
++    // a purple brazier lay over a whole courtyard), a vertex's light picked of XBE_RT_PT_TRIES candidates (2); the
+     // denoiser's smoothing a pass wider (its taps reach as far across the frame as at half size)
+     const bool path = RtPathTraced();
+     static const float kScaleSet = env("XBE_RT_GI_SCALE", 0), kRaysSet = env("XBE_RT_GI_RAYS", 0),
+                        kReachSet = env("XBE_RT_GI_REACH", 0), kPtScale = env("XBE_RT_PT_SCALE", 0.71f),
+                        kPtPaths = env("XBE_RT_PT_PATHS", 1.0f), kPtEnd = env("XBE_RT_PT_END", 3.0f),
+-                       kPtTries = env("XBE_RT_PT_TRIES", 4.0f);
++                       kPtTries = env("XBE_RT_PT_TRIES", 2.0f);
+     const float kScale = kScaleSet > 0 ? std::clamp(kScaleSet, 0.25f, 1.0f)
+                          : path ? std::clamp(kPtScale, 0.25f, 1.0f) : q == 0 ? 0.34f : 0.5f;
+     const float kRaysFull = kRaysSet > 0 ? kRaysSet : path ? std::max(1.0f, kPtPaths) : q == 2 ? 4.0f : 1.0f;
+@@ -6939,7 +6963,10 @@ void D3D12Backend::Lighting(Target& t, uint32_t rw, uint32_t rh) {
+     static const bool kNoShadows = std::getenv("XBE_RT_LIGHTS_SHADOW") && std::atoi(std::getenv("XBE_RT_LIGHTS_SHADOW")) == 0;
+     // (XBE_RT_LIGHTS_TILE=1: each pixel's candidates' lights its own, as before, rather than a tile of 8's together)
+     static const bool kNoTile = std::getenv("XBE_RT_LIGHTS_TILE") && std::atoi(std::getenv("XBE_RT_LIGHTS_TILE")) <= 1;
+-    gc.pt[3] = float((kNoShadows ? 1u : 0u) | (kNoTile ? 2u : 0u));
++    // XBE_RT_GLOW_BUDGET: the glows a bounce ray takes along its way at most (12; each a candidate of the ray's loop
++    // with its picture read: the save room's 800 sprites over its water)
++    static const uint32_t kGlowBudget = uint32_t(std::clamp(env("XBE_RT_GLOW_BUDGET", 12.0f), 1.0f, 255.0f));
++    gc.pt[3] = float((kNoShadows ? 1u : 0u) | (kNoTile ? 2u : 0u) | (kGlowBudget << 8));
+     rs_gw_ = gw;
+     rs_gh_ = gh;
+     Alloc gcb = Upload(sizeof(GiConstants), 256);
+diff --git a/runtime/gpu/rt_gi.hlsl b/runtime/gpu/rt_gi.hlsl
+index 283c1e1..031d413 100644
+--- a/runtime/gpu/rt_gi.hlsl
++++ b/runtime/gpu/rt_gi.hlsl
+@@ -36,7 +36,8 @@ cbuffer P : register(b0) {
+     float4 pt;    // path traced (x: 1, the Path traced quality): each pixel's light followed a bounce further (PathTraced
+                   // below); y: how much of the game's own light a path takes where it ends (XBE_RT_PT_END); z: the
+                   // candidates a path vertex's light is picked from; w: bits, 1 no shadow rays toward the lights
+-                  // (XBE_RT_LIGHTS_SHADOW=0), 2 each pixel's candidates' lights its own (XBE_RT_LIGHTS_TILE=1): timings
++                  // (XBE_RT_LIGHTS_SHADOW=0), 2 each pixel's candidates' lights its own (XBE_RT_LIGHTS_TILE=1): timings;
++                  // from the 8th the glows taken along a ray at most (XBE_RT_GLOW_BUDGET, 12)
+     uint4 lights[128];  // each light's draw among the scene's and its triangles
+ };
+ #include "rt_scene.hlsli"
+@@ -80,6 +81,8 @@ uint4 LightInfo(uint li) {
+ // XBE_RT_LIGHTS_TILE=1: timings)
+ bool LightShadows() { return (uint(pt.w) & 1u) == 0; }
+ uint LightTile() { return (uint(pt.w) & 2u) ? 1u : 8u; }
++// the glows taken along a ray at most (GlowsAlong's budget: XBE_RT_GLOW_BUDGET, pt.w's bits from the 8th; 12)
++int GlowBudget() { uint b = uint(pt.w) >> 8; return b ? int(b) : 12; }
+ #define RT_GLOW_MEMORY
+ #include "rt_lights.hlsli"
+ 
+@@ -152,7 +155,7 @@ float3 PathTraced(uint2 id, float3 o, float3 n, float t, float pixel, float3 sky
+         float2 b2;
+         // the world alone, as the bounce above (a character throws no light and lets the room's through)
+         float t2 = TraceSceneMasked(o, rd, 0, open ? 1e30f : gi.x, 16, 0x01, g2, p2, b2);
+-        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true);
++        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true, GlowBudget());
+         if (t2 < 0) {
+             if (open) skyl += skyc * saturate(dot(rd, sky.xyz) * 1.5f + 0.25f);
+             continue;
+@@ -305,7 +308,7 @@ Out ps(float4 pos : SV_Position) {
+         // room's through (its own shadow is ambient occlusion's)
+         float t2 = TraceSceneMasked(o, rd, 0, open ? 1e30f : gi.x, 16, 0x01, g2, p2, b2);
+         // (not the glows laid on the surface itself, a marker on the floor: its own look, not light thrown on it)
+-        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true);
++        if (gl.x > 0) glow += GlowsAlong(o + rd * gl.y, rd, max((t2 < 0 ? gi.x : min(t2, gi.x)) - gl.y, 0), true, GlowBudget());
+         if (t2 < 0) {
+             if (open) skyl += skyc * saturate(dot(rd, sky.xyz) * 1.5f + 0.25f);  // the open sky
+             continue;
+diff --git a/runtime/gpu/rt_scene.hlsli b/runtime/gpu/rt_scene.hlsli
+index 398b21c..f21283a 100644
+--- a/runtime/gpu/rt_scene.hlsli
++++ b/runtime/gpu/rt_scene.hlsli
+@@ -392,7 +392,9 @@ float3 GlowsAlong(float3 o, float3 d, float tmax, bool unlisted, int budget) {
+         float4 c = s.tint;
+         uint pic = geo[cg].a.z;
+         if (pic != kNone) c *= pictures[NonUniformResourceIndex(pic)].SampleLevel(wrap, s.at, 2);
+-        sum += c.rgb * (kind < 1.5f ? c.a : 1.0f);  // by its alpha (1) or as it is (2)
++        // by its alpha (1) or as it is (2), and for the draws of its picture it stands for (d3d12.cpp's
++        // XBE_RT_GLOWS_PER_PICTURE: every stride-th of a picture's many sprites is in the scene, Look::rough_bias)
++        sum += c.rgb * (kind < 1.5f ? c.a : 1.0f) * max(asfloat(geo[cg].b.z), 1.0f);
+     }
+     return sum;
+ }
+-- 
+2.43.0
+
